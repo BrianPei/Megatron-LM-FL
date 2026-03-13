@@ -8,6 +8,26 @@ from torch.distributed import rendezvous
 import megatron.core.parallel_state as ps
 
 
+def _get_device_backend():
+    platform = os.environ.get('MEGATRON_TEST_PLATFORM', 'cuda').strip().lower()
+    match platform:
+        case 'ascend':
+            import torch_npu          
+            return 'npu', 'hccl'
+        case 'metax':
+            import torch_musa  
+            return 'musa', 'mccl'
+        case 'cuda':  
+            return 'cuda', 'nccl'
+        case _:  
+            raise ValueError(
+                f"Unsupported platform: {platform}! "
+                "Currently supported platforms are: ascend, metax, cuda. Please add adaptation code for other platforms."：{platform}！"
+            )
+
+DEVICE_TYPE, DIST_BACKEND = _get_device_backend()
+
+
 class TestModel(torch.nn.Module):
     def __init__(
         self,
