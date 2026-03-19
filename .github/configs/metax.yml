@@ -29,8 +29,10 @@ container_volumes:
   # 这些路径必须存在，否则容器启动会失败
   - /dev/dri:/dev/dri # 沐曦 GPU 设备文件
   - /dev/mxcd:/dev/mxcd # 沐曦 GPU 设备文件
-  - /opt/maca:/opt/maca # MACA 软件栈
-  - /opt/mxdriver:/opt/mxdriver # 沐曦驱动路径
+
+  # 不挂载，使用容器内置的 MACA 3.3.x 软件栈，避免版本兼容问题
+  # - /opt/maca:/opt/maca # MACA 软件栈
+  # - /opt/mxdriver:/opt/mxdriver # 沐曦驱动路径
 
 # Container options (hardware-specific settings)
 # container_options: '--privileged --gpus all --shm-size=500g --hostname megatron_cicd --user root --ulimit nofile=65535:65535'
