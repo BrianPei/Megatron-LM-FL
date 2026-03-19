@@ -64,7 +64,6 @@ class Utils:
                 f'Initializing torch.distributed with rank: {Utils.rank}, '
                 f'world_size: {Utils.world_size}'
             )
-            # 根据设备类型设置当前设备
             device_module = getattr(torch, DEVICE_TYPE)  # torch.cuda / torch.npu / torch.musa
             device_module.set_device(Utils.rank % device_module.device_count())
             # torch.cuda.set_device(Utils.rank % torch.cuda.device_count())
@@ -84,7 +83,6 @@ class Utils:
             Utils.store = store
 
             torch.distributed.init_process_group(
-                #修改这里的 backend 参数，改为根据设备类型动态设置
                 # backend='nccl', world_size=Utils.world_size, rank=Utils.rank, store=store  
                 backend=DIST_BACKEND, world_size=Utils.world_size, rank=Utils.rank, store=store
             )
