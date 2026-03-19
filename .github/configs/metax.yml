@@ -1,6 +1,6 @@
-# CUDA Hardware Configuration for Megatron-LM-FL
-# This file defines CI/CD settings for CUDA-based testing
-# Test configurations are defined in tests/test_utils/config/platforms/cuda.yaml
+# Metax Hardware Configuration for Megatron-LM-FL
+# This file defines CI/CD settings for metax-based testing
+# Test configurations are defined in tests/test_utils/config/platforms/metax.yaml
 
 hardware_name: metax
 display_name: 'Metax Tests'
