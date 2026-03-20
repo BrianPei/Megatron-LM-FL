@@ -1,6 +1,6 @@
-# CUDA Hardware Configuration for Megatron-LM-FL
-# This file defines CI/CD settings for CUDA-based testing
-# Test configurations are defined in tests/test_utils/config/platforms/cuda.yaml
+# Metax Hardware Configuration for Megatron-LM-FL
+# This file defines CI/CD settings for Metax-based testing
+# Test configurations are defined in tests/test_utils/config/platforms/metax.yaml
 
 hardware_name: metax
 display_name: 'Metax Tests'
@@ -24,20 +24,11 @@ container_volumes:
   - /home/flagscale_cicd/docker/docker_build/docker_tokenizers:/home/gitlab-runner/tokenizers
   - /home/flagscale_cicd/docker/docker_build/docker_data/Megatron-LM/datasets:/opt/data/datasets
   - /home/flagscale_cicd/docker/docker_build/docker_tokenizers/Megatron-LM/tokenizers:/opt/data/tokenizers
-
-  # ===== 需要修改 3：沐曦设备路径 =====
-  # 这些路径必须存在，否则容器启动会失败
-  - /dev/dri:/dev/dri # 沐曦 GPU 设备文件
-  - /dev/mxcd:/dev/mxcd # 沐曦 GPU 设备文件
-
-  # 不挂载，使用容器内置的 MACA 3.3.x 软件栈，避免版本兼容问题
-  # - /opt/maca:/opt/maca # MACA 软件栈
-  # - /opt/mxdriver:/opt/mxdriver # 沐曦驱动路径
+  # Metax GPU driver
+  - /dev/dri:/dev/dri
+  - /dev/mxcd:/dev/mxcd
 
 # Container options (hardware-specific settings)
-# container_options: '--privileged --gpus all --shm-size=500g --hostname megatron_cicd --user root --ulimit nofile=65535:65535'
-# MetaX 容器选项
-# ===== 需要修改 4：容器选项 =====
 container_options: >-
   --privileged
   --shm-size=500g
@@ -49,7 +40,7 @@ container_options: >-
   --group-add video
   -e PLATFORM=metax
   -e TORCH_DISTRIBUTED_BACKEND=mccl
-  -e MUSA_VISIBLE_DEVICES=all
+  -e MACA_VISIBLE_DEVICES=all
 device_types:
   - c500
 
@@ -133,9 +124,10 @@ test_matrix:
       - tests/unit_tests/ssm/test_mamba_mixer.py
       - tests/unit_tests/ssm/test_mamba_context_parallel.py
 
-      # specific case that are unstable on MetaX
+      # specific case that are unstable on Metax
       - tests/unit_tests/post_training/test_modelopt_module_spec.py::TestModelOptMambaModel::test_inference
       - tests/unit_tests/models/test_gpt_model.py::TestGPTModelWithCustomPG::test_gpt_model_with_custom_pg
+      - tests/unit_tests/test_optimizer_cpu_offloading.py::test_multi_device_hybrid_optimizer
 
   # functional:
   #   train:
