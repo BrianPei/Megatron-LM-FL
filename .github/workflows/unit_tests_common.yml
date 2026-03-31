@@ -28,6 +28,12 @@ on:
         type: string
         default: ''
         description: JSON array of test files to ignore (e.g., '["tests/unit_tests/test_a.py", "tests/unit_tests/test_b.py"]')
+      # Whether to upload coverage report
+      upload_coverage:
+        description: "Whether to upload coverage report"
+        required: false
+        type: boolean
+        default: true
 
 jobs:
   # Detect which test groups need to run based on changed files
@@ -312,6 +318,25 @@ jobs:
           echo "exit_code=$exit_code" >> $GITHUB_OUTPUT
           exit $exit_code
         timeout-minutes: 60
+
+      - name: Upload coverage report
+        if: inputs.upload_coverage && always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-${{ inputs.platform }}
+          path: |
+            coverage-${{ inputs.platform }}.json
+            report-${{ inputs.platform }}.json
+
+      - name: Upload coverage report to FlagCICD
+        if: inputs.upload_coverage && always()
+        uses: flagos-ai/FlagOps/actions/post-pytest-report@v2
+        continue-on-error: true
+        with:
+          backend_url: 'http://flagcicd-inner.flagos.net:8000/metrics/'
+          user_id: '000000000000000000'
+          report_path: 'coverage-${{ inputs.platform }}.json'
+          fail_on_error: 'false'
 
       # - name: Debug - keep container alive on failure
       #   if: failure()
