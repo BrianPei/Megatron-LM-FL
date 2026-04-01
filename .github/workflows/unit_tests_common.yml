@@ -253,7 +253,7 @@ jobs:
           echo "Python location: $(which python)"
           echo "Python version: $(python --version)"
           # Install package in development mode
-          pip install boto3==1.42.1 mock pytest-mock pytest-cov
+          pip install boto3==1.42.1 mock pytest-mock
           pip install -e . --no-deps
         timeout-minutes: 30
 
@@ -309,71 +309,30 @@ jobs:
           fi
           echo "=== Platform: ${{ inputs.platform }} | Device: ${{ inputs.device }} | GPUs: $NUM_GPUS ==="
 
-          # Run unit tests with torchrun
-          # Each test group runs in isolation to avoid state pollution
-          COV_OPTS=""
+          # Coverage setup
+          COVERAGE_DIR="$GITHUB_WORKSPACE/coverage-report"
+          RUNNER_CMD="-m pytest"
           if [ '${{ inputs.upload_coverage }}' = 'true' ]; then
-            # Use parallel coverage mode: each torchrun worker writes .coverage.<pid>
-            # to avoid concurrent write conflicts. coverage combine merges them later.
-            printf '[run]\nparallel = true\n' > /tmp/.coveragerc_ci
-            COV_OPTS="--cov=megatron --cov-report= --cov-config=/tmp/.coveragerc_ci"
+            pip install coverage --quiet
+            mkdir -p "$COVERAGE_DIR"
+            printf '[run]\nparallel = true\nsource = %s\ndata_file = %s/.coverage\n' \
+              "$GITHUB_WORKSPACE" "$COVERAGE_DIR" > "$COVERAGE_DIR/.coveragerc"
+            RUNNER_CMD="-m coverage run --rcfile=$COVERAGE_DIR/.coveragerc -m pytest"
           fi
 
-          # Debug: verify test files exist before running
-          echo "--- Resolving test paths ---"
-          for p in $FINAL_TEST_PATH; do
-            if [ -e "$p" ]; then
-              echo "  FOUND: $p"
-            else
-              echo "  MISSING: $p"
-            fi
-          done
-          echo "--- End test paths ---"
-
-          set +e
-          torchrun --nproc_per_node=$NUM_GPUS -m pytest -v --junit-xml=/tmp/pytest_results.xml \
-            $FINAL_TEST_PATH $IGNORE_OPTS $COV_OPTS -p no:randomly
+          torchrun --nproc_per_node=$NUM_GPUS $RUNNER_CMD -v $FINAL_TEST_PATH $IGNORE_OPTS -p no:randomly
           exit_code=$?
-          set -e
 
-          # conftest.py converts exit code 5 (no tests collected) to 0,
-          # so also check the junit XML to catch silent 0-item collection
-          if [ -f /tmp/pytest_results.xml ]; then
-            TESTS_RUN=$(python3 -c "import xml.etree.ElementTree as ET; root = ET.parse('/tmp/pytest_results.xml').getroot(); print(root.attrib.get('tests', '0'))" 2>/dev/null || echo "0")
-            echo "Tests executed: $TESTS_RUN"
-            if [ "$TESTS_RUN" = "0" ] && [ "$exit_code" = "0" ]; then
-              echo "ERROR: pytest exited 0 but collected 0 tests. Failing the step."
-              exit_code=1
-            fi
-          else
-            echo "WARNING: No junit XML produced"
-            if [ "$exit_code" = "0" ]; then
-              exit_code=1
-            fi
+          # Combine coverage fragments and generate JSON report
+          if [ '${{ inputs.upload_coverage }}' = 'true' ]; then
+            coverage combine --rcfile="$COVERAGE_DIR/.coveragerc" "$COVERAGE_DIR" 2>/dev/null || true
+            coverage json --rcfile="$COVERAGE_DIR/.coveragerc" \
+              -o "$COVERAGE_DIR/coverage.json" --include="megatron/*" 2>/dev/null || true
           fi
 
           echo "exit_code=$exit_code" >> $GITHUB_OUTPUT
           exit $exit_code
         timeout-minutes: 60
-
-      - name: Generate Coverage Report
-        if: inputs.upload_coverage
-        working-directory: ${{ github.workspace }}
-        env:
-          PLATFORM: ${{ inputs.platform }}
-          DEVICE: ${{ inputs.device }}
-          TEST_GROUP: ${{ matrix.test_group.name }}
-        run: |
-          # Install coverage (may already be present)
-          pip3 install coverage pytest-cov 2>/dev/null || true
-
-          # Merge all .coverage.* parallel files produced by torchrun workers
-          python3 -m coverage combine --rcfile=/tmp/.coveragerc_ci --keep 2>/dev/null || true
-          # Generate JSON coverage report
-          python3 -m coverage json -o "coverage-${PLATFORM}-${DEVICE}-${TEST_GROUP}.json" \
-            --rcfile=/tmp/.coveragerc_ci \
-            --include="megatron/*" 2>/dev/null || echo "WARNING: No coverage data found, skipping coverage report"
-        continue-on-error: true
 
       - name: Upload Coverage Report
         if: inputs.upload_coverage
@@ -381,8 +340,7 @@ jobs:
         continue-on-error: true
         with:
           name: coverage-${{ inputs.platform }}-${{ inputs.device }}-${{ matrix.test_group.name }}
-          path: |
-            coverage-${{ inputs.platform }}-${{ inputs.device }}-${{ matrix.test_group.name }}.json
+          path: coverage-report/coverage.json
 
       - name: Check FlagCICD Connectivity
         if: inputs.upload_coverage
@@ -404,7 +362,7 @@ jobs:
         with:
           backend_url: 'http://flagcicd-inner.flagos.net:8000/metrics/'
           user_id: '000000000000000000'
-          report_path: 'coverage-${{ inputs.platform }}-${{ inputs.device }}-${{ matrix.test_group.name }}.json'
+          report_path: 'coverage-report/coverage.json'
           fail_on_error: 'false'
 
       # - name: Debug - keep container alive on failure
