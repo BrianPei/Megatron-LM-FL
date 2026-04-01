@@ -314,7 +314,13 @@ jobs:
           # Each test group runs in isolation to avoid state pollution
           COV_OPTS=""
           if [ '${{ inputs.upload_coverage }}' = 'true' ]; then
-            COV_OPTS="--cov=megatron --cov-report= --cov-append"
+            # Use parallel coverage mode: each torchrun worker writes .coverage.<pid>
+            # to avoid concurrent write conflicts. coverage combine merges them later.
+            cat > /tmp/.coveragerc_ci << 'EOF'
+            [run]
+            parallel = true
+            EOF
+            COV_OPTS="--cov=megatron --cov-report= --cov-config=/tmp/.coveragerc_ci"
           fi
           torchrun --nproc_per_node=$NUM_GPUS -m pytest -v $FINAL_TEST_PATH $IGNORE_OPTS $COV_OPTS -p no:randomly
           exit_code=$?
@@ -333,10 +339,11 @@ jobs:
           # Install coverage (may already be present)
           pip3 install coverage pytest-cov 2>/dev/null || true
 
-          # Merge all .coverage* files produced by sub-processes (torchrun spawns workers)
-          python3 -m coverage combine --keep 2>/dev/null || true
+          # Merge all .coverage.* parallel files produced by torchrun workers
+          python3 -m coverage combine --rcfile=/tmp/.coveragerc_ci --keep 2>/dev/null || true
           # Generate JSON coverage report
           python3 -m coverage json -o "coverage-${PLATFORM}-${DEVICE}-${TEST_GROUP}.json" \
+            --rcfile=/tmp/.coveragerc_ci \
             --include="megatron/*" 2>/dev/null || echo "WARNING: No coverage data found, skipping coverage report"
         continue-on-error: true
 
