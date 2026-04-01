@@ -213,9 +213,8 @@ jobs:
             others) CHANGED='${{ needs.detect_changes.outputs.others }}' ;;
             *) CHANGED="true" ;;
           esac
-          echo "should_run=$CHANGED" >> $GITHUB_OUTPUT
+          # echo "should_run=$CHANGED" >> $GITHUB_OUTPUT
   
-
       - name: Checkout source code
         if: steps.should_run.outputs.should_run == 'true'
         uses: actions/checkout@v6
@@ -319,8 +318,40 @@ jobs:
             printf '[run]\nparallel = true\n' > /tmp/.coveragerc_ci
             COV_OPTS="--cov=megatron --cov-report= --cov-config=/tmp/.coveragerc_ci"
           fi
-          torchrun --nproc_per_node=$NUM_GPUS -m pytest -v $FINAL_TEST_PATH $IGNORE_OPTS $COV_OPTS -p no:randomly
+
+          # Debug: verify test files exist before running
+          echo "--- Resolving test paths ---"
+          for p in $FINAL_TEST_PATH; do
+            if [ -e "$p" ]; then
+              echo "  FOUND: $p"
+            else
+              echo "  MISSING: $p"
+            fi
+          done
+          echo "--- End test paths ---"
+
+          set +e
+          torchrun --nproc_per_node=$NUM_GPUS -m pytest -v --junit-xml=/tmp/pytest_results.xml \
+            $FINAL_TEST_PATH $IGNORE_OPTS $COV_OPTS -p no:randomly
           exit_code=$?
+          set -e
+
+          # conftest.py converts exit code 5 (no tests collected) to 0,
+          # so also check the junit XML to catch silent 0-item collection
+          if [ -f /tmp/pytest_results.xml ]; then
+            TESTS_RUN=$(python3 -c "import xml.etree.ElementTree as ET; root = ET.parse('/tmp/pytest_results.xml').getroot(); print(root.attrib.get('tests', '0'))" 2>/dev/null || echo "0")
+            echo "Tests executed: $TESTS_RUN"
+            if [ "$TESTS_RUN" = "0" ] && [ "$exit_code" = "0" ]; then
+              echo "ERROR: pytest exited 0 but collected 0 tests. Failing the step."
+              exit_code=1
+            fi
+          else
+            echo "WARNING: No junit XML produced"
+            if [ "$exit_code" = "0" ]; then
+              exit_code=1
+            fi
+          fi
+
           echo "exit_code=$exit_code" >> $GITHUB_OUTPUT
           exit $exit_code
         timeout-minutes: 60
