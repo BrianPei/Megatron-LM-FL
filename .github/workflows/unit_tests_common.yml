@@ -316,10 +316,7 @@ jobs:
           if [ '${{ inputs.upload_coverage }}' = 'true' ]; then
             # Use parallel coverage mode: each torchrun worker writes .coverage.<pid>
             # to avoid concurrent write conflicts. coverage combine merges them later.
-            cat > /tmp/.coveragerc_ci << 'EOF'
-            [run]
-            parallel = true
-            EOF
+            printf '[run]\nparallel = true\n' > /tmp/.coveragerc_ci
             COV_OPTS="--cov=megatron --cov-report= --cov-config=/tmp/.coveragerc_ci"
           fi
           torchrun --nproc_per_node=$NUM_GPUS -m pytest -v $FINAL_TEST_PATH $IGNORE_OPTS $COV_OPTS -p no:randomly
