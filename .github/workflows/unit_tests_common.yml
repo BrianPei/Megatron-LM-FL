@@ -44,6 +44,7 @@ jobs:
       data: ${{ steps.filter.outputs.data }}
       fusions: ${{ steps.filter.outputs.fusions }}
       others: ${{ steps.filter.outputs.others }}
+      ci_config: ${{ steps.filter.outputs.ci_config }}
     steps:
       - name: Checkout source code
         uses: actions/checkout@v6
@@ -118,6 +119,10 @@ jobs:
           OTHERS_PATTERNS="^tests/unit_tests/export/ ^tests/unit_tests/post_training/ ^tests/unit_tests/tokenizers/ ^tests/unit_tests/utils/ ^megatron/core/export/ ^megatron/post_training/ ^megatron/tokenizer/ ^megatron/core/utils/"
           echo "others=$(check_patterns "$OTHERS_PATTERNS")" >> $GITHUB_OUTPUT
 
+          # CI config: .github workflow and config files
+          CI_CONFIG_PATTERNS="^\.github/"
+          echo "ci_config=$(check_patterns "$CI_CONFIG_PATTERNS")" >> $GITHUB_OUTPUT
+
           echo "=== Change detection complete ==="
 
   unit_test:
@@ -181,6 +186,13 @@ jobs:
             exit 0
           fi
 
+          # If CI config files (.github/) changed, run all tests
+          CI_CONFIG_CHANGED='${{ needs.detect_changes.outputs.ci_config }}'
+          if [ "$CI_CONFIG_CHANGED" == "true" ]; then
+            echo "should_run=true" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
           # Check change detection output for this test group
           case "$TEST_GROUP" in
             core) CHANGED='${{ needs.detect_changes.outputs.core }}' ;;
@@ -195,7 +207,6 @@ jobs:
             others) CHANGED='${{ needs.detect_changes.outputs.others }}' ;;
             *) CHANGED="true" ;;
           esac
-
           echo "should_run=$CHANGED" >> $GITHUB_OUTPUT
   
 
@@ -218,7 +229,16 @@ jobs:
       - name: Set safe directory
         if: steps.should_run.outputs.should_run == 'true'
         run: |
-          git config --global --add safe.directory $GITHUB_WORKSPACE
+          command -v git && git config --global --add safe.directory $GITHUB_WORKSPACE || true
+
+      - name: Activate Python environment
+        run: |
+          if [ -f /opt/conda/etc/profile.d/conda.sh ]; then
+            source /opt/conda/etc/profile.d/conda.sh
+            conda activate base
+          fi
+          echo "PATH=$PATH" >> $GITHUB_ENV
+          echo "Python: $(which python) ($(python --version 2>&1))"
 
       - name: Setup Python environment
         if: steps.should_run.outputs.should_run == 'true'
@@ -228,7 +248,7 @@ jobs:
           echo "Python location: $(which python)"
           echo "Python version: $(python --version)"
           # Install package in development mode
-          pip install boto3==1.42.1
+          pip install boto3==1.42.1 mock pytest-mock
           pip install -e . --no-deps
         timeout-minutes: 30
 
@@ -257,19 +277,46 @@ jobs:
           # Build ignore options from ignored_tests input
           IGNORED_TESTS='${{ inputs.ignored_tests }}'
           IGNORE_OPTS=""
+          FINAL_TEST_PATH="$TEST_PATH"
           if [ -n "$IGNORED_TESTS" ] && [ "$IGNORED_TESTS" != "[]" ]; then
             echo "Parsing ignored tests list..."
-            # Parse JSON array and build --ignore options
-            IGNORE_OPTS=$(echo "$IGNORED_TESTS" | python3 -c "import sys, json; tests = json.load(sys.stdin); print(' '.join(['--deselect=' + t for t in tests])) if tests else None")
+            if echo "$TEST_PATH" | grep -q '\*'; then
+              # Glob pattern: pytest --ignore does NOT skip explicitly-listed file args.
+              # Pre-filter the expanded file list in Python to exclude ignored files directly.
+              FINAL_TEST_PATH=$(echo "$IGNORED_TESTS" | python3 -c "import sys, json, glob; ignored = json.load(sys.stdin); ignored_files = set(t for t in ignored if '::' not in t); files = sorted(f for f in glob.glob('$TEST_PATH') if f not in ignored_files); print(' '.join(files))")
+              # For glob mode, only --deselect applies (for specific test-case entries containing '::')
+              IGNORE_OPTS=$(echo "$IGNORED_TESTS" | python3 -c "import sys, json; tests = json.load(sys.stdin); opts = ['--deselect=' + t for t in tests if '::' in t]; print(' '.join(opts))")
+            else
+              # Directory path: pytest auto-discovery respects --ignore for files/dirs
+              IGNORE_OPTS=$(echo "$IGNORED_TESTS" | python3 -c "import sys, json; tests = json.load(sys.stdin); opts = ['--ignore=' + t if '::' not in t else '--deselect=' + t for t in tests]; print(' '.join(opts))")
+            fi
+            echo "Test paths: $FINAL_TEST_PATH"
             if [ -n "$IGNORE_OPTS" ]; then
               echo "Ignoring tests: $IGNORE_OPTS"
             fi
           fi
 
+          # Calc GPU num
+          # torch.cuda.device_count() returns 0 on MetaX
+          if [ "$PLATFORM" = "metax" ]; then
+            NUM_GPUS=$(python3 -c "import torch; print(torch.cuda.device_count() if hasattr(torch, 'cuda') and torch.cuda.is_available() else 2)")
+          else
+            NUM_GPUS=$(python3 -c "import torch; print(torch.cuda.device_count())")
+          fi
+          echo "=== Platform: ${{ inputs.platform }} | Device: ${{ inputs.device }} | GPUs: $NUM_GPUS ==="
+
           # Run unit tests with torchrun
           # Each test group runs in isolation to avoid state pollution
-          torchrun --nproc_per_node=8 -m pytest -v $TEST_PATH $IGNORE_OPTS -p no:randomly
+          torchrun --nproc_per_node=$NUM_GPUS -m pytest -v $FINAL_TEST_PATH $IGNORE_OPTS -p no:randomly
           exit_code=$?
           echo "exit_code=$exit_code" >> $GITHUB_OUTPUT
           exit $exit_code
         timeout-minutes: 60
+
+      # - name: Debug - keep container alive on failure
+      #   if: failure()
+      #   run: |
+      #     echo "Container sleeping for 10 minutes for debugging..."
+      #     echo "On host, run: docker ps  then  docker exec -it <container_id> bash"
+      #     sleep 600
+      #   timeout-minutes: 60
