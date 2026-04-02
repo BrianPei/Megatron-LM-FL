@@ -360,6 +360,8 @@ jobs:
         if: inputs.upload_coverage && always()
         uses: flagos-ai/FlagOps/actions/post-pytest-report@v2
         continue-on-error: true
+        env:
+          NO_PROXY: "flagcicd-inner.flagos.net"
         with:
           backend_url: 'http://flagcicd-inner.flagos.net:8000/metrics/'
           user_id: '000000000000000000'
