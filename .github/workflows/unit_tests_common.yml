@@ -327,7 +327,7 @@ jobs:
           if [ '${{ inputs.upload_coverage }}' = 'true' ]; then
             coverage combine --rcfile="$COVERAGE_DIR/.coveragerc" "$COVERAGE_DIR" 2>/dev/null || true
             coverage json --rcfile="$COVERAGE_DIR/.coveragerc" \
-              -o "$COVERAGE_DIR/coverage.json" --include="megatron/*" 2>/dev/null || true
+              -o "$COVERAGE_DIR/coverage-${{ inputs.platform }}-${{ inputs.device }}-${{ matrix.test_group.name }}.json" --include="megatron/*" 2>/dev/null || true
           fi
 
           echo "exit_code=$exit_code" >> $GITHUB_OUTPUT
@@ -340,7 +340,7 @@ jobs:
         continue-on-error: true
         with:
           name: coverage-${{ inputs.platform }}-${{ inputs.device }}-${{ matrix.test_group.name }}
-          path: coverage-report/coverage.json
+          path: coverage-report/coverage-${{ inputs.platform }}-${{ inputs.device }}-${{ matrix.test_group.name }}.json
 
       - name: Check FlagCICD Connectivity
         if: inputs.upload_coverage
@@ -362,7 +362,7 @@ jobs:
         with:
           backend_url: 'http://flagcicd-inner.flagos.net:8000/metrics/'
           user_id: '000000000000000000'
-          report_path: 'coverage-report/coverage.json'
+          report_path: 'coverage-report/coverage-${{ inputs.platform }}-${{ inputs.device }}-${{ matrix.test_group.name }}.json'
           fail_on_error: 'false'
 
       # - name: Debug - keep container alive on failure
