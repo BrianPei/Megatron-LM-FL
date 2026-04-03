@@ -16,7 +16,7 @@ ci_image: localhost:5000/cr.metax-tech.com/public-ai-release/maca/megatron-lm:0.
 #   - metax
 #   - dev
 runner_labels:
-  - mx-4g-cicd-test
+  - mx-4g-cicd-megatron
 
 # Container volumes (hardware-specific paths)
 container_volumes:
