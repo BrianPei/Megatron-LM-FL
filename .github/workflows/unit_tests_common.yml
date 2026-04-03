@@ -213,7 +213,7 @@ jobs:
             others) CHANGED='${{ needs.detect_changes.outputs.others }}' ;;
             *) CHANGED="true" ;;
           esac
-          # echo "should_run=$CHANGED" >> $GITHUB_OUTPUT
+          echo "should_run=$CHANGED" >> $GITHUB_OUTPUT
   
       - name: Checkout source code
         if: steps.should_run.outputs.should_run == 'true'
