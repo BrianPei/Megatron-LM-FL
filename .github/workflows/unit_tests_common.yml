@@ -249,8 +249,14 @@ jobs:
           echo "PATH=$PATH" >> $GITHUB_ENV
           echo "Python: $(which python) ($(python --version 2>&1))"
 
+          # Ensure curl is available (required by coverage upload action)
+          command -v curl || \
+            apt-get update -qq && apt-get install -y --no-install-recommends curl 2>/dev/null || \
+            yum install -y curl 2>/dev/null || \
+            apk add --no-cache curl 2>/dev/null || true
+
           # Install package in development mode
-          pip install boto3==1.42.1 mock pytest-mock
+          pip install boto3==1.42.1 mock pytest-mock coverage
           pip install -e . --no-deps
         timeout-minutes: 30
 
@@ -310,7 +316,6 @@ jobs:
           COVERAGE_DIR="$GITHUB_WORKSPACE/coverage-report"
           RUNNER_CMD="-m pytest"
           if [ '${{ inputs.upload_coverage }}' = 'true' ]; then
-            pip install coverage --quiet
             mkdir -p "$COVERAGE_DIR"
             printf '[run]\nparallel = true\nsource = %s\ndata_file = %s/.coverage\n' \
               "$GITHUB_WORKSPACE" "$COVERAGE_DIR" > "$COVERAGE_DIR/.coveragerc"
