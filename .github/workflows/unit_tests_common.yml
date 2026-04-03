@@ -236,8 +236,12 @@ jobs:
         run: |
           command -v git && git config --global --add safe.directory $GITHUB_WORKSPACE || true
 
-      - name: Activate Python environment
+      - name: Setup Python environment
+        if: steps.should_run.outputs.should_run == 'true'
+        working-directory: ${{ github.workspace }}
         run: |
+          set -euo pipefail
+          
           if [ -f /opt/conda/etc/profile.d/conda.sh ]; then
             source /opt/conda/etc/profile.d/conda.sh
             conda activate base
@@ -245,13 +249,6 @@ jobs:
           echo "PATH=$PATH" >> $GITHUB_ENV
           echo "Python: $(which python) ($(python --version 2>&1))"
 
-      - name: Setup Python environment
-        if: steps.should_run.outputs.should_run == 'true'
-        working-directory: ${{ github.workspace }}
-        run: |
-          set -euo pipefail
-          echo "Python location: $(which python)"
-          echo "Python version: $(python --version)"
           # Install package in development mode
           pip install boto3==1.42.1 mock pytest-mock
           pip install -e . --no-deps
@@ -342,22 +339,8 @@ jobs:
           name: coverage-${{ inputs.platform }}-${{ inputs.device }}-${{ matrix.test_group.name }}
           path: coverage-report/coverage-${{ inputs.platform }}-${{ inputs.device }}-${{ matrix.test_group.name }}.json
 
-      # - name: Check FlagCICD Connectivity
-      #   if: inputs.upload_coverage
-      #   id: check_flagcicd
-      #   continue-on-error: true
-      #   run: |
-      #     if curl -sf --max-time 3 --connect-timeout 2 \
-      #          "http://flagcicd-inner.flagos.net:8000/" -o /dev/null 2>/dev/null; then
-      #       echo "reachable=true" >> $GITHUB_OUTPUT
-      #     else
-      #       echo "reachable=false" >> $GITHUB_OUTPUT
-      #       echo "INFO: flagcicd-inner.flagos.net unreachable from this runner, skipping report upload"
-      #     fi
-
       - name: Upload Coverage Report to FlagCICD
-        # if: inputs.upload_coverage && steps.check_flagcicd.outputs.reachable == 'true'
-        if: inputs.upload_coverage && always()
+        if: inputs.upload_coverage
         uses: flagos-ai/FlagOps/actions/post-pytest-report@v2
         continue-on-error: true
         env:
