@@ -53,7 +53,7 @@ jobs:
       ci_config: ${{ steps.filter.outputs.ci_config }}
     steps:
       - name: Checkout source code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
@@ -215,26 +215,32 @@ jobs:
           esac
           echo "should_run=$CHANGED" >> $GITHUB_OUTPUT
   
-      - name: Checkout source code
+      - name: Checkout Source Code (attempt 1)
+        id: checkout1
         if: steps.should_run.outputs.should_run == 'true'
-        uses: actions/checkout@v6
+        uses: actions/checkout@v4
+        continue-on-error: true
         with:
-          repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
-          ref: ${{ github.event.pull_request.head.ref || github.ref }}
-          ssh-strict: true
-          ssh-user: git
-          ssh-key: ${{ secrets.RUNNER_SSH_KEY }}
-          persist-credentials: false
-          clean: true
-          sparse-checkout-cone-mode: true
-          fetch-tags: false
-          show-progress: true
-          lfs: false
+          fetch-depth: 0
+          set-safe-directory: true
+          
+      - name: Checkout Source Code (attempt 2)
+        id: checkout2
+        if: steps.should_run.outputs.should_run == 'true' && steps.checkout1.outcome == 'failure'
+        uses: actions/checkout@v4
+        continue-on-error: true
+        with:
+          fetch-depth: 0
+          set-safe-directory: true
 
-      - name: Set safe directory
-        if: steps.should_run.outputs.should_run == 'true'
-        run: |
-          command -v git && git config --global --add safe.directory $GITHUB_WORKSPACE || true
+      - name: Checkout Source Code (attempt 3)
+        id: checkout3
+        if: steps.should_run.outputs.should_run == 'true' && steps.checkout2.outcome == 'failure'
+        uses: actions/checkout@v4
+        continue-on-error: true
+        with:
+          fetch-depth: 0
+          set-safe-directory: true
 
       - name: Setup Python environment
         if: steps.should_run.outputs.should_run == 'true'
@@ -250,10 +256,7 @@ jobs:
           echo "Python: $(which python) ($(python --version 2>&1))"
 
           # Ensure curl is available (required by coverage upload action)
-          command -v curl || \
-            apt-get update -qq && apt-get install -y --no-install-recommends curl 2>/dev/null || \
-            yum install -y curl 2>/dev/null || \
-            apk add --no-cache curl 2>/dev/null || true
+          command -v curl || (apt-get update -qq && apt-get install -y --no-install-recommends curl 2>/dev/null)
 
           # Install package in development mode
           pip install boto3==1.42.1 mock pytest-mock coverage
