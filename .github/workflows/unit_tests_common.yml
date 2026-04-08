@@ -259,8 +259,8 @@ jobs:
           command -v curl || (apt-get update -qq && apt-get install -y --no-install-recommends curl 2>/dev/null)
 
           # Install package in development mode
-          pip install boto3==1.42.1 mock pytest-mock coverage
-          pip install -e . --no-deps
+          pip install boto3 mock pytest-mock coverage --no-cache-dir
+          pip install -e . --no-deps --no-build-isolation --no-cache-dir
         timeout-minutes: 30
 
       - name: Run unit tests - ${{ matrix.test_group.name }}
