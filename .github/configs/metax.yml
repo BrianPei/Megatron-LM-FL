@@ -25,9 +25,6 @@ container_volumes:
   - /home/flagscale_cicd/docker/docker_build/docker_tokenizers:/home/gitlab-runner/tokenizers
   - /home/flagscale_cicd/docker/docker_build/docker_data/Megatron-LM/datasets:/opt/data/datasets
   - /home/flagscale_cicd/docker/docker_build/docker_tokenizers/Megatron-LM/tokenizers:/opt/data/tokenizers
-  # Metax GPU driver
-  - /dev/dri:/dev/dri
-  - /dev/mxcd:/dev/mxcd
 
 # Container options (hardware-specific settings)
 container_options: >-
