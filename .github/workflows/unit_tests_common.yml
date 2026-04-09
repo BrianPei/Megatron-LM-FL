@@ -258,8 +258,10 @@ jobs:
           # Ensure curl is available (required by coverage upload action)
           command -v curl || (apt-get update -qq && apt-get install -y --no-install-recommends curl 2>/dev/null)
 
-          # Install package in development mode
+          # Install dependence package
           pip install boto3 mock pytest-mock coverage --no-cache-dir
+
+          # Build
           pip install -e . --no-deps --no-build-isolation --no-cache-dir
         timeout-minutes: 30
 
