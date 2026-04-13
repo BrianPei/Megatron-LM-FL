@@ -28,6 +28,12 @@ on:
         type: string
         default: ''
         description: JSON array of test files to ignore (e.g., '["tests/unit_tests/test_a.py", "tests/unit_tests/test_b.py"]')
+      # Whether to upload coverage report
+      upload_coverage:
+        description: "Whether to upload coverage report"
+        required: false
+        type: boolean
+        default: true
 
 jobs:
   # Detect which test groups need to run based on changed files
@@ -47,7 +53,7 @@ jobs:
       ci_config: ${{ steps.filter.outputs.ci_config }}
     steps:
       - name: Checkout source code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
@@ -209,30 +215,39 @@ jobs:
           esac
           echo "should_run=$CHANGED" >> $GITHUB_OUTPUT
   
-
-      - name: Checkout source code
+      - name: Checkout Source Code (attempt 1)
+        id: checkout1
         if: steps.should_run.outputs.should_run == 'true'
-        uses: actions/checkout@v6
+        uses: actions/checkout@v4
+        continue-on-error: true
         with:
-          repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
-          ref: ${{ github.event.pull_request.head.ref || github.ref }}
-          ssh-strict: true
-          ssh-user: git
-          ssh-key: ${{ secrets.RUNNER_SSH_KEY }}
-          persist-credentials: false
-          clean: true
-          sparse-checkout-cone-mode: true
-          fetch-tags: false
-          show-progress: true
-          lfs: false
+          fetch-depth: 0
+          set-safe-directory: true
+          
+      - name: Checkout Source Code (attempt 2)
+        id: checkout2
+        if: steps.should_run.outputs.should_run == 'true' && steps.checkout1.outcome == 'failure'
+        uses: actions/checkout@v4
+        continue-on-error: true
+        with:
+          fetch-depth: 0
+          set-safe-directory: true
 
-      - name: Set safe directory
+      - name: Checkout Source Code (attempt 3)
+        id: checkout3
+        if: steps.should_run.outputs.should_run == 'true' && steps.checkout2.outcome == 'failure'
+        uses: actions/checkout@v4
+        continue-on-error: true
+        with:
+          fetch-depth: 0
+          set-safe-directory: true
+
+      - name: Setup Python environment
         if: steps.should_run.outputs.should_run == 'true'
+        working-directory: ${{ github.workspace }}
         run: |
-          command -v git && git config --global --add safe.directory $GITHUB_WORKSPACE || true
-
-      - name: Activate Python environment
-        run: |
+          set -euo pipefail
+          
           if [ -f /opt/conda/etc/profile.d/conda.sh ]; then
             source /opt/conda/etc/profile.d/conda.sh
             conda activate base
@@ -240,16 +255,14 @@ jobs:
           echo "PATH=$PATH" >> $GITHUB_ENV
           echo "Python: $(which python) ($(python --version 2>&1))"
 
-      - name: Setup Python environment
-        if: steps.should_run.outputs.should_run == 'true'
-        working-directory: ${{ github.workspace }}
-        run: |
-          set -euo pipefail
-          echo "Python location: $(which python)"
-          echo "Python version: $(python --version)"
-          # Install package in development mode
-          pip install boto3==1.42.1 mock pytest-mock
-          pip install -e . --no-deps
+          # Ensure curl is available (required by coverage upload action)
+          command -v curl || (apt-get update -qq && apt-get install -y --no-install-recommends curl 2>/dev/null)
+
+          # Install dependence package
+          pip install boto3 mock pytest-mock coverage --no-cache-dir
+
+          # Build
+          pip install -e . --no-deps --no-build-isolation --no-cache-dir
         timeout-minutes: 30
 
       - name: Run unit tests - ${{ matrix.test_group.name }}
@@ -297,7 +310,6 @@ jobs:
           fi
 
           # Calc GPU num
-          # torch.cuda.device_count() returns 0 on MetaX
           if [ "$PLATFORM" = "metax" ]; then
             NUM_GPUS=$(python3 -c "import torch; print(torch.cuda.device_count() if hasattr(torch, 'cuda') and torch.cuda.is_available() else 2)")
           else
@@ -305,13 +317,49 @@ jobs:
           fi
           echo "=== Platform: ${{ inputs.platform }} | Device: ${{ inputs.device }} | GPUs: $NUM_GPUS ==="
 
-          # Run unit tests with torchrun
-          # Each test group runs in isolation to avoid state pollution
-          torchrun --nproc_per_node=$NUM_GPUS -m pytest -v $FINAL_TEST_PATH $IGNORE_OPTS -p no:randomly
+          # Coverage setup
+          COVERAGE_DIR="$GITHUB_WORKSPACE/coverage-report"
+          RUNNER_CMD="-m pytest"
+          if [ '${{ inputs.upload_coverage }}' = 'true' ]; then
+            mkdir -p "$COVERAGE_DIR"
+            printf '[run]\nparallel = true\nsource = %s\ndata_file = %s/.coverage\n' \
+              "$GITHUB_WORKSPACE" "$COVERAGE_DIR" > "$COVERAGE_DIR/.coveragerc"
+            RUNNER_CMD="-m coverage run --rcfile=$COVERAGE_DIR/.coveragerc -m pytest"
+          fi
+
+          torchrun --nproc_per_node=$NUM_GPUS $RUNNER_CMD -v $FINAL_TEST_PATH $IGNORE_OPTS -p no:randomly
           exit_code=$?
+
+          # Combine coverage fragments and generate JSON report
+          if [ '${{ inputs.upload_coverage }}' = 'true' ]; then
+            coverage combine --rcfile="$COVERAGE_DIR/.coveragerc" "$COVERAGE_DIR" 2>/dev/null || true
+            coverage json --rcfile="$COVERAGE_DIR/.coveragerc" \
+              -o "$COVERAGE_DIR/coverage-${{ inputs.platform }}-${{ inputs.device }}-${{ matrix.test_group.name }}.json" --include="megatron/*" 2>/dev/null || true
+          fi
+
           echo "exit_code=$exit_code" >> $GITHUB_OUTPUT
           exit $exit_code
         timeout-minutes: 60
+
+      - name: Upload Coverage Report
+        if: inputs.upload_coverage
+        uses: actions/upload-artifact@v4
+        continue-on-error: true
+        with:
+          name: coverage-${{ inputs.platform }}-${{ inputs.device }}-${{ matrix.test_group.name }}
+          path: coverage-report/coverage-${{ inputs.platform }}-${{ inputs.device }}-${{ matrix.test_group.name }}.json
+
+      - name: Upload Coverage Report to FlagCICD
+        if: inputs.upload_coverage
+        uses: flagos-ai/FlagOps/actions/post-pytest-report@v2
+        continue-on-error: true
+        env:
+          NO_PROXY: "flagcicd-inner.flagos.net"
+        with:
+          backend_url: 'http://flagcicd-inner.flagos.net:8000/metrics/'
+          user_id: '000000000000000000'
+          report_path: 'coverage-report/coverage-${{ inputs.platform }}-${{ inputs.device }}-${{ matrix.test_group.name }}.json'
+          fail_on_error: 'false'
 
       # - name: Debug - keep container alive on failure
       #   if: failure()
