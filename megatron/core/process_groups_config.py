@@ -143,6 +143,9 @@ class ProcessGroupCollection:
     # _ENGRAM_EMBEDDING_PARALLEL_GROUP
     engram_embed: torch.distributed.ProcessGroup = field(init=False)
 
+    # _ENGRAM_MODEL_PARALLEL_GROUP
+    engram_mp: torch.distributed.ProcessGroup = field(init=False)
+
     def __init__(self, **kwargs):
         for key in kwargs:
             if key in [field.name for field in fields(self)]:
@@ -250,6 +253,7 @@ class ProcessGroupCollection:
             # TODO: check_initialize
             'engram_dp': parallel_state.get_engram_data_parallel_group,
             'engram_embed': parallel_state.get_engram_embedding_parallel_group,
+            'engram_mp': parallel_state.get_engram_model_parallel_group
         }
 
         assert all(
@@ -331,6 +335,7 @@ class ProcessGroupCollection:
             mp_group = parallel_state.get_model_parallel_group()
             expt_tp_pp_group = parallel_state.get_expert_tensor_model_pipeline_parallel_group()
             engram_embed_group = parallel_state.get_engram_embedding_parallel_group()
+            engram_mp_group = parallel_state.get_engram_model_parallel_group()
 
             # Inter distributed optimizer group
             if hasattr(model_chunks[0], 'ddp_config'):
@@ -460,6 +465,14 @@ class ProcessGroupCollection:
                     "No engram embedding parallel group provided in pg_collection, set it to None."
                 )
             engram_embed_group = pg_collection.engram_embed
+            if not hasattr(pg_collection, "engram_mp"):
+                pg_collection.engram_mp = None
+                log_single_rank(
+                    logger,
+                    logging.WARNING,
+                    "No engram model parallel group provided in pg_collection, set it to None."
+                )
+            engram_mp_group = pg_collection.engram_mp
             engram_dp_group_gloo = None
 
         return {
@@ -476,7 +489,8 @@ class ProcessGroupCollection:
             'intra_expt_dp_group_gloo': intra_expt_dp_group_gloo,
             'engram_dp_group': engram_dp_group,
             'engram_embed_group': engram_embed_group,
-            'engram_dp_group_gloo': engram_dp_group_gloo
+            'engram_dp_group_gloo': engram_dp_group_gloo,
+            'engram_mp_group': engram_mp_group
         }
 
     @staticmethod
@@ -534,6 +548,7 @@ class ProcessGroupCollection:
                 ),
                 'engram_dp_group': parallel_state.get_engram_data_parallel_group(),
                 'engram_embed_group': parallel_state.get_engram_embedding_parallel_group(),
+                'engram_mp_group': parallel_state.get_engram_model_parallel_group()
             }
         else:
             # Use provided process group collection with validation and fallbacks
@@ -623,6 +638,14 @@ class ProcessGroupCollection:
                     logging.WARNING,
                     "No engram embedding parallel group provided in pg_collection, set it to None."
                 )
+            if not hasattr(pg_collection, "engram_mp"):
+                pg_collection.engram_mp = None
+                log_single_rank(
+                    logger,
+                    logging.WARNING,
+                    "No engram model parallel group provided in pg_collection, set it to None."
+                )
             result['engram_dp_group'] = pg_collection.engram_dp
             result['engram_embed_group'] = pg_collection.engram_embed
+            result['engram_mp_group'] = pg_collection.engram_mp
             return result

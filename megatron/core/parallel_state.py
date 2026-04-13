@@ -140,6 +140,11 @@ _INTRA_DISTRIBUTED_OPTIMIZER_INSTANCE_GROUP = None
 _ENGRAM_EMBEDDING_PARALLEL_GROUP = None
 _ENGRAM_EMBEDDING_PARALLEL_GROUP_GLOO = None
 _ENGRAM_EMBEDDING_PARALLEL_GLOBAL_RANKS = None
+_ENGRAM_ENABLE = False
+
+# Parallel group of engram model parallel, which contain pipeline + embed, used to allreduce grad and param norm.
+_ENGRAM_MODEL_PARALLEL_GROUP = None
+_ENGRAM_MODEL_PARALLEL_GROUP_RANKS = None
 
 # Parallel gorup of engram data parallel
 _ENGRAM_DATA_PARALLEL_GROUP = None
@@ -792,14 +797,16 @@ def initialize_model_parallel(
     engram_dp_size = world_size // (engram_embedding_parallel_size * pipeline_model_parallel_size) if engram_embedding_parallel_size is not None else None
     if engram_embedding_parallel_size is not None:
         engram_rank_generator = RankGenerator(
-            tp=1,
+            tp=engram_embedding_parallel_size,
             ep=1,
             dp=engram_dp_size,
             pp=pipeline_model_parallel_size,
-            cp=engram_embedding_parallel_size,
+            cp=1,
             order=order,
             rank_offset=0,
         )
+        global _ENGRAM_ENABLE
+        _ENGRAM_ENABLE = True
     else:
         engram_rank_generator = None
     ######## FlsgScale End ########
@@ -925,7 +932,7 @@ def initialize_model_parallel(
                 _ENGRAM_DATA_PARALLEL_GROUP_GLOO = group_gloo
                 _ENGRAM_DATA_PARALLEL_GLOBAL_RANKS = ranks
                 print(f"[rank{torch.distributed.get_rank()}] engram_dp_ranks = {ranks}")
-        for ranks in engram_rank_generator.get_ranks('cp'):
+        for ranks in engram_rank_generator.get_ranks('tp'):
             group = create_group(
                 ranks,
                 timeout=timeout,
@@ -948,7 +955,18 @@ def initialize_model_parallel(
                 _ENGRAM_EMBEDDING_PARALLEL_GROUP = group
                 _ENGRAM_EMBEDDING_PARALLEL_GROUP_GLOO = group_gloo
                 _ENGRAM_EMBEDDING_PARALLEL_GLOBAL_RANKS = ranks
-                print(f"[rank{torch.distributed.get_rank()}] engram_embeds_ranks = {ranks}")
+        for ranks in engram_rank_generator.get_ranks('tp-pp'):
+            group = create_group(
+                ranks,
+                timeout=timeout,
+                pg_options=get_nccl_options("engram_model_parallel", nccl_comm_cfgs),
+                group_desc="ENGRAM_MODEL_PARALLEL_GROUP",
+            )
+            if rank in ranks:
+                global _ENGRAM_MODEL_PARALLEL_GROUP
+                global _ENGRAM_MODEL_PARALLEL_GROUP_RANKS
+                _ENGRAM_MODEL_PARALLEL_GROUP = group
+                _ENGRAM_MODEL_PARALLEL_GROUP_RANKS = ranks
 
     # Apply SHARP to the dp group.
     if sharp_enabled_group == "dp":
@@ -2297,6 +2315,11 @@ def get_engram_embedding_parallel_group():
     global _ENGRAM_EMBEDDING_PARALLEL_GROUP
     return _ENGRAM_EMBEDDING_PARALLEL_GROUP
 
+def get_engram_model_parallel_group():
+    """Get the engram model group the caller rank belongs to."""
+    global _ENGRAM_MODEL_PARALLEL_GROUP
+    return _ENGRAM_MODEL_PARALLEL_GROUP
+
 
 def get_engram_data_parallel_group():
     """Get the engram data parallel group the caller rank belongs to."""
@@ -2505,6 +2528,9 @@ def destroy_model_parallel():
     # Engram parallel groups destroy.
     global _ENGRAM_EMBEDDING_PARALLEL_GROUP
     _ENGRAM_EMBEDDING_PARALLEL_GROUP = None
+
+    global _ENGRAM_MODEL_PARALLEL_GROUP
+    _ENGRAM_MODEL_PARALLEL_GROUP = None
 
     global _ENGRAM_EMBEDDING_PARALLEL_GROUP_GLOO
     if (
