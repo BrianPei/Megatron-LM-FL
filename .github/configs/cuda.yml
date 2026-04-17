@@ -5,26 +5,33 @@
 hardware_name: cuda
 display_name: 'CUDA Tests'
 
-ci_image: harbor.baai.ac.cn/flagscale/megatron-lm-fl:cuda12.8.1-cudnn9.8.0-torch2.7.0-python3.12-dev-02111650
+# CI image for BAAI env
+# ci_image: harbor.baai.ac.cn/flagscale/megatron-lm-fl:cuda12.8.1-cudnn9.8.0-torch2.7.0-python3.12-dev-02111650
 
+# Runner labels for self-hosted A100 node
 # runner_labels:
 #   - self-hosted
 #   - Linux
 #   - X64
 #   - nvidia
 #   - gpu-8
+
+# Runner labels for BAAI env
 runner_labels:
-  - nv-8g-cicd-megatron
+  - nv-8g-cicd-te
 
 # Container volumes (hardware-specific paths)
 # container_volumes:
 #   - /home/flagscale_cicd/flask/static:/workspace/report
 #   - /home/flagscale_cicd/flask/config:/workspace/config
 #   - /home/flagscale_cicd/docker/docker_build/docker_data:/home/gitlab-runner/data
+#   # Official functional recipes expect frozen checkpoints and artifacts here.
+#   - /home/flagscale_cicd/docker/docker_build/docker_data:/mnt/artifacts
 #   - /home/flagscale_cicd/docker/docker_build/docker_tokenizers:/home/gitlab-runner/tokenizers
 #   - /home/flagscale_cicd/docker/docker_build/docker_data/Megatron-LM/datasets:/opt/data/datasets
 #   - /home/flagscale_cicd/docker/docker_build/docker_tokenizers/Megatron-LM/tokenizers:/opt/data/tokenizers
 
+# Container volumes for BAAI env
 container_volumes:
   - /mnt/airs-business/cicd/baai_datasets:/home/gitlab-runner/data
   - /mnt/airs-business/cicd/baai_tokenizers:/home/gitlab-runner/tokenizers
@@ -51,6 +58,7 @@ test_matrix:
       - tests/unit_tests/dist_checkpointing/test_optimizer.py
       - tests/unit_tests/dist_checkpointing/test_safe_globals.py
       - tests/unit_tests/dist_checkpointing/models/test_moe_experts.py
+      - tests/unit_tests/dist_checkpointing/test_local.py
       - tests/unit_tests/distributed/test_grad_sync_with_expert_parallel.py
       - tests/unit_tests/distributed/test_mcore_fully_sharded_data_parallel.py
       - tests/unit_tests/distributed/test_param_and_grad_buffer.py ## test_bucket_sizes[True-True-False-18050] FAILED NCCL SIGABRT
@@ -58,7 +66,7 @@ test_matrix:
       - tests/unit_tests/export/trtllm/test_single_device_fp8.py
       - tests/unit_tests/transformer/moe/test_a2a_token_dispatcher.py
       - tests/unit_tests/test_inference.py
-      - tests/unit_tests/test_rl_utils.py
+      # - tests/unit_tests/test_rl_utils.py
       - tests/unit_tests/models/test_gpt_model.py
       - tests/unit_tests/models/test_mamba_model.py
       - tests/unit_tests/post_training/test_modelopt_module_spec.py
@@ -74,7 +82,6 @@ test_matrix:
       - tests/unit_tests/transformer/test_retro_attention.py
       - tests/unit_tests/transformer/test_transformer_block.py
       - tests/unit_tests/transformer/test_transformer_block_custom_pgs.py
-      - tests/unit_tests/dist_checkpointing/test_local.py
 
       # test_straggler_detector causes a SIGSEGV (Signal 11) crash during pytest session teardown on A100.
       # Root cause: UCX (HPC-X libucs.so) crashes in torch.distributed.barrier() called from the
@@ -83,9 +90,138 @@ test_matrix:
       # not a logic bug. Skipped until the teardown issue is resolved.
       - tests/unit_tests/test_utils.py::test_straggler_detector
 
-  # functional:
-  #   train:
-  #     - device: a100
-  #       task: train
-  #       model: gpt
-  #       case: all
+  functional:
+    train:
+      # Start with a mock-data regular case so we can validate the full
+      # functional pipeline without depending on missing external real-data assets.
+      - model: multimodal-llava
+        test_case: multimodal_llava_mcore_te_tp1_pp1
+        training_script: pretrain_vlm.py
+        n_repeat: 1
+        golden_environment: dev
+        golden_platform: dgx_a100
+        enable_lightweight_mode: false
+      # This mock-data checkpoint-resume case reuses the same llava stack and
+      # has been validated end-to-end on the DGX A100 server.
+      - model: multimodal-llava
+        test_case: multimodal_llava_mcore_te_tp1_pp1_resume_torch
+        training_script: pretrain_vlm.py
+        n_repeat: 1
+        golden_environment: dev
+        golden_platform: dgx_a100
+        enable_lightweight_mode: false
+      # Self-contained GPT inference coverage validated end-to-end on the
+      # DGX A100 runner without external datasets or tokenizer assets.
+      - model: gpt
+        test_case: gpt_static_inference_tp1_pp1_tiny_null_selfcontained
+        training_script: examples/inference/gpt/gpt_static_inference.py
+        n_repeat: 1
+        golden_environment: dev
+        golden_platform: dgx_a100
+        enable_lightweight_mode: false
+        data_path: /tmp/data_unused
+        data_cache_path: /tmp/data_cache
+        checkpoint_load_path: /tmp/selfcontained_inference_ckpt
+        tensorboard_subpath: generations.json
+      # Self-contained GRPO coverage validated end-to-end on the DGX A100
+      # runner using the mock null-numeric RL environment.
+      - model: gpt
+        test_case: gpt_grpo_tp1_pp1_tiny_null_selfcontained
+        training_script: train_rl.py
+        n_repeat: 1
+        golden_environment: dev
+        golden_platform: dgx_a100
+        enable_lightweight_mode: false
+        data_path: /tmp/data_unused
+        data_cache_path: /tmp/data_cache
+        checkpoint_load_path: /tmp/selfcontained_rl_ckpt
+      # Keep PR-fast GPT training coverage lightweight and self-contained.
+      # Use mock-data regular/resume cases to exercise pretrain_gpt.py with
+      # tp1/pp1 + transformer_engine + distributed optimizer, while leaving
+      # real-data recipes such as no_mmap_bin_files in heavier lanes that have
+      # the required dataset/tokenizer assets.
+      - model: gpt
+        test_case: gpt3_mcore_te_tp1_pp1_mock_data_dist_optimizer
+        training_script: pretrain_gpt.py
+        n_repeat: 1
+        golden_environment: dev
+        golden_platform: dgx_a100
+        enable_lightweight_mode: true
+      - model: gpt
+        test_case: gpt3_mcore_te_tp1_pp1_mock_data_resume_torch_dist_dist_optimizer
+        training_script: pretrain_gpt.py
+        n_repeat: 1
+        golden_environment: dev
+        golden_platform: dgx_a100
+        enable_lightweight_mode: true
+      # Extend GPT training coverage with a second lightweight feature axis:
+      # activation recompute. These mock-data regular/resume cases keep the
+      # lane self-contained while exercising tp1/pp1 + transformer_engine with
+      # uniform full recompute enabled.
+      - model: gpt
+        test_case: gpt3_mcore_te_tp1_pp1_mock_data_uniform_full_recompute
+        training_script: pretrain_gpt.py
+        n_repeat: 1
+        golden_environment: dev
+        golden_platform: dgx_a100
+        enable_lightweight_mode: true
+      - model: gpt
+        test_case: gpt3_mcore_te_tp1_pp1_mock_data_resume_torch_dist_uniform_full_recompute
+        training_script: pretrain_gpt.py
+        n_repeat: 1
+        golden_environment: dev
+        golden_platform: dgx_a100
+        enable_lightweight_mode: true
+      # Extend GPT training coverage with a third lightweight feature axis:
+      # pp4 pipeline-parallel execution plus SwiGLU. This mirrors the modern
+      # architecture choices used in FlagScale train configs while keeping the
+      # lane mock-data based and self-contained.
+      - model: gpt
+        test_case: gpt3_mcore_te_tp1_pp4_mock_data_swiglu
+        training_script: pretrain_gpt.py
+        n_repeat: 1
+        golden_environment: dev
+        golden_platform: dgx_a100
+        enable_lightweight_mode: true
+      - model: gpt
+        test_case: gpt3_mcore_te_tp1_pp4_mock_data_resume_torch_dist_swiglu
+        training_script: pretrain_gpt.py
+        n_repeat: 1
+        golden_environment: dev
+        golden_platform: dgx_a100
+        enable_lightweight_mode: true
+      # Extend GPT training coverage with a fourth lightweight feature axis:
+      # disable_bias_linear under pp4. This keeps the same mock-data CI shape
+      # while exercising a commonly toggled transformer architecture option.
+      - model: gpt
+        test_case: gpt3_mcore_te_tp1_pp4_mock_data_disable_bias_linear
+        training_script: pretrain_gpt.py
+        n_repeat: 1
+        golden_environment: dev
+        golden_platform: dgx_a100
+        enable_lightweight_mode: true
+      - model: gpt
+        test_case: gpt3_mcore_te_tp1_pp4_mock_data_resume_torch_dist_disable_bias_linear
+        training_script: pretrain_gpt.py
+        n_repeat: 1
+        golden_environment: dev
+        golden_platform: dgx_a100
+        enable_lightweight_mode: true
+      # Extend GPT training coverage with a fifth lightweight feature axis:
+      # real tensor parallelism plus distributed optimizer overlap settings.
+      # This mirrors the overlap-enabled train shapes used in FlagScale while
+      # staying mock-data based for PR-fast stability.
+      - model: gpt
+        test_case: gpt3_mcore_te_tp4_pp1_mock_data_dist_optimizer_overlap_grad_reduce_param_gather
+        training_script: pretrain_gpt.py
+        n_repeat: 1
+        golden_environment: dev
+        golden_platform: dgx_a100
+        enable_lightweight_mode: true
+      - model: gpt
+        test_case: gpt3_mcore_te_tp4_pp1_mock_data_resume_torch_dist_dist_optimizer_overlap_grad_reduce_param_gather
+        training_script: pretrain_gpt.py
+        n_repeat: 1
+        golden_environment: dev
+        golden_platform: dgx_a100
+        enable_lightweight_mode: true

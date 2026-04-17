@@ -1,0 +1,46 @@
+name: Lint
+
+on:
+  workflow_call: 
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pylint:
+    name: pylint_check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (attempt 1)
+        id: checkout1
+        uses: actions/checkout@v4
+        continue-on-error: true
+        with:
+          fetch-depth: 0
+
+      - name: Checkout (attempt 2)
+        id: checkout2
+        if: steps.checkout1.outcome == 'failure'
+        uses: actions/checkout@v4
+        continue-on-error: true
+        with:
+          fetch-depth: 0
+
+      - name: Checkout (attempt 3)
+        if: steps.checkout2.outcome == 'failure'
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install pylint
+        run: pip install "pylint==3.2.6"
+
+      - name: Run Lint
+        run: python3 -m pylint --recursive=y --fail-under=9.0 megatron/
