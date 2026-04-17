@@ -165,7 +165,14 @@ class DotProductAttention(MegatronModule):
         # creates a view that has the keys and values virtually repeated along their dimension to
         # match the number of queries.
 
-        # attn_mask_type is not used.
+        if attn_mask_type is None:
+            attn_mask_type = self.attn_mask_type
+
+        # Static inference can switch from causal masking during prefill to
+        # no masking during decode, so the fused softmax helper must follow
+        # the runtime mask type rather than the module's construction-time one.
+        self.scale_mask_softmax.attn_mask_type = attn_mask_type
+
         if self.num_attention_heads_per_partition // self.num_query_groups_per_partition > 1:
             key = key.repeat_interleave(
                 self.num_attention_heads_per_partition // self.num_query_groups_per_partition, dim=2

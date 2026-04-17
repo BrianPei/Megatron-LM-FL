@@ -142,6 +142,11 @@ class MLP(MegatronModule):
 
     def forward(self, hidden_states, per_token_scale=None):
         """Perform the forward pass through the MLP block."""
+        # Inference may symbolically trace the MLP; keep bias-activation unfused there.
+        use_bias_activation_fusion = (
+            self.config.bias_activation_fusion and not torch.is_inference_mode_enabled()
+        )
+
         # [s, b, 4 * h/p]
         nvtx_range_push(suffix="linear_fc1")
         intermediate_parallel, bias_parallel = self.linear_fc1(hidden_states)
@@ -156,7 +161,7 @@ class MLP(MegatronModule):
                 original_dtype = intermediate_parallel.dtype
                 intermediate_parallel = intermediate_parallel * per_token_scale.unsqueeze(-1)
                 intermediate_parallel = intermediate_parallel.to(original_dtype)
-        elif self.config.bias_activation_fusion:
+        elif use_bias_activation_fusion:
             if per_token_scale is not None:
                 if self.activation_func == F.silu and self.config.gated_linear_unit:
                     # dtype is handled inside the fused kernel

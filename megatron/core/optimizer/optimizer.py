@@ -399,24 +399,31 @@ class MegatronOptimizer(ABC):
         Raises:
             ValueError: If parameter groups in state dict don't match current optimizer.
         """
+        def make_group_key(group: Dict) -> tuple:
+            values = []
+            for key in param_group_identifier_keys:
+                # NeMo may rename fields such as wd_mult -> pre_wd_mult.
+                if key in group:
+                    values.append(group[key])
+                elif f"pre_{key}" in group:
+                    values.append(group[f"pre_{key}"])
+                # Older checkpoints and non-muon optimizers may not carry the newer
+                # compatibility flags, so treat them as disabled by default.
+                elif key in ('use_muon', 'is_vision_model_param', 'is_engram_parallel'):
+                    values.append(False)
+                else:
+                    raise ValueError(
+                        f"Key {key} (or pre_{key}) not found in param_group {group}."
+                    )
+            return tuple(values)
+
         # Define groups order that is needed in the current optimizer (coming from runtime)
-        needed_groups = [
-            # NeMo may have different key for required fields, e.g., "wd_mult" to "pre_wd_mult"
-            tuple(g[key] if key in g else g[f"pre_{key}"] for key in param_group_identifier_keys)
-            for g in current_groups
-        ]
+        needed_groups = [make_group_key(group) for group in current_groups]
 
         # Keep state_dict param group order since groups are LocalNonpersistentObject
         # and their order is determined at runtime, not from the checkpoint.
         params_in_state_dict_order = [g['params'] for g in state_dict_groups]
-        loaded_groups_map = {
-            tuple(
-                # NeMo may have different key for required fields, e.g., "wd_mult" to "pre_wd_mult"
-                group[key] if key in group else group[f"pre_{key}"]
-                for key in param_group_identifier_keys
-            ): group
-            for group in state_dict_groups
-        }
+        loaded_groups_map = {make_group_key(group): group for group in state_dict_groups}
 
         final_groups = []
         for key, params in zip(needed_groups, params_in_state_dict_order):

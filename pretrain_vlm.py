@@ -43,7 +43,15 @@ from pretrain_gpt import loss_func
 
 
 def model_provider(
-    pre_process=True, post_process=True, add_encoder=True, add_decoder=True, parallel_output=True
+    pre_process=True,
+    post_process=True,
+    add_encoder=True,
+    add_decoder=True,
+    parallel_output=True,
+    vp_stage=None,
+    config=None,
+    pg_collection=None,
+    **_unused_kwargs,
 ) -> LLaVAModel:
     """Builds the model.
 
@@ -100,7 +108,9 @@ def model_provider(
     args.max_position_embeddings = max(args.max_position_embeddings, args.decoder_seq_length)
 
     print_rank_0('building a multimodal model ...')
-    language_transformer_config = core_transformer_config_from_args(get_args())
+    language_transformer_config = (
+        deepcopy(config) if config is not None else core_transformer_config_from_args(get_args())
+    )
     if args.decoder_num_layers is not None:
         language_transformer_config.num_layers = args.decoder_num_layers
     else:

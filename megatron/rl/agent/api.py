@@ -8,7 +8,7 @@ from typing import Generic, TypeVar
 import numpy as np
 from pydantic import BaseModel
 
-from ..__init__ import Request, TypeLookupable
+from .. import Request, TypeLookupable
 from ..inference import (
     ChatInferenceInterface,
     ChatInferenceRequest,

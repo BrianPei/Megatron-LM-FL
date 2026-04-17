@@ -7,7 +7,7 @@ from typing import Annotated, Any, ClassVar
 
 from pydantic import BaseModel, BeforeValidator, ValidationError
 
-from ..__init__ import GenericGenerationArgs
+from .. import GenericGenerationArgs
 from ..inference.api import (
     ChatInferenceRequest,
     ChatInferenceResponse,

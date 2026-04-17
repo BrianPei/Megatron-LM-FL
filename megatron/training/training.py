@@ -539,7 +539,23 @@ def preprocess_common_state_dict(common_state_dict):
             if "param_groups" not in inner_optimizer:
                 return
             param_groups = inner_optimizer["param_groups"]
-            key_fn = lambda pg: [pg[key] for key in param_group_identifier_keys]
+            def make_group_key(pg):
+                values = []
+                for key in param_group_identifier_keys:
+                    if key in pg:
+                        values.append(pg[key])
+                    elif f"pre_{key}" in pg:
+                        values.append(pg[f"pre_{key}"])
+                    # Older checkpoints and some distributed optimizer paths may
+                    # not populate the newer compatibility flags; treat them as
+                    # disabled so we can still sort groups deterministically.
+                    elif key in ('use_muon', 'is_vision_model_param', 'is_engram_parallel'):
+                        values.append(False)
+                    else:
+                        raise KeyError(key)
+                return values
+
+            key_fn = make_group_key
             param_groups.sort(key=key_fn)
             inner_optimizer["param_groups"] = param_groups
 

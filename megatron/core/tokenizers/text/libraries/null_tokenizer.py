@@ -20,10 +20,18 @@ class NullTokenizer:
         """Converts text to ids."""
         return [int(x) for x in text.split(' ')]
 
+    def text_to_tokens(self, text):
+        """Converts text to tokens."""
+        return text.split(' ')
+
     def ids_to_text(self, ids):
         """Converts ids to text."""
         text = [str(x) for x in ids]
         return ' '.join(text)
+
+    def tokens_to_text(self, tokens):
+        """Converts tokens to text."""
+        return ' '.join(tokens)
 
     def tokens_to_ids(self, tokens):
         """Converts tokens to ids."""
@@ -32,6 +40,10 @@ class NullTokenizer:
     def ids_to_tokens(self, ids):
         """Converts ids to tokens."""
         return [str(x) for x in ids]
+
+    def add_special_tokens(self, special_tokens=None):
+        """Null tokenizer does not maintain a mutable special-token table."""
+        return None
 
     def offsets(self, ids: list[int], text: str) -> list[int]:
         """Returns offsets."""
@@ -70,6 +82,46 @@ class NullTokenizer:
     def sep(self):
         """Returns sep token."""
         return -1
+
+    @property
+    def pad(self):
+        """Returns pad token."""
+        return 0
+
+    @property
+    def pad_id(self):
+        """Returns pad token id."""
+        return self.pad
+
+    @property
+    def bos(self):
+        """Returns bos token."""
+        return None
+
+    @property
+    def bos_id(self):
+        """Returns bos token id."""
+        return self.bos
+
+    @property
+    def eos(self):
+        """Returns eos token."""
+        return self.eod
+
+    @property
+    def eos_id(self):
+        """Returns eos token id."""
+        return self.eod
+
+    @property
+    def unk(self):
+        """Returns unk token."""
+        return self.pad
+
+    @property
+    def unk_id(self):
+        """Returns unk token id."""
+        return self.unk
 
     @property
     def mask(self):

@@ -6,6 +6,7 @@ import random
 import string
 import time
 from collections import OrderedDict, defaultdict
+from types import SimpleNamespace
 from typing import Dict, List
 from unittest import mock
 
@@ -142,6 +143,23 @@ class TestTextGenerationController:
 
     def teardown_method(self, method):
         Utils.destroy_model_parallel()
+
+    def test_update_generation_status_counts_terminating_token(self):
+        controller = TextGenerationController.__new__(TextGenerationController)
+        controller.tokenizer = SimpleNamespace(eod=42)
+
+        is_generation_done_tensor, generated_sequence_lengths = (
+            controller.update_generation_status(
+                updated_prompts_tokens=torch.tensor([[10, 42], [11, 12]], dtype=torch.long),
+                generation_started=torch.tensor([True, True], dtype=torch.bool),
+                current_context_end_position=1,
+                is_generation_done_tensor=torch.tensor([False, False], dtype=torch.bool),
+                generated_sequence_lengths=torch.tensor([0, 0], dtype=torch.int32),
+            )
+        )
+
+        assert is_generation_done_tensor.tolist() == [True, False]
+        assert generated_sequence_lengths.tolist() == [1, 1]
 
     def test_sample_from_logits(self):
         self.setup_model(torch.float32)
