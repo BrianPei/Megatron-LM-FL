@@ -101,11 +101,24 @@ jobs:
 
           # Install envsubst (required by _run_training.sh)
           if ! command -v envsubst &>/dev/null; then
-            apt-get update -qq 2>/dev/null || true
-            apt-get install -y -qq gettext-base 2>/dev/null || \
-            conda install -y -q gettext 2>/dev/null || true
+            echo "Installing envsubst..."
+            if apt-get update -qq && apt-get install -y -qq gettext-base; then
+              echo "envsubst installed via apt"
+            elif conda install -y -q gettext; then
+              echo "envsubst installed via conda"
+            else
+              echo "apt/conda failed, creating Python-based envsubst shim"
+              cat > /usr/local/bin/envsubst << 'ENVEOF'
+          #!/usr/bin/env python3
+          import os, sys, re
+          text = sys.stdin.read()
+          print(re.sub(r'\$\{([^}]+)\}|\$([A-Za-z_][A-Za-z_0-9]*)',
+                lambda m: os.environ.get(m.group(1) or m.group(2), m.group(0)), text), end='')
+          ENVEOF
+              chmod +x /usr/local/bin/envsubst
+            fi
           fi
-          envsubst --version || echo "envsubst installed"
+          envsubst --version 2>/dev/null || envsubst </dev/null || echo "envsubst shim ready"
 
           # run_ci_test.sh calls 'uv run --no-sync python/pytest ...'
           # Translate to direct invocation when uv is not installed
