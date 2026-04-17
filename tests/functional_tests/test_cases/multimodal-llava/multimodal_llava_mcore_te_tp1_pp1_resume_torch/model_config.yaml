@@ -19,7 +19,7 @@ MODEL_ARGS:
   --global-batch-size: 32
   --seq-length: 1024
   --max-position-embeddings: 1024
-  --train-iters: 50
+  --train-iters: 100
   --timing-log-level: 0
   --lr-decay-iters: 320000
   --save: ${CHECKPOINT_SAVE_PATH}
@@ -35,7 +35,7 @@ MODEL_ARGS:
   --clip-grad: 1.0
   --lr-warmup-fraction: .01
   --log-interval: 1
-  --save-interval: 10000
+  --save-interval: 50
   --eval-interval: 1000
   --eval-iters: 10
   --transformer-impl: transformer_engine
@@ -51,4 +51,4 @@ MODEL_ARGS:
   --patch-dim: 14
   --mock-data: true
   --log-memory-to-tensorboard: true
-TEST_TYPE: regular
+TEST_TYPE: ckpt-resume

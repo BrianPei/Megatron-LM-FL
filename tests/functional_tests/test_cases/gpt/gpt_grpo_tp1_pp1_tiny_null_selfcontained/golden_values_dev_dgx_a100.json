@@ -1,0 +1,68 @@
+{
+    "iteration-time": {
+        "start_step": 1,
+        "end_step": 4,
+        "step_interval": 1,
+        "values": {
+            "1": 1.58471,
+            "2": 0.44119,
+            "3": 0.45585,
+            "4": 0.41593
+        }
+    },
+    "mem-allocated-bytes": {
+        "start_step": 1,
+        "end_step": 4,
+        "step_interval": 1,
+        "values": {
+            "1": 0.0,
+            "2": 0.0,
+            "3": 0.0,
+            "4": 0.0
+        }
+    },
+    "mem-max-allocated-bytes": {
+        "start_step": 1,
+        "end_step": 4,
+        "step_interval": 1,
+        "values": {
+            "1": 0.0,
+            "2": 0.0,
+            "3": 0.0,
+            "4": 0.0
+        }
+    },
+    "lm loss": {
+        "start_step": 1,
+        "end_step": 4,
+        "step_interval": 1,
+        "values": {
+            "1": 0.0,
+            "2": 0.0,
+            "3": 0.0,
+            "4": 0.0
+        }
+    },
+    "num-zeros": {
+        "start_step": 1,
+        "end_step": 4,
+        "step_interval": 1,
+        "values": {
+            "1": 0.0,
+            "2": 0.0,
+            "3": 0.0,
+            "4": 0.0
+        }
+    },
+    "mtp_1 loss": {
+        "start_step": 1,
+        "end_step": 4,
+        "step_interval": 1,
+        "values": {
+            "1": 0.0,
+            "2": 0.0,
+            "3": 0.0,
+            "4": 0.0
+        }
+    }
+}
