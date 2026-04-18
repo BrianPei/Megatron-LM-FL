@@ -125,6 +125,7 @@ jobs:
     needs:
       - checkout_and_config
       - lint
+      - unit_tests
     uses: ./.github/workflows/functional_tests_common.yml
     with:
       platform: ${{ inputs.platform }}
