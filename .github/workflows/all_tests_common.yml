@@ -81,6 +81,8 @@ jobs:
       
   lint:
     name: lint
+    needs: 
+      - checkout_and_config
     uses: ./.github/workflows/lint_common.yml
           
   unit_tests:
@@ -125,7 +127,7 @@ jobs:
     needs:
       - checkout_and_config
       - lint
-      - unit_tests
+      - unit_tests_complete
     uses: ./.github/workflows/functional_tests_common.yml
     with:
       platform: ${{ inputs.platform }}
