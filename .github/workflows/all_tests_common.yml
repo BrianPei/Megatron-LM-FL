@@ -107,13 +107,17 @@ jobs:
 
   unit_tests_complete:
     name: unit_tests_complete
-    if: always() && inputs.run_unit_tests
+    if: always()
     needs: 
       - unit_tests
     runs-on: ubuntu-latest
     steps:
       - name: Check unit tests result
         run: |
+          if [ "${{ inputs.run_unit_tests }}" != "true" ]; then
+            echo "ℹ️ Unit tests disabled for this run"
+            exit 0
+          fi
           if [ "${{ needs.unit_tests.result }}" != "success" ] && \
              [ "${{ needs.unit_tests.result }}" != "skipped" ]; then
             echo "❌ Unit tests failed: ${{ needs.unit_tests.result }}"
