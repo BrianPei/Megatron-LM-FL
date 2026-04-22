@@ -156,15 +156,8 @@ jobs:
 
       - name: Install linting tools
         run: |
-          uv venv
-          source .venv/bin/activate
-          uv pip install \
-            "ruff~=0.9.0" \
-            "black==24.4.2" \
-            "isort==5.13.2" \
-            "flake8==7.1.0" \
-            "pylint==3.2.6" \
-            "mypy"
+          python -m pip install --upgrade setuptools wheel
+          uv sync --locked --only-group linting
 
       - name: Get PR info
         id: get-pr-info
