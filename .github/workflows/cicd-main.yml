@@ -156,7 +156,7 @@ jobs:
 
       - name: Install linting tools
         run: |
-          uv sync --locked --only-group linting
+          uv sync --locked --no-default-groups --only-group linting --no-install-project
 
       - name: Get PR info
         id: get-pr-info

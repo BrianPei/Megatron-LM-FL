@@ -39,8 +39,9 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install pylint
-        run: pip install "pylint==3.2.6"
+      - name: Install linting tools
+        run: |
+          uv sync --locked --no-default-groups --only-group linting --no-install-project
 
       - name: Run Lint
         run: python3 -m pylint --recursive=y --fail-under=9.0 megatron/
