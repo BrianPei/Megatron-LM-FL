@@ -24,13 +24,18 @@ runner_labels:
   - mx-4g-cicd-megatron
 
 # Container volumes (hardware-specific paths)
+# container_volumes:
+#   - /home/flagscale_cicd/flask/static:/workspace/report
+#   - /home/flagscale_cicd/flask/config:/workspace/config
+#   - /home/flagscale_cicd/docker/docker_build/docker_data:/home/gitlab-runner/data
+#   - /home/flagscale_cicd/docker/docker_build/docker_tokenizers:/home/gitlab-runner/tokenizers
+#   - /home/flagscale_cicd/docker/docker_build/docker_data/Megatron-LM/datasets:/opt/data/datasets
+#   - /home/flagscale_cicd/docker/docker_build/docker_tokenizers/Megatron-LM/tokenizers:/opt/data/tokenizers
+
+# Container volumes for BAAI env
 container_volumes:
-  - /home/flagscale_cicd/flask/static:/workspace/report
-  - /home/flagscale_cicd/flask/config:/workspace/config
-  - /home/flagscale_cicd/docker/docker_build/docker_data:/home/gitlab-runner/data
-  - /home/flagscale_cicd/docker/docker_build/docker_tokenizers:/home/gitlab-runner/tokenizers
-  - /home/flagscale_cicd/docker/docker_build/docker_data/Megatron-LM/datasets:/opt/data/datasets
-  - /home/flagscale_cicd/docker/docker_build/docker_tokenizers/Megatron-LM/tokenizers:/opt/data/tokenizers
+  - /mnt/op/cicd/baai_datasets:/home/gitlab-runner/data
+  - /mnt/op/cicd/baai_tokenizers:/home/gitlab-runner/tokenizers
 
 # Container options (hardware-specific settings)
 container_options: >-
