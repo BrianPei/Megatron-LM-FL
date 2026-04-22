@@ -127,7 +127,7 @@ jobs:
 
   functional_tests:
     name: functional_tests
-    if: inputs.run_functional_tests
+    if: always() && inputs.run_functional_tests
     needs:
       - checkout_and_config
       - lint
