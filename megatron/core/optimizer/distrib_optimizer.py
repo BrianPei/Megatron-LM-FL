@@ -50,7 +50,7 @@ from ..fp8_utils import dequantize_fp8_tensor, is_float8tensor, quantize_param_s
 from ..transformer.fsdp_dtensor_checkpoint import handle_experts_in_state_dict
 from ..transformer.module import MegatronModule
 from .grad_scaler import MegatronGradScaler
-from .optimizer import MixedPrecisionOptimizer, _zero_grad_group_helper, param_group_identifier_keys
+from .optimizer import MixedPrecisionOptimizer, _zero_grad_group_helper, make_param_group_key
 from .optimizer_config import OptimizerConfig
 
 from .muon import Muon, MuonDistMeta
@@ -770,35 +770,14 @@ class DistributedOptimizer(MixedPrecisionOptimizer):
         #   contains an integer ordering of parameters within each group, and
         #   the ordering of parameters within its flattened parameter state
         #   list.
-        def make_needed_groups(param_group):
-            needed_groups = []
-            for key in param_group_identifier_keys:
-                # NeMo changes these variable names from `lr_mult` and `wd_mult`
-                # to `pre_lr_mult` and `pre_wd_mult`, so we need to check both.
-                if key in param_group:
-                    pass
-                elif f"pre_{key}" in param_group:
-                    key = f"pre_{key}"
-                elif key == 'use_muon':
-                    param_group[key] = False
-                elif key == 'is_vision_model_param':
-                    param_group[key] = False
-                else:
-                    raise ValueError(
-                        f"Key {key} (or pre_{key}) not found in param_group {param_group}."
-                    )
-                needed_groups.append(param_group[key])
-            needed_groups = tuple(needed_groups)
-            return needed_groups
-
         param_groups_map = {}
         for param_group in state_dict["optimizer"]["param_groups"]:
-            needed_groups = make_needed_groups(param_group)
+            needed_groups = make_param_group_key(param_group)
             param_groups_map[needed_groups] = param_group
         inner_state_dict = self.optimizer.state_dict()
         state_dict_param_groups = []
         for inner_param_group in inner_state_dict["param_groups"]:
-            needed_groups = make_needed_groups(inner_param_group)
+            needed_groups = make_param_group_key(inner_param_group)
             state_dict_param_groups.append(
                 {**param_groups_map[needed_groups], "params": inner_param_group['params']}
             )

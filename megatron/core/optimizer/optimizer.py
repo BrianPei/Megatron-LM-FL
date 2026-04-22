@@ -98,7 +98,33 @@ def _multi_tensor_copy_this_to_that(
             that_.copy_(this_)
 
 
-param_group_identifier_keys = ('wd_mult', 'lr_mult', 'is_expert_parallel', 'is_decoupled_lr', 'use_muon', 'is_vision_model_param', 'is_engram_parallel') ####FlagScale add is_vision_model_param
+param_group_identifier_keys = (
+    'wd_mult',
+    'lr_mult',
+    'is_expert_parallel',
+    'is_decoupled_lr',
+    'use_muon',
+    'is_vision_model_param',
+    'is_engram_parallel',
+)
+
+_param_group_default_false_keys = {'use_muon', 'is_vision_model_param', 'is_engram_parallel'}
+
+
+def make_param_group_key(group: Dict) -> tuple:
+    """Build a stable identifier tuple for optimizer param groups."""
+
+    values = []
+    for key in param_group_identifier_keys:
+        if key in group:
+            values.append(group[key])
+        elif f"pre_{key}" in group:
+            values.append(group[f"pre_{key}"])
+        elif key in _param_group_default_false_keys:
+            values.append(False)
+        else:
+            raise ValueError(f"Key {key} (or pre_{key}) not found in param_group {group}.")
+    return tuple(values)
 
 
 class MegatronOptimizer(ABC):
@@ -399,31 +425,13 @@ class MegatronOptimizer(ABC):
         Raises:
             ValueError: If parameter groups in state dict don't match current optimizer.
         """
-        def make_group_key(group: Dict) -> tuple:
-            values = []
-            for key in param_group_identifier_keys:
-                # NeMo may rename fields such as wd_mult -> pre_wd_mult.
-                if key in group:
-                    values.append(group[key])
-                elif f"pre_{key}" in group:
-                    values.append(group[f"pre_{key}"])
-                # Older checkpoints and non-muon optimizers may not carry the newer
-                # compatibility flags, so treat them as disabled by default.
-                elif key in ('use_muon', 'is_vision_model_param', 'is_engram_parallel'):
-                    values.append(False)
-                else:
-                    raise ValueError(
-                        f"Key {key} (or pre_{key}) not found in param_group {group}."
-                    )
-            return tuple(values)
-
         # Define groups order that is needed in the current optimizer (coming from runtime)
-        needed_groups = [make_group_key(group) for group in current_groups]
+        needed_groups = [make_param_group_key(group) for group in current_groups]
 
         # Keep state_dict param group order since groups are LocalNonpersistentObject
         # and their order is determined at runtime, not from the checkpoint.
         params_in_state_dict_order = [g['params'] for g in state_dict_groups]
-        loaded_groups_map = {make_group_key(group): group for group in state_dict_groups}
+        loaded_groups_map = {make_param_group_key(group): group for group in state_dict_groups}
 
         final_groups = []
         for key, params in zip(needed_groups, params_in_state_dict_order):
