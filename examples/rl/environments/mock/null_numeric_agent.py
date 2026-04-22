@@ -8,8 +8,12 @@ from megatron.rl.agent.reward_only_agent import RewardOnlyAgent
 class NullNumericAgent(RewardOnlyAgent):
     """Minimal self-contained RL agent for functional testing.
 
-    Prompts are numeric token strings so they work with NullTokenizer without any
-    external tokenizer assets or datasets.
+    Prompts are numeric token strings so they work with NullTokenizer without
+    any external tokenizer assets or datasets.
+
+    The class intentionally sits next to the other example RL environments so
+    env_config files can load it through the normal ``agent_type`` import path,
+    rather than introducing a separate test-only environment loading mechanism.
     """
 
     env_id: str = "null_numeric"
