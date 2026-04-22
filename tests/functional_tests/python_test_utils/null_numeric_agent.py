@@ -10,10 +10,6 @@ class NullNumericAgent(RewardOnlyAgent):
 
     Prompts are numeric token strings so they work with NullTokenizer without
     any external tokenizer assets or datasets.
-
-    The class intentionally sits next to the other example RL environments so
-    env_config files can load it through the normal ``agent_type`` import path,
-    rather than introducing a separate test-only environment loading mechanism.
     """
 
     env_id: str = "null_numeric"
