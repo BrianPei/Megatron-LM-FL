@@ -213,11 +213,7 @@ def get_time_offsets(
 
     random.seed(seed)
     
-    try:
-        import simpy  # Guard against this import in test case
-    except ModuleNotFoundError:
-        # Fall back to enqueuing all requests immediately when simpy is unavailable.
-        return [-1] * num_requests
+    import simpy  # Guard against this import in test case
 
     # Generate random time offsets.
     def arrival(r):
