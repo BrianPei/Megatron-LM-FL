@@ -554,8 +554,6 @@ class TransformerLayer(GraphableMegatronModule, BaseTransformerLayer):
         """
 
         inference_context = deprecate_inference_params(inference_context, inference_params)
-        # Inference may symbolically trace the layer; keep bias-dropout-add unfused there.
-        use_bias_dropout_fusion = self.config.bias_dropout_fusion and inference_context is None
 
         # Residual connection.
         residual = hidden_states
@@ -596,7 +594,7 @@ class TransformerLayer(GraphableMegatronModule, BaseTransformerLayer):
         # inside the module provided in the `bias_dropout_add_spec` module?
         nvtx_range_push(suffix="self_attn_bda")
         with self.bias_dropout_add_exec_handler():
-            hidden_states = self.self_attn_bda(self.training, use_bias_dropout_fusion)(
+            hidden_states = self.self_attn_bda(self.training, self.config.bias_dropout_fusion)(
                 attention_output_with_bias, residual, self.hidden_dropout
             )
         nvtx_range_pop(suffix="self_attn_bda")
@@ -621,7 +619,7 @@ class TransformerLayer(GraphableMegatronModule, BaseTransformerLayer):
         # TODO: could we move `bias_dropout_add_exec_handler` itself
         # inside the module provided in the `bias_dropout_add_spec` module?
         with self.bias_dropout_add_exec_handler():
-            hidden_states = self.cross_attn_bda(self.training, use_bias_dropout_fusion)(
+            hidden_states = self.cross_attn_bda(self.training, self.config.bias_dropout_fusion)(
                 attention_output_with_bias, residual, self.hidden_dropout
             )
 
@@ -637,8 +635,6 @@ class TransformerLayer(GraphableMegatronModule, BaseTransformerLayer):
         Returns:
             output (Tensor): Transformed hidden states of shape [s, b, h].
         """
-        # Inference may symbolically trace the layer; keep bias-dropout-add unfused there.
-        use_bias_dropout_fusion = self.config.bias_dropout_fusion and inference_context is None
 
         # Residual connection.
         residual = hidden_states
@@ -706,7 +702,7 @@ class TransformerLayer(GraphableMegatronModule, BaseTransformerLayer):
         # inside the module provided in the `bias_dropout_add_spec` module?
         nvtx_range_push(suffix="mlp_bda")
         with self.bias_dropout_add_exec_handler():
-            hidden_states = self.mlp_bda(self.training, use_bias_dropout_fusion)(
+            hidden_states = self.mlp_bda(self.training, self.config.bias_dropout_fusion)(
                 mlp_output_with_bias, residual, self.hidden_dropout
             )
         nvtx_range_pop(suffix="mlp_bda")

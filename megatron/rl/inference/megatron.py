@@ -3,13 +3,11 @@
 import asyncio
 import logging
 from argparse import Namespace
-from functools import partial
 
 import torch.distributed as dist
 from pydantic import PrivateAttr
 
 from megatron.core import parallel_state
-from megatron.core.inference.inference_request import InferenceRequest as MCoreInferenceRequest
 from megatron.core.utils import get_attr_wrapped_model
 from megatron.core.inference.contexts.dynamic_context import DynamicInferenceContext
 from megatron.core.inference.engines.abstract_engine import AbstractEngine
@@ -51,9 +49,7 @@ logger = logging.getLogger(__name__)
 
 
 ## This code is copied from tools/run_text_generation_server.py
-def get_static_inference_engine(
-    args: Namespace, model: MegatronModule, legacy: bool = False
-) -> AbstractEngine:
+def get_static_inference_engine(args: Namespace, model: MegatronModule) -> AbstractEngine:
     """Get the relevant backend for running inference.
 
     This function will automatically choose the TRTLLMBackend when possible,
@@ -91,7 +87,6 @@ def get_static_inference_engine(
         max_batch_size=(
             args.inference_max_batch_size if args.inference_max_batch_size is not None else 1
         ),
-        legacy=legacy,
     )
 
 
@@ -184,51 +179,7 @@ class MegatronLocal(InferenceServer, ReturnsTokens, ReturnsRaw):
     """Interface to use MCoreEngine directly as an inference engine."""
 
     _client: InferenceClient = PrivateAttr(None)
-    _inference_engine: AbstractEngine = PrivateAttr(None)
-    _static_generate_lock: asyncio.Lock = PrivateAttr(None)
-
-    @staticmethod
-    def _tokens_to_list(tokens):
-        if tokens is None:
-            return []
-        if hasattr(tokens, "tolist"):
-            return tokens.tolist()
-        return list(tokens)
-
-    def _get_num_tokens_to_generate(self, prompt_tokens, max_tokens):
-        if max_tokens is not None:
-            # Preserve the existing dynamic-engine semantics where `max_tokens`
-            # acts as a cap on the total prompt + generation length.
-            return max_tokens - len(prompt_tokens)
-
-        inference_wrapper_config = self._inference_engine.controller.inference_wrapped_model.inference_wrapper_config
-        return inference_wrapper_config.inference_max_seq_length - len(prompt_tokens)
-
-    def _build_static_inference_requests(self, prompts, sampling_params):
-        controller = self._inference_engine.controller
-        inference_requests = []
-
-        for prompt in prompts:
-            prompt_tokens = controller.tokenize_prompt(prompt, sampling_params.add_BOS)
-            request_sampling_params = SamplingParams(
-                **{
-                    **sampling_params.__dict__,
-                    "num_tokens_total": None,
-                    "num_tokens_to_generate": self._get_num_tokens_to_generate(
-                        prompt_tokens, sampling_params.num_tokens_total
-                    ),
-                }
-            )
-            inference_requests.append(
-                MCoreInferenceRequest(
-                    request_id=self._inference_engine.get_new_request_id(),
-                    prompt=prompt,
-                    prompt_tokens=prompt_tokens,
-                    sampling_params=request_sampling_params,
-                )
-            )
-
-        return inference_requests
+    _inference_engine: DynamicInferenceEngine = PrivateAttr(None)
 
     async def base_generate(self, request: InferenceRequest):
 
@@ -240,6 +191,8 @@ class MegatronLocal(InferenceServer, ReturnsTokens, ReturnsRaw):
         assert all(
             isinstance(p, str) for p in request.prompt
         ), "MegatronLocal only supports string prompts."
+
+        assert self._client is not None, "Client is not initialized"
 
         tokenizer = get_tokenizer()
 
@@ -254,33 +207,19 @@ class MegatronLocal(InferenceServer, ReturnsTokens, ReturnsRaw):
             skip_prompt_log_probs=True,
             add_BOS=tokenizer.bos is not None,
         )
-
-        if self._client is not None:
-            requests = [
-                self._client.add_request(prompt=prompt, sampling_params=sampling_params)
-                for prompt in request.prompt
-            ]
-            records = await asyncio.gather(*requests)
-            responses = [record[-1] for record in records]
-        else:
-            async with self._static_generate_lock:
-                loop = asyncio.get_running_loop()
-                responses = await loop.run_in_executor(
-                    None,
-                    partial(
-                        self._inference_engine.generate,
-                        inference_requests=self._build_static_inference_requests(
-                            request.prompt, sampling_params
-                        ),
-                    ),
-                )
-
+        requests = [
+            self._client.add_request(prompt=prompt, sampling_params=sampling_params)
+            for prompt in request.prompt
+        ]
+        records = await asyncio.gather(
+            *requests
+        )
+        responses = [record[-1] for record in records]
         return [
             InferenceResponse(
                 response=r.generated_text,
-                raw_text=p + (r.generated_text or ""),
-                token_ids=self._tokens_to_list(r.prompt_tokens)
-                + self._tokens_to_list(r.generated_tokens),
+                raw_text=p + r.generated_text,
+                token_ids=r.prompt_tokens.tolist() + r.generated_tokens,
                 logprobs=r.generated_log_probs,
                 prompt_length=len(r.prompt_tokens),
             )
@@ -311,47 +250,33 @@ class MegatronLocal(InferenceServer, ReturnsTokens, ReturnsRaw):
                 log_single_rank(logger, logging.WARNING, "WARNING: --rl-inference-logging-step-interval is set but no metrics writer "
                            "wandb module is available. Inference logging will be disabled.")
 
-        if args.inference_dynamic_batching:
-            inference_engine: AbstractEngine = get_dynamic_inference_engine(
-                args, model, inference_logging_step_interval, metrics_writer
-            )
-            await inference_engine.start_listening_to_data_parallel_coordinator(
-                inference_coordinator_port=41521, launch_inference_coordinator=True
-            )
-            if dist.get_rank() == 0:
-                # TODO: We have to do this only on the rank 0 process, should be fixed
-                # in the future when we have support for multiple inference clients.
-                client = InferenceClient(inference_coordinator_port=41521)
-                await client.start()
-            else:
-                client = None
+        inference_engine: DynamicInferenceEngine = get_dynamic_inference_engine(args, model, inference_logging_step_interval, metrics_writer)
+        await inference_engine.start_listening_to_data_parallel_coordinator(inference_coordinator_port=41521, launch_inference_coordinator=True)
+        if dist.get_rank() == 0:
+            # TODO: We have to do this only on the rank 0 process, should be fixed in the future when we have support for multiple inference clients. !2278
+            client = InferenceClient(inference_coordinator_port=41521)
+            await client.start()
         else:
-            inference_engine = get_static_inference_engine(args, model, legacy=True)
             client = None
-
         launched_server = cls(**kwargs)
         launched_server._client = client
         launched_server._inference_engine = inference_engine
-        launched_server._static_generate_lock = asyncio.Lock()
 
         return launched_server
 
     async def kill(self):
-        if self._client is not None and dist.get_rank() == 0:
+        if dist.get_rank() == 0:
             await self._client.stop_engines()
-        elif hasattr(self._inference_engine, "stopped"):
-            await self._inference_engine.stopped.wait()
+        await self._inference_engine.stopped.wait()
 
     async def suspend(self):
-        if self._client is not None and dist.get_rank() == 0:
+        if dist.get_rank() == 0:
             await self._client.pause_engines()
-        elif hasattr(self._inference_engine, "paused"):
-            await self._inference_engine.paused.wait()
+        await self._inference_engine.paused.wait()
 
     async def resume(self):
-        if self._client is not None and dist.get_rank() == 0:
+        if dist.get_rank() == 0:
             self._client.unpause_engines()
-        elif hasattr(self._inference_engine, "running"):
-            await self._inference_engine.running.wait()
+        await self._inference_engine.running.wait()
 
 class MegatronChatLocal(ChatInferenceInterface, MegatronLocal): ...
