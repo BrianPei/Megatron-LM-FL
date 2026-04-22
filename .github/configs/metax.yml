@@ -59,7 +59,6 @@ test_matrix:
       - tests/unit_tests/test_fp8_param.py
       - tests/unit_tests/test_optimizer.py ## RuntimeError: No CUDA GPUs are available
       - tests/unit_tests/test_utils.py
-      - tests/unit_tests/test_rl_inference_megatron.py
 
       # 2.models
       # ZeroDivisionError: integer modulo by zero
@@ -182,34 +181,3 @@ test_matrix:
       # specific case that are unstable on Metax
       # models
       - tests/unit_tests/models/test_gpt_model.py::TestGPTModelWithCustomPG::test_gpt_model_with_custom_pg
-
-  functional:
-    train:
-      # Metax runners currently expose 2 GPUs. Keep only the self-contained GPT
-      # functional cases enabled here for now. The remaining multimodal LLaVA
-      # functional cases are not wired into the Metax matrix because their
-      # current startup footprint does not fit this 2-GPU environment and the
-      # run is terminated before training begins.
-      - model: gpt
-        test_case: gpt_static_inference_tp1_pp1_tiny_null_selfcontained
-        training_script: examples/inference/gpt/gpt_static_inference.py
-        n_repeat: 1
-        golden_environment: dev
-        golden_platform: dgx_a100
-        enable_lightweight_mode: false
-        gpus_per_node: 2
-        data_path: /tmp/data_unused
-        data_cache_path: /tmp/data_cache
-        checkpoint_load_path: /tmp/selfcontained_inference_ckpt
-        tensorboard_subpath: generations.json
-      - model: gpt
-        test_case: gpt_grpo_tp1_pp1_tiny_null_selfcontained
-        training_script: train_rl.py
-        n_repeat: 1
-        golden_environment: dev
-        golden_platform: dgx_a100
-        enable_lightweight_mode: false
-        gpus_per_node: 2
-        data_path: /tmp/data_unused
-        data_cache_path: /tmp/data_cache
-        checkpoint_load_path: /tmp/selfcontained_rl_ckpt

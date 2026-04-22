@@ -73,7 +73,7 @@ from megatron.core.transformer.module import Float16Module
 from megatron.core.distributed import DistributedDataParallelConfig, TorchFullyShardedDataParallelConfig
 from megatron.core.distributed import DistributedDataParallel as DDP
 from megatron.core.distributed.fsdp.mcore_fsdp_adapter import FullyShardedDataParallel as megatron_FSDP
-from megatron.core.optimizer.optimizer import make_param_group_key
+from megatron.core.optimizer.optimizer import param_group_identifier_keys
 
 try:
     from megatron.core.distributed import TorchFullyShardedDataParallel as torch_FSDP
@@ -539,7 +539,24 @@ def preprocess_common_state_dict(common_state_dict):
             if "param_groups" not in inner_optimizer:
                 return
             param_groups = inner_optimizer["param_groups"]
-            param_groups.sort(key=make_param_group_key)
+            def make_group_key(pg):
+                values = []
+                for key in param_group_identifier_keys:
+                    if key in pg:
+                        values.append(pg[key])
+                    elif f"pre_{key}" in pg:
+                        values.append(pg[f"pre_{key}"])
+                    # Older checkpoints and some distributed optimizer paths may
+                    # not populate the newer compatibility flags; treat them as
+                    # disabled so we can still sort groups deterministically.
+                    elif key in ('use_muon', 'is_vision_model_param', 'is_engram_parallel'):
+                        values.append(False)
+                    else:
+                        raise KeyError(key)
+                return values
+
+            key_fn = make_group_key
+            param_groups.sort(key=key_fn)
             inner_optimizer["param_groups"] = param_groups
 
         optimizer_state_dict = preprocessed_common_state_dict['optimizer']

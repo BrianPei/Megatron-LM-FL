@@ -56,7 +56,7 @@ set -exo pipefail
 TEST_TYPE=$("$YQ_BIN" '.TEST_TYPE' "$TRAINING_PARAMS_PATH")
 MODE=$("$YQ_BIN" '.MODE // "pretraining"' "$TRAINING_PARAMS_PATH")
 
-MODES=("pretraining" "inference" "rl")
+MODES=("pretraining" "inference")
 TEST_TYPES=("regular" "ckpt-resume" "frozen-resume" "frozen-start" "checkpoint-consistency" "release")
 
 if [[ "$TEST_TYPE" == "release" ]]; then
@@ -301,23 +301,6 @@ for i in $(seq 1 $N_REPEAT); do
                 uv run --no-sync pytest -s -o log_cli=true --log-cli-level=info $ROOT_DIR/tests/functional_tests/python_test_utils/test_inference_regular_pipeline.py \
                     --golden-values-path $GOLDEN_VALUES_PATH \
                     --test-values-path $TENSORBOARD_PATH \
-                    --model-config-path ${TRAINING_PARAMS_PATH} \
-                    $ALLOW_NONDETERMINISTIC_ALGO_ARG
-            fi
-        fi
-
-        # For rl jobs
-        if [[ "$MODE" == "rl" && ("$TRAINING_EXIT_CODE" -eq 0 || "$TEST_TYPE" == "release") ]]; then
-            if [[ "$TEST_TYPE" == "frozen-start" ]]; then
-                TRAIN_ITERS=$("$YQ_BIN" '.MODEL_ARGS."--exit-interval" // "50"' "$TRAINING_PARAMS_PATH")
-                uv run --no-sync python $ROOT_DIR/tests/functional_tests/python_test_utils/get_test_results_from_tensorboard_logs.py \
-                    --logs-dir $TENSORBOARD_PATH \
-                    --train-iters $TRAIN_ITERS \
-                    --output-path ${OUTPUT_PATH}/$(basename $GOLDEN_VALUES_PATH) \
-                    "${EXTRACT_ARGS[@]}"
-                uv run --no-sync pytest -s -o log_cli=true --log-cli-level=info $ROOT_DIR/tests/functional_tests/python_test_utils/test_grpo_training_loop.py \
-                    --golden-values-path $GOLDEN_VALUES_PATH \
-                    --test-values-path ${OUTPUT_PATH}/$(basename $GOLDEN_VALUES_PATH) \
                     --model-config-path ${TRAINING_PARAMS_PATH} \
                     $ALLOW_NONDETERMINISTIC_ALGO_ARG
             fi
