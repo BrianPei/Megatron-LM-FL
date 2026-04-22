@@ -141,7 +141,7 @@ jobs:
           fi
           uv --version || echo "uv shim installed"
 
-          # Build and install functional test-only runtime extras
+          # Build
           pip install pybind11 --no-cache-dir
           pip install -e . --no-deps --no-build-isolation --no-cache-dir
         timeout-minutes: 30

@@ -18,7 +18,7 @@ resolve_yq_bin() {
         candidates+=("$(command -v yq)")
     fi
 
-    candidates+=("/usr/local/bin/yq")
+    candidates+=("/usr/local/bin/yq" "$script_dir/yq_compat.py")
 
     local candidate
     for candidate in "${candidates[@]}"; do
@@ -28,6 +28,6 @@ resolve_yq_bin() {
         fi
     done
 
-    echo "Unable to find a working yq executable. Install yq or set YQ_BIN." >&2
+    echo "Unable to find a working yq executable. Install yq, set YQ_BIN, or use ${script_dir}/yq_compat.py." >&2
     return 1
 }

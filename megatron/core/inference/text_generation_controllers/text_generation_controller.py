@@ -422,11 +422,11 @@ class TextGenerationController:
         latest_samples = updated_prompts_tokens[:, current_context_end_position]
         # Make sure we are checking eod criterion only for prompts that have started generating
         # (i.e) We only look at the generated tokenns and not the input tokens.
-        reached_eod = (latest_samples == termination_id) & generation_started
+        prompts_generating = generation_started & ~is_generation_done_tensor
+        reached_eod = (latest_samples == termination_id) & prompts_generating
+        # Count every generated token exactly once, including the terminating token.
+        generated_sequence_lengths += prompts_generating
         is_generation_done_tensor = is_generation_done_tensor | reached_eod
-        # We increment generated sequence lengths when that prompt has not hit the
-        # EOD and generation has started
-        generated_sequence_lengths += ~is_generation_done_tensor & generation_started
 
         return is_generation_done_tensor, generated_sequence_lengths.int()
 

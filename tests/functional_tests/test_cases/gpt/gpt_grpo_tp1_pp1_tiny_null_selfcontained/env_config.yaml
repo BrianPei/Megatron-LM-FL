@@ -1,0 +1,6 @@
+- agent_type: examples.rl.environments.mock.null_numeric_agent.NullNumericAgent
+  agent_args:
+    prompt_pool_size: 16
+    prompt_length: 4
+    validation_size: 8
+  weight: 1.0

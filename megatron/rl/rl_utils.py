@@ -12,7 +12,7 @@ from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass
 from difflib import SequenceMatcher
 from pathlib import Path
-from typing import Any, Dict, Iterator, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Dict, Iterator, List, Optional, Tuple
 
 import numpy as np
 import torch
@@ -20,7 +20,11 @@ import torch.distributed as dist
 import yaml
 from torch.utils.data import DataLoader, TensorDataset
 from torch.utils.tensorboard import SummaryWriter
-from wandb import wandb_run
+
+if TYPE_CHECKING:
+    from wandb.sdk.wandb_run import Run as WandbRun
+else:
+    WandbRun = Any
 
 from megatron.core import mpu
 from megatron.core.datasets.megatron_tokenizer import MegatronLegacyTokenizer
@@ -45,7 +49,6 @@ from megatron.rl.agent.weighted_multi_task import WeightedMultiTask
 from megatron.rl.inference.megatron import MegatronChatLocal, MegatronLocal
 from megatron.rl.logging import LOG_DIR as lang_rl_log_dir
 from megatron.rl.logging import log as lang_rl_log
-from megatron.rl.server.inference.inference_interface_server import InferenceInterfaceServer
 from megatron.training.global_vars import (
     get_args,
     get_tensorboard_writer,
@@ -583,6 +586,10 @@ def get_inference_interface(args, loop, model):
     if _INFERENCE_INTERFACE is None:
         rank = torch.distributed.get_rank()
         if rank == 0 and args.langrl_external_server:
+            from megatron.rl.server.inference.inference_interface_server import (
+                InferenceInterfaceServer,
+            )
+
             if args.langrl_inference_server_type == 'inplace_megatron':
                 _INFERENCE_INTERFACE = loop.run_until_complete(
                     InferenceInterfaceServer.launch(MegatronLocal, model=model[0])
@@ -928,7 +935,7 @@ def maybe_log_training_metrics(
     current_iteration: int,
     tokenizer: MegatronLegacyTokenizer,
     example_group: list[TokenRollout | Rollout],
-    wandb_writer: wandb_run.Run | None = None,
+    wandb_writer: WandbRun | None = None,
     tb_writer: SummaryWriter | None = None,
 ):
     """Log training metrics if writers are available.
@@ -1742,11 +1749,17 @@ def prepare_data_for_update(
             for batch_idx, (b_trajs, b_posids) in enumerate(data_iter):
                 # Get attention mask slice
                 if compute_attention_mask is not None:
-                    start_idx = batch_idx * logprobs_batch_size
-                    end_idx = min(
-                        start_idx + logprobs_batch_size, compute_attention_mask.shape[0]
-                    )
-                    b_attn_mask = compute_attention_mask[start_idx:end_idx].cuda()
+                    if compute_attention_mask.shape[0] == 1:
+                        # Standard GPT masks are often shared across the whole
+                        # batch with shape [1, 1, S, S], so re-use that mask
+                        # for every microbatch instead of slicing to empty.
+                        b_attn_mask = compute_attention_mask.cuda()
+                    else:
+                        start_idx = batch_idx * logprobs_batch_size
+                        end_idx = min(
+                            start_idx + logprobs_batch_size, compute_attention_mask.shape[0]
+                        )
+                        b_attn_mask = compute_attention_mask[start_idx:end_idx].cuda()
                 else:
                     b_attn_mask = None
 
@@ -1832,11 +1845,14 @@ def prepare_data_for_update(
             for batch_idx, (b_trajs, b_posids) in enumerate(data_iter):
                 # Get attention mask slice
                 if compute_attention_mask is not None:
-                    start_idx = batch_idx * logprobs_batch_size
-                    end_idx = min(
-                        start_idx + logprobs_batch_size, compute_attention_mask.shape[0]
-                    )
-                    b_attn_mask = compute_attention_mask[start_idx:end_idx].cuda()
+                    if compute_attention_mask.shape[0] == 1:
+                        b_attn_mask = compute_attention_mask.cuda()
+                    else:
+                        start_idx = batch_idx * logprobs_batch_size
+                        end_idx = min(
+                            start_idx + logprobs_batch_size, compute_attention_mask.shape[0]
+                        )
+                        b_attn_mask = compute_attention_mask[start_idx:end_idx].cuda()
                 else:
                     b_attn_mask = None
 

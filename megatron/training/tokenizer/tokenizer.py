@@ -851,6 +851,38 @@ class _NullTokenizer(MegatronLegacyTokenizer):
         return -1
 
     @property
+    def pad(self):
+        return 0
+
+    @property
+    def pad_id(self):
+        return self.pad
+
+    @property
+    def bos(self):
+        return None
+
+    @property
+    def bos_id(self):
+        return self.bos
+
+    @property
+    def eos(self):
+        return self.eod
+
+    @property
+    def eos_id(self):
+        return self.eod
+
+    @property
+    def unk(self):
+        return self.pad
+
+    @property
+    def unk_id(self):
+        return self.unk
+
+    @property
     def mask(self):
         return -1
 
@@ -909,6 +941,38 @@ class _NullMultimodalTokenizer(MegatronLegacyTokenizer):
     @property
     def sep(self):
         return -1
+
+    @property
+    def pad(self):
+        return 0
+
+    @property
+    def pad_id(self):
+        return self.pad
+
+    @property
+    def bos(self):
+        return None
+
+    @property
+    def bos_id(self):
+        return self.bos
+
+    @property
+    def eos(self):
+        return self.eod
+
+    @property
+    def eos_id(self):
+        return self.eod
+
+    @property
+    def unk(self):
+        return self.pad
+
+    @property
+    def unk_id(self):
+        return self.unk
 
     @property
     def mask(self):

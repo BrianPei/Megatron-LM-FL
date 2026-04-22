@@ -75,6 +75,9 @@ class StaticInferenceContext(BaseInferenceContext):
         """Resets the inference state for a new batch."""
         self.sequence_len_offset = 0
         self.batch_size_offset = 0
+        # Static batching reuses a single context across requests, so cached KV
+        # tensors from the previous batch must be dropped before the next run.
+        self.key_value_memory_dict = {}
         self.enable_prefill_mode()
 
     def __str__(self):
