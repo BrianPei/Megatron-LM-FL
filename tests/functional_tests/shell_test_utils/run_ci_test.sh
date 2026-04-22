@@ -69,7 +69,7 @@ _CHECKPOINT_LOAD_PATH=$CHECKPOINT_LOAD_PATH
 _CHECKPOINT_SAVE_PATH=$CHECKPOINT_SAVE_PATH
 
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &>/dev/null && pwd)
-ROOT_DIR=$(realpath $SCRIPT_DIR/../../../)
+ROOT_DIR=$(realpath "$SCRIPT_DIR/../../../")
 
 IS_NEMO_TEST=$([[ $(echo "$TRAINING_SCRIPT_PATH" | tr '[:upper:]' '[:lower:]') == *nemo* ]] && echo "true" || echo "false")
 export IS_NEMO_TEST
