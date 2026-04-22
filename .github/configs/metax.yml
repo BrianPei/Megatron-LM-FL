@@ -64,6 +64,8 @@ test_matrix:
       - tests/unit_tests/test_fp8_param.py
       - tests/unit_tests/test_optimizer.py ## RuntimeError: No CUDA GPUs are available
       - tests/unit_tests/test_utils.py
+      - tests/unit_tests/test_rl_utils.py
+      - tests/unit_tests/test_rl_inference_megatron.py
 
       # 2.models
       # ZeroDivisionError: integer modulo by zero
