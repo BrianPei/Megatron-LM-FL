@@ -2,10 +2,6 @@
 
 set -exo pipefail
 
-SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &>/dev/null && pwd)
-source "$SCRIPT_DIR/yq_common.sh"
-export YQ_BIN=$(resolve_yq_bin "$SCRIPT_DIR")
-
 # Increase soft limit for number of open files to match hard limit
 ulimit -Sn $(ulimit -Hn)
 
@@ -53,8 +49,10 @@ done
 set -exo pipefail
 
 # Extract settings from params file
-TEST_TYPE=$("$YQ_BIN" '.TEST_TYPE' "$TRAINING_PARAMS_PATH")
-MODE=$("$YQ_BIN" '.MODE // "pretraining"' "$TRAINING_PARAMS_PATH")
+TEST_TYPE=$(cat $TRAINING_PARAMS_PATH |
+    /usr/local/bin/yq '.TEST_TYPE')
+MODE=$(cat $TRAINING_PARAMS_PATH |
+    /usr/local/bin/yq '.MODE // "pretraining"')
 
 MODES=("pretraining" "inference")
 TEST_TYPES=("regular" "ckpt-resume" "frozen-resume" "frozen-start" "checkpoint-consistency" "release")
@@ -70,6 +68,7 @@ mkdir -p $CHECKPOINT_LOAD_PATH || true
 _CHECKPOINT_LOAD_PATH=$CHECKPOINT_LOAD_PATH
 _CHECKPOINT_SAVE_PATH=$CHECKPOINT_SAVE_PATH
 
+SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &>/dev/null && pwd)
 ROOT_DIR=$(realpath $SCRIPT_DIR/../../../)
 
 IS_NEMO_TEST=$([[ $(echo "$TRAINING_SCRIPT_PATH" | tr '[:upper:]' '[:lower:]') == *nemo* ]] && echo "true" || echo "false")
@@ -78,42 +77,50 @@ export IS_NEMO_TEST
 # Adjust model_config for lightweight mode
 if [[ "$MODE" == "pretraining" && "$TEST_TYPE" != "release" ]]; then
     if [[ "$ENABLE_LIGHTWEIGHT_MODE" == "true" && "$IS_NEMO_TEST" == "true" ]]; then
-        "$YQ_BIN" -i '.MODEL_ARGS."trainer.max_steps" = 2' $TRAINING_PARAMS_PATH
-        TRAIN_ITERS=$("$YQ_BIN" '.MODEL_ARGS."trainer.max_steps" // "100"' "$TRAINING_PARAMS_PATH")
+        /usr/local/bin/yq -i '.MODEL_ARGS."trainer.max_steps" = 2' $TRAINING_PARAMS_PATH
+        TRAIN_ITERS=$(cat $TRAINING_PARAMS_PATH |
+            /usr/local/bin/yq '.MODEL_ARGS."trainer.max_steps // "100"')
 
         N_REPEAT=1
 
     elif [[ "$ENABLE_LIGHTWEIGHT_MODE" == "true" && "$IS_NEMO_TEST" == "false" ]]; then
-        "$YQ_BIN" -i '.ENV_VARS."SKIP_PYTEST" = 1' $TRAINING_PARAMS_PATH
-        "$YQ_BIN" -i '.MODEL_ARGS."--exit-interval" = 4' $TRAINING_PARAMS_PATH
-        TRAIN_ITERS=$("$YQ_BIN" '.MODEL_ARGS."--exit-interval" // "100"' "$TRAINING_PARAMS_PATH")
+        /usr/local/bin/yq -i '.ENV_VARS."SKIP_PYTEST" = 1' $TRAINING_PARAMS_PATH
+        /usr/local/bin/yq -i '.MODEL_ARGS."--exit-interval" = 4' $TRAINING_PARAMS_PATH
+        TRAIN_ITERS=$(cat $TRAINING_PARAMS_PATH |
+            /usr/local/bin/yq '.MODEL_ARGS."--exit-interval" // "100"')
         N_REPEAT=1
 
         if [[ "$TEST_TYPE" == "ckpt-resume" || "$TEST_TYPE" == "frozen-resume" ]]; then
-            "$YQ_BIN" -i '.MODEL_ARGS."--save-interval" = 2' $TRAINING_PARAMS_PATH
+            /usr/local/bin/yq -i '.MODEL_ARGS."--save-interval" = 2' $TRAINING_PARAMS_PATH
         fi
 
     elif [[ "$ENABLE_LIGHTWEIGHT_MODE" == "false" && "$IS_NEMO_TEST" == "true" ]]; then
-        TRAIN_ITERS=$("$YQ_BIN" '.MODEL_ARGS."trainer.max_steps" // "100"' "$TRAINING_PARAMS_PATH")
+        TRAIN_ITERS=$(cat $TRAINING_PARAMS_PATH |
+            /usr/local/bin/yq '.MODEL_ARGS."trainer.max_steps" // "100"')
 
     elif [[ "$ENABLE_LIGHTWEIGHT_MODE" == "false" && "$IS_NEMO_TEST" == "false" ]]; then
-        "$YQ_BIN" -i '.MODEL_ARGS."--exit-interval" = .MODEL_ARGS."--train-iters"' $TRAINING_PARAMS_PATH
-        TRAIN_ITERS=$("$YQ_BIN" '.MODEL_ARGS."--exit-interval" // "100"' "$TRAINING_PARAMS_PATH")
+        /usr/local/bin/yq -i '.MODEL_ARGS."--exit-interval" = .MODEL_ARGS."--train-iters"' $TRAINING_PARAMS_PATH
+        TRAIN_ITERS=$(cat $TRAINING_PARAMS_PATH |
+            /usr/local/bin/yq '.MODEL_ARGS."--exit-interval" // "100"')
     fi
 elif [[ "$MODE" == "inference" && "$TEST_TYPE" != "release" ]]; then
     if [[ "$ENABLE_LIGHTWEIGHT_MODE" == "true" && "$IS_NEMO_TEST" == "false" ]]; then
-        "$YQ_BIN" -i '.ENV_VARS."SKIP_PYTEST" = 1' $TRAINING_PARAMS_PATH
+        /usr/local/bin/yq -i '.ENV_VARS."SKIP_PYTEST" = 1' $TRAINING_PARAMS_PATH
     fi
 fi
 
 if [[ "$MODE" == "pretraining" && "$TEST_TYPE" = "release" ]]; then
-    TRAIN_ITERS=$("$YQ_BIN" '.MODEL_ARGS."--exit-interval" // "100"' "$TRAINING_PARAMS_PATH")
+    TRAIN_ITERS=$(cat $TRAINING_PARAMS_PATH |
+        /usr/local/bin/yq '.MODEL_ARGS."--exit-interval" // "100"')
 fi
 
 # Extract settings from params file
-NVTE_ALLOW_NONDETERMINISTIC_ALGO=$("$YQ_BIN" '.ENV_VARS.NVTE_ALLOW_NONDETERMINISTIC_ALGO' "$TRAINING_PARAMS_PATH")
-NON_DETERMINSTIC_RESULTS=$("$YQ_BIN" '.ENV_VARS.NON_DETERMINSTIC_RESULTS // "0"' "$TRAINING_PARAMS_PATH")
-SKIP_PYTEST=$("$YQ_BIN" '.ENV_VARS.SKIP_PYTEST' "$TRAINING_PARAMS_PATH")
+NVTE_ALLOW_NONDETERMINISTIC_ALGO=$(cat $TRAINING_PARAMS_PATH |
+    /usr/local/bin/yq '.ENV_VARS.NVTE_ALLOW_NONDETERMINISTIC_ALGO')
+NON_DETERMINSTIC_RESULTS=$(cat $TRAINING_PARAMS_PATH |
+    /usr/local/bin/yq '.ENV_VARS.NON_DETERMINSTIC_RESULTS // "0"')
+SKIP_PYTEST=$(cat $TRAINING_PARAMS_PATH |
+    /usr/local/bin/yq '.ENV_VARS.SKIP_PYTEST')
 
 export RECORD_CHECKPOINTS=${RECORD_CHECKPOINTS:-"false"}
 
@@ -148,7 +155,7 @@ for i in $(seq 1 $N_REPEAT); do
 
         # 1. Loop over the runs in the params file
         # Get all MODEL_ARGS keys from the params file
-        mapfile -t MODEL_ARGS_KEYS < <("$YQ_BIN" 'keys | .[] | select(test("^MODEL_ARGS(_\\d+)?$"))' "$TRAINING_PARAMS_PATH")
+        mapfile -t MODEL_ARGS_KEYS < <(/usr/local/bin/yq 'keys | .[] | select(test("^MODEL_ARGS(_\\d+)?$"))' "$TRAINING_PARAMS_PATH")
         
 
         # For-loop over the keys
@@ -165,7 +172,8 @@ for i in $(seq 1 $N_REPEAT); do
             export RUN_NUMBER=$LOOP_RN
 
             # Get the number of GPUs from this run. Do not export this so it clashes with the other runs.
-            N_GPUS=$("$YQ_BIN" '.MODEL_ENV_VARS.'$KEY'.GPUS_PER_NODE' "$TRAINING_PARAMS_PATH")
+            N_GPUS=$(cat $TRAINING_PARAMS_PATH |
+                /usr/local/bin/yq '.MODEL_ENV_VARS.'$KEY'.GPUS_PER_NODE')
             echo "Running $KEY with RUN_NUMBER=$RUN_NUMBER and GPUS_PER_NODE=$N_GPUS"
             
             ITER_CHECKPOINT_SAVE_PATH="$_CHECKPOINT_SAVE_PATH/repeat_${REPEAT}_key_${KEY}"

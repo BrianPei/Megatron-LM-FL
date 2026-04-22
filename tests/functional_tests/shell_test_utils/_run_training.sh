@@ -8,10 +8,6 @@
 
 set -euxo pipefail
 
-SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &>/dev/null && pwd)
-source "$SCRIPT_DIR/yq_common.sh"
-export YQ_BIN=$(resolve_yq_bin "$SCRIPT_DIR")
-
 set +x
 for ARGUMENT in "$@"; do
     KEY=$(echo $ARGUMENT | cut -f1 -d=)
@@ -50,7 +46,7 @@ TRAINING_PARAMS_PATH="$TRAINING_PARAMS_PATH.tmp"
 set -x
 
 # Pull env vars to export
-ENV_VARS=$("$YQ_BIN" '... comments="" | .ENV_VARS | to_entries | .[] | [.key + "=" + .value] | join(" ")' "$TRAINING_PARAMS_PATH")
+ENV_VARS=$(/usr/local/bin/yq '... comments="" | .ENV_VARS | to_entries | .[] | [.key + "=" + .value] | join(" ")' "$TRAINING_PARAMS_PATH")
 while IFS= read -r ARGUMENT; do
     KEY=$(echo $ARGUMENT | cut -f1 -d=)
 
@@ -62,7 +58,7 @@ while IFS= read -r ARGUMENT; do
 done <<<"$ENV_VARS"
 
 # Run before script
-BEFORE_SCRIPT=$("$YQ_BIN" '.BEFORE_SCRIPT' "$TRAINING_PARAMS_PATH")
+BEFORE_SCRIPT=$(cat "$TRAINING_PARAMS_PATH" | /usr/local/bin/yq '.BEFORE_SCRIPT')
 if [[ "$BEFORE_SCRIPT" != null ]]; then
     eval "$BEFORE_SCRIPT"
 fi
@@ -71,7 +67,7 @@ fi
 if [[ "$IS_NEMO_TEST" == "true" ]]; then
     PARAMS=()
     # Store the output in a variable first
-    TRAINING_PARAMS_STR=$("$YQ_BIN" '... comments="" | .MODEL_ARGS | to_entries | .[] | with(select(.value == true); .value = "true") | .key + "=" + (select(.value != "") | .value | tostring)' "$TRAINING_PARAMS_PATH")
+    TRAINING_PARAMS_STR=$(/usr/local/bin/yq '... comments="" | .MODEL_ARGS | to_entries | .[] | with(select(.value == true); .value = "true") | .key + "=" + (select(.value != "") | .value | tostring)' "$TRAINING_PARAMS_PATH")
     # Build space-separated string while preserving quotes
     TRAINING_PARAMS_FROM_CONFIG=""
     while IFS= read -r line; do
@@ -98,14 +94,14 @@ else
     # If this is a second run (of checkpoint-resume), we might want to use a
     # different model configuration than during first time. So if key `MODEL_ARGS_2`
     # exists we use it, otherwise we use the same as for the first run.
-    if [[ $RUN_NUMBER -gt 1 && $("$YQ_BIN" 'has("MODEL_ARGS_'$RUN_NUMBER'")' "$TRAINING_PARAMS_PATH") == true ]]; then
+    if [[ $RUN_NUMBER -gt 1 && $(/usr/local/bin/yq 'has("MODEL_ARGS_'$RUN_NUMBER'")' "$TRAINING_PARAMS_PATH") == true ]]; then
         export KEY="MODEL_ARGS_$RUN_NUMBER"
     else
         export KEY="MODEL_ARGS"
     fi
 
     # Store the output in a variable first
-    TRAINING_PARAMS_STR=$("$YQ_BIN" 'explode(.) | ... comments="" | .[env(KEY)] | to_entries | .[] | with(select(.value == true); .value = "true") | .key + ": " + (select(.value != "") | .value | tostring)' "$TRAINING_PARAMS_PATH")
+    TRAINING_PARAMS_STR=$(/usr/local/bin/yq 'explode(.) | ... comments="" | .[env(KEY)] | to_entries | .[] | with(select(.value == true); .value = "true") | .key + ": " + (select(.value != "") | .value | tostring)' "$TRAINING_PARAMS_PATH")
     # Build space-separated string while preserving quotes
     TRAINING_PARAMS_FROM_CONFIG=""
     while IFS= read -r line; do
@@ -166,7 +162,6 @@ NODE_RANK=${SLURM_NODEID:-${SLURM_NODEID:-0}}
 LAST_RANK=7
 export LOG_DIR=$OUTPUT_PATH/logs/$REPEAT
 mkdir -p $LOG_DIR
-echo "Torch distributed log directory: $LOG_DIR"
 
 DISTRIBUTED_ARGS=(
     --nproc_per_node $GPUS_PER_NODE
@@ -188,11 +183,8 @@ else
         $TRAINING_SCRIPT_PATH "${PARAMS[@]}" && EXIT_CODE=0 || EXIT_CODE=$?
 fi
 
-echo "Torch distributed log files under: $LOG_DIR"
-find "$LOG_DIR" -maxdepth 6 \( -type d -o -type f \) | sort || true
-
 # Run after script
-AFTER_SCRIPT=$("$YQ_BIN" '.AFTER_SCRIPT' "$TRAINING_PARAMS_PATH")
+AFTER_SCRIPT=$(cat "$TRAINING_PARAMS_PATH" | /usr/local/bin/yq '.AFTER_SCRIPT')
 if [[ "$AFTER_SCRIPT" != null ]]; then
     eval "$AFTER_SCRIPT"
 fi 
