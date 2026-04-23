@@ -14,7 +14,7 @@ MODEL_ARGS:
   --log-params-norm: true
   --tensorboard-dir: ${TENSORBOARD_PATH}
   --micro-batch-size: 1
-  --global-batch-size: 2
+  --global-batch-size: 8
   --seq-length: 256
   --max-position-embeddings: 40960
   --train-iters: 10
