@@ -12,6 +12,7 @@ MODEL_ARGS:
   --group-query-attention: true
   --num-query-groups: 8
   --log-params-norm: true
+  --log-memory-to-tensorboard: true
   --tensorboard-dir: ${TENSORBOARD_PATH}
   --micro-batch-size: 1
   --global-batch-size: 8
