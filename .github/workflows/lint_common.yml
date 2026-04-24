@@ -46,11 +46,11 @@ jobs:
 
       - name: Get PR info
         id: get-pr-info
-        # if: startsWith(github.ref, 'refs/heads/pull-request/')
+        if: startsWith(github.ref, 'refs/heads/pull-request/')
         uses: nv-gha-runners/get-pr-info@main
 
       - name: Run linting
-        # if: startsWith(github.ref, 'refs/heads/pull-request/')
+        if: startsWith(github.ref, 'refs/heads/pull-request/')
         run: |
           export PATH=".venv/bin:$PATH"
           export GITLAB_ENDPOINT=github.com

@@ -5,7 +5,7 @@
 hardware_name: cuda
 display_name: 'CUDA Tests'
 
-# CI image for BAAI env
+# CI image for online env
 ci_image: harbor.baai.ac.cn/flagscale/megatron-lm-fl:cuda12.8.1-cudnn9.8.0-torch2.7.0-python3.12-dev-02111650
 
 # Runner labels for self-hosted A100 node
@@ -30,7 +30,7 @@ runner_labels:
 #   - /home/flagscale_cicd/docker/docker_build/docker_data/Megatron-LM/datasets:/opt/data/datasets
 #   - /home/flagscale_cicd/docker/docker_build/docker_tokenizers/Megatron-LM/tokenizers:/opt/data/tokenizers
 
-# Container volumes for BAAI env
+# Container volumes for online env
 container_volumes:
   - /mnt/airs-business/cicd/baai_datasets:/home/gitlab-runner/data
   - /mnt/airs-business/cicd/baai_tokenizers:/home/gitlab-runner/tokenizers
