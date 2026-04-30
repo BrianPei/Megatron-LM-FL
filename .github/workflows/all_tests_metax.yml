@@ -15,6 +15,7 @@ jobs:
   run_tests:
     # Package manager and environment settings are read from .github/configs/metax.yml
     uses: ./.github/workflows/all_tests_common.yml
+    secrets: inherit
     with:
       platform: metax
       run_unit_tests: true

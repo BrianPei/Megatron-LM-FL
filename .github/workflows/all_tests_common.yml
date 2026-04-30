@@ -96,6 +96,7 @@ jobs:
       matrix:
         device: ${{ fromJson(needs.checkout_and_config.outputs.device_types) }}
     uses: ./.github/workflows/unit_tests_common.yml
+    secrets: inherit
     with:
       platform: ${{ inputs.platform }}
       device: ${{ matrix.device }}
