@@ -127,6 +127,7 @@ jobs:
     needs:
       - checkout_and_config
       - lint
+      - unit_tests_complete
     strategy:
       fail-fast: false
       matrix:
