@@ -120,6 +120,9 @@ jobs:
 
           # Install dependence package
           pip install torch boto3 mock pytest-mock coverage pytest-asyncio anyio wandb openai httpx --no-cache-dir
+          if [ "$PLATFORM" = "metax" ]; then
+            pip install fastapi uvicorn --no-cache-dir
+          fi
 
           # Install nvidia-resiliency-ext from source
           if [ "$PLATFORM" != "metax" ]; then
