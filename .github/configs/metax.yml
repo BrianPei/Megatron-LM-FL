@@ -130,6 +130,8 @@ test_matrix:
       - tests/unit_tests/distributed/test_grad_sync_with_expert_parallel.py
       - tests/unit_tests/distributed/test_param_and_grad_buffer.py
       - tests/unit_tests/distributed/test_reduce_scatter_with_fp32_accumulation.py
+      # Metax C500 does not satisfy Transformer Engine FP8 compute capability checks.
+      - "tests/unit_tests/distributed/megatron_fsdp/test_mcore_fully_sharded_data_parallel.py::TestMegatronFSDPE2E::test_compatible_with_nd_parallel[optim_grads_params_mxfp8_double_buffer-TP2]"
 
       # 7.export
       - tests/unit_tests/export/trtllm/test_distributed_fp8.py
