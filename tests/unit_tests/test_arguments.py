@@ -17,16 +17,16 @@ def test_pattern_argument_helpers_parse_ints_tuples_and_list_expressions():
     assert arguments.no_rope_freq_type(None) is None
     assert arguments.no_rope_freq_type(4) == 4
     assert arguments.no_rope_freq_type("4") == 4
-    assert arguments.no_rope_freq_type("[0, 1] * 2") == [0, 1, 0, 1]
+    assert arguments.no_rope_freq_type("[0,1]*2") == [0, 1, 0, 1]
 
     assert arguments.moe_freq_type(2) == 2
     assert arguments.moe_freq_type("2") == 2
-    assert arguments.moe_freq_type("([1] + [0]) * 2") == [1, 0, 1, 0]
+    assert arguments.moe_freq_type("([1]+[0])*2") == [1, 0, 1, 0]
 
     assert arguments.la_freq_type(None) is None
     assert arguments.la_freq_type(3) == 3
     assert arguments.la_freq_type("3") == 3
-    assert arguments.la_freq_type("[1, 0, 0]") == [1, 0, 0]
+    assert arguments.la_freq_type("[1,0,0]") == [1, 0, 0]
 
     assert arguments.tuple_type(None) is None
     assert arguments.tuple_type((1, 2)) == (1, 2)
