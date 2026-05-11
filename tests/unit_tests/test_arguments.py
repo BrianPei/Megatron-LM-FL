@@ -35,7 +35,7 @@ def test_pattern_argument_helpers_parse_ints_tuples_and_list_expressions():
 
 def test_pattern_argument_helpers_reject_unsafe_expression():
     with pytest.raises(ValueError, match="Invalid pattern"):
-        arguments.moe_freq_type("__import__('os').system('echo unsafe')")
+        arguments.moe_freq_type("[__import__('os').system('echo unsafe')]")
 
 
 def test_add_megatron_arguments_parses_representative_core_options():
