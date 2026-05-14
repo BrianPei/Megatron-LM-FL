@@ -171,6 +171,7 @@ jobs:
           export PYTHONPATH=$GITHUB_WORKSPACE:${PYTHONPATH:-}
           export TORCHINDUCTOR_CACHE_DIR=/tmp/.torch_inductor_cache
           if [ "$PLATFORM" = "musa" ]; then
+            export DISTRIBUTED_BACKEND=mccl
             export TORCHDYNAMO_DISABLE=1
             export TORCH_COMPILE_DISABLE=1
           fi
