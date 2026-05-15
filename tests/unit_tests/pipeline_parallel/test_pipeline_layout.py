@@ -10,6 +10,7 @@ import torch.distributed
 
 from megatron.core import mpu, parallel_state
 from megatron.core.models.gpt.gpt_layer_specs import get_gpt_decoder_block_spec
+from megatron.core.models.gpt.gpt_layer_specs import get_gpt_layer_local_spec
 from megatron.core.models.gpt.gpt_layer_specs import (
     get_gpt_layer_with_transformer_engine_spec as gpt_te_spec,
 )
@@ -35,17 +36,21 @@ from tests.unit_tests.test_utilities import Utils
 
 cur_platform = get_platform()
 DEVICE = cur_platform.device()
+USE_TRANSFORMER_ENGINE = cur_platform.device_name() == "cuda"
 
 
 def initialize_gpt_model(
     seed,
-    layer_spec_fn=gpt_te_spec,
+    layer_spec_fn=None,
     vocab_size=128,
     virtual_pipeline_model_parallel_size=None,
     is_moe=False,
     with_mtp=False,
     **config_kwargs,
 ):
+    if layer_spec_fn is None:
+        layer_spec_fn = gpt_te_spec if USE_TRANSFORMER_ENGINE else get_gpt_layer_local_spec
+
     torch.manual_seed(seed)
     model_parallel_cuda_manual_seed(seed)
 
@@ -72,19 +77,28 @@ def initialize_gpt_model(
     model = []
     for i in range(virtual_pipeline_model_parallel_size or 1):
         if is_moe:
-            layer_spec = layer_spec_fn(transformer_config, use_transformer_engine=True, vp_stage=i)
+            layer_spec = layer_spec_fn(
+                transformer_config, use_transformer_engine=USE_TRANSFORMER_ENGINE, vp_stage=i
+            )
         else:
             layer_spec = layer_spec_fn()
 
         if with_mtp and mtp_on_this_rank(transformer_config, ignore_virtual=False, vp_stage=i):
             if is_moe:
-                transformer_layer_spec_for_mtp = gpt_te_spec(transformer_config)
+                if USE_TRANSFORMER_ENGINE:
+                    transformer_layer_spec_for_mtp = gpt_te_spec(transformer_config)
+                else:
+                    transformer_layer_spec_for_mtp = get_gpt_layer_local_spec(
+                        qk_layernorm=transformer_config.qk_layernorm,
+                        multi_latent_attention=transformer_config.multi_latent_attention,
+                        normalization=transformer_config.normalization,
+                    )
             else:
                 transformer_layer_spec_for_mtp = layer_spec
             mtp_block_spec = get_gpt_mtp_block_spec(
                 transformer_config,
                 transformer_layer_spec_for_mtp,
-                use_transformer_engine=True,
+                use_transformer_engine=USE_TRANSFORMER_ENGINE,
                 vp_stage=i,
             )
         else:
@@ -254,7 +268,8 @@ def test_forward_vpp(create_args, tmp_path_dist_ckpt, tp_pp_vpp, pp_layout, is_m
         return output_tensor, loss_func
 
     iteration = 123
-    layer_spec_fn = get_gpt_decoder_block_spec if is_moe else gpt_te_spec
+    dense_layer_spec_fn = gpt_te_spec if USE_TRANSFORMER_ENGINE else get_gpt_layer_local_spec
+    layer_spec_fn = get_gpt_decoder_block_spec if is_moe else dense_layer_spec_fn
     model = initialize_gpt_model(
         1,
         layer_spec_fn=layer_spec_fn,

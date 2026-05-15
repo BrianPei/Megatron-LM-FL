@@ -20,6 +20,7 @@ from tests.unit_tests.test_utilities import Utils
 logger = logging.getLogger(__name__)
 
 cur_platform = get_platform()
+DEVICE = cur_platform.device()
 pytestmark = pytest.mark.skipif(
     cur_platform.device_name() == "musa",
     reason="Megatron FSDP still enters CUDA-specific runtime paths in the current MUSA CI image.",
@@ -140,7 +141,7 @@ class ToyTETransformer(torch.nn.Module):
         output_dim,
         fuse_qkv_params=False,
         params_dtype=torch.float32,
-        device="cuda",
+        device=DEVICE,
     ):
         super().__init__()
         self.layers = torch.nn.ModuleList(
