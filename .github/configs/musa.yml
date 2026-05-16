@@ -56,15 +56,23 @@ test_matrix:
       - tests/unit_tests/test_api_backwards_compat_setup.py::test_decorator_module
       - tests/unit_tests/test_api_backwards_compat_setup.py::test_decorators_work
       # PyTorch 2.5 _coalescing_manager compatibility issue with MUSA torch_musa
-      # work variable not assigned when op_list is empty during mock testing
+      # Mocked all_reduce returns None → op_list empty → work never assigned → UnboundLocalError
       - tests/unit_tests/distributed/test_param_and_grad_buffer.py::test_force_all_reduce_uses_correct_collective[False]
+      - tests/unit_tests/distributed/test_param_and_grad_buffer.py::test_force_all_reduce_uses_correct_collective[True]
       # fused_layer_norm_cuda (Apex CUDA kernel) not available in MUSA image;
       # test_pipeline_layout.py invokes GPT forward which enters fused_layer_norm
       - tests/unit_tests/pipeline_parallel/test_pipeline_layout.py
+      # test_forward_backward_func_with_pipeline_parallel calls torch.rand(...).cuda() in test code
+      - tests/unit_tests/pipeline_parallel/test_schedules.py::test_forward_backward_func_with_pipeline_parallel
       # test_bin_reader downloads GPT2 tokenizer from s3.amazonaws.com, unreachable from MUSA CI
       - tests/unit_tests/data/test_bin_reader.py
       # TestModelOptMambaModel requires mamba-ssm (CUDA-compiled SSM library) not present in MUSA image
       - tests/unit_tests/post_training/test_modelopt_module_spec.py::TestModelOptMambaModel
+      # test_checkpointing: _load_base_checkpoint → read_metadata uses device='cuda' tensor
+      - tests/unit_tests/test_checkpointing.py
+      # test_bert_model: TE layernorm_fwd reference impl calls tensor.to(odtype) where torch_musa
+      # _to() misinterprets DType enum as device ID → "Invalid device string: 'musa:DType.kFloat32'"
+      - tests/unit_tests/models/test_bert_model.py::TestBertModel::test_post_process_forward
 
   functional:
     train: []
