@@ -106,6 +106,8 @@ def test_sp_tokenizer():
 
 
 def test_hf_tokenizer():
+    if not os.path.isdir(HF_TOKENIZER_PATH):
+        pytest.skip(f"HuggingFace tokenizer data not available: {HF_TOKENIZER_PATH}")
     # Load HF tokenizer with custom metadata
     metadata = {"library": "huggingface"}
     chat_template = "test chat template"

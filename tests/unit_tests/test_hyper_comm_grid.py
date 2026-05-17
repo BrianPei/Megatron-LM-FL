@@ -274,12 +274,16 @@ class TestHyperCommGrid:
         # Clean up
         os.environ["WORLD_SIZE"] = "8"
 
+    @patch('torch.distributed.is_initialized')
+    @patch('torch.distributed.get_rank')
     @patch('torch.distributed.new_subgroups_by_enumeration')
-    def test_end_to_end_workflow(self, mock_new_subgroups):
+    def test_end_to_end_workflow(self, mock_new_subgroups, mock_get_rank, mock_is_initialized):
         """Test complete workflow: init -> create -> get."""
         mock_pg1 = MagicMock(spec=dist.ProcessGroup)
         mock_pg2 = MagicMock(spec=dist.ProcessGroup)
         mock_new_subgroups.side_effect = [(mock_pg1, None), (mock_pg2, None)]
+        mock_get_rank.return_value = 0
+        mock_is_initialized.return_value = True
 
         grid = HyperCommGrid([2, 2, 2], ["tp", "cp", "dp"])
 

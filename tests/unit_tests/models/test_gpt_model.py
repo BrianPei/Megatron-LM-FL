@@ -27,7 +27,10 @@ from megatron.core.tensor_parallel.random import model_parallel_cuda_manual_seed
 from megatron.core.transformer.module import Float16Module
 from megatron.core.transformer.transformer_config import TransformerConfig
 from megatron.core.utils import is_fa_min_version, is_te_min_version
+from megatron.plugin.platform import get_platform
 from tests.unit_tests.test_utilities import Utils
+
+cur_platform = get_platform()
 
 
 class TestGPTModel:
@@ -95,14 +98,14 @@ class TestGPTModel:
         sequence_length = self.gpt_model.max_sequence_length
         micro_batch_size = 2
 
-        self.gpt_model.cuda()
+        self.gpt_model.to(cur_platform.device())
 
         data = list(range(sequence_length))
-        input_ids = torch.tensor(data, dtype=torch.int64).repeat((micro_batch_size, 1)).cuda()
-        position_ids = torch.tensor(data, dtype=torch.int64).repeat((micro_batch_size, 1)).cuda()
+        input_ids = torch.tensor(data, dtype=torch.int64).repeat((micro_batch_size, 1)).to(cur_platform.device())
+        position_ids = torch.tensor(data, dtype=torch.int64).repeat((micro_batch_size, 1)).to(cur_platform.device())
         attention_mask = torch.ones(
             (micro_batch_size, 1, sequence_length, sequence_length), dtype=bool
-        ).cuda()
+        ).to(cur_platform.device())
 
         logits = self.gpt_model.forward(
             input_ids=input_ids, position_ids=position_ids, attention_mask=attention_mask
@@ -182,14 +185,14 @@ class TestGPTWithFusedOps:
         sequence_length = self.gpt_model.max_sequence_length
         micro_batch_size = 2
 
-        self.gpt_model.cuda()
+        self.gpt_model.to(cur_platform.device())
 
         data = list(range(sequence_length))
-        input_ids = torch.tensor(data, dtype=torch.int64).repeat((micro_batch_size, 1)).cuda()
-        position_ids = torch.tensor(data, dtype=torch.int64).repeat((micro_batch_size, 1)).cuda()
+        input_ids = torch.tensor(data, dtype=torch.int64).repeat((micro_batch_size, 1)).to(cur_platform.device())
+        position_ids = torch.tensor(data, dtype=torch.int64).repeat((micro_batch_size, 1)).to(cur_platform.device())
         attention_mask = torch.ones(
             (micro_batch_size, 1, sequence_length, sequence_length), dtype=bool
-        ).cuda()
+        ).to(cur_platform.device())
 
         logits = self.gpt_model.forward(
             input_ids=input_ids, position_ids=position_ids, attention_mask=attention_mask
@@ -239,14 +242,14 @@ def test_gpt_with_te_activation_func(num_experts, gated_linear_unit):
     sequence_length = gpt_model.max_sequence_length
     micro_batch_size = 2
 
-    gpt_model.cuda()
+    gpt_model.to(cur_platform.device())
 
     data = list(range(sequence_length))
-    input_ids = torch.tensor(data, dtype=torch.int64).repeat((micro_batch_size, 1)).cuda()
-    position_ids = torch.tensor(data, dtype=torch.int64).repeat((micro_batch_size, 1)).cuda()
+    input_ids = torch.tensor(data, dtype=torch.int64).repeat((micro_batch_size, 1)).to(cur_platform.device())
+    position_ids = torch.tensor(data, dtype=torch.int64).repeat((micro_batch_size, 1)).to(cur_platform.device())
     attention_mask = torch.ones(
         (micro_batch_size, 1, sequence_length, sequence_length), dtype=bool
-    ).cuda()
+    ).to(cur_platform.device())
 
     logits = gpt_model.forward(
         input_ids=input_ids, position_ids=position_ids, attention_mask=attention_mask
@@ -324,11 +327,11 @@ class TestGPTModelWithCustomPG:
         sequence_length = self.gpt_model.max_sequence_length
         micro_batch_size = 2
 
-        self.gpt_model.cuda()
+        self.gpt_model.to(cur_platform.device())
 
-        input_ids = torch.ones(micro_batch_size, sequence_length, dtype=torch.int64, device="cuda")
+        input_ids = torch.ones(micro_batch_size, sequence_length, dtype=torch.int64, device=cur_platform.device())
         position_ids = torch.ones(
-            micro_batch_size, sequence_length, dtype=torch.int64, device="cuda"
+            micro_batch_size, sequence_length, dtype=torch.int64, device=cur_platform.device()
         )
 
         logits = self.gpt_model.forward(
@@ -387,7 +390,7 @@ class TestGPTWithDynamicInference:
         """
         Tests that logits for padded tokens are zeroed out for fp8 inference.
         """
-        self.gpt_model.cuda()
+        self.gpt_model.to(cur_platform.device())
         self.gpt_model.eval()
         config = self.gpt_model.config
 
@@ -411,7 +414,7 @@ class TestGPTWithDynamicInference:
         active_token_count = 10
         request = DynamicInferenceRequest(
             request_id=0,
-            prompt_tokens=torch.arange(0, active_token_count, dtype=torch.long, device='cuda'),
+            prompt_tokens=torch.arange(0, active_token_count, dtype=torch.long, device=cur_platform.device()),
             sampling_params=SamplingParams(num_tokens_to_generate=1),
         )
         inference_context.add_request(request)
