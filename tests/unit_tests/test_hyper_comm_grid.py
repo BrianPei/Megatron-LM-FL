@@ -232,11 +232,15 @@ class TestHyperCommGrid:
         with pytest.raises(KeyError, match="Process group for.*hasn't been created"):
             grid.get_pg("tp")
 
+    @patch('torch.distributed.is_initialized')
+    @patch('torch.distributed.get_rank')
     @patch('torch.distributed.new_subgroups_by_enumeration')
-    def test_get_pg_multiple_dims(self, mock_new_subgroups):
+    def test_get_pg_multiple_dims(self, mock_new_subgroups, mock_get_rank, mock_is_initialized):
         """Test get_pg with multiple dimensions."""
         mock_pg = MagicMock(spec=dist.ProcessGroup)
         mock_new_subgroups.return_value = (mock_pg, None)
+        mock_get_rank.return_value = 0
+        mock_is_initialized.return_value = True
 
         grid = HyperCommGrid([2, 2, 2], ["tp", "cp", "dp"])
 

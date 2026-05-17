@@ -45,6 +45,8 @@ class TestCLIPViTModel:
         assert self.model.decoder.input_tensor.shape == torch.Size(expected_shape)
 
     def test_forward(self):
+        if cur_platform.device_name() != 'cuda':
+            pytest.skip("CLIP ViT forward test requires CUDA (TE layernorm op not supported on musa)")
         device = cur_platform.device()
         self.model.to(device)
 
