@@ -884,6 +884,7 @@ class TestDistributedOptimizer:
         assert same_groups == set(range(num_dest_dp_groups))
 
 
+@pytest.mark.skipif(cur_platform.device_name() != 'cuda', reason=CUDA_ONLY_DIST_OPT_REASON)
 class TestFP32Optimizer:
     def setup_method(self, method):
         pass
@@ -964,6 +965,7 @@ class TestFP32Optimizer:
                 assert not any(map(bool, diffs)), diffs
 
 
+@pytest.mark.skipif(cur_platform.device_name() != 'cuda', reason=CUDA_ONLY_DIST_OPT_REASON)
 class TestOptimizerResharding:
     def setup_method(self, method):
         pass

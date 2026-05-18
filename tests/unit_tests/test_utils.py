@@ -384,6 +384,10 @@ def test_param_norm_moe(use_distributed_optimizer: bool):
 
 @pytest.mark.flaky
 @pytest.mark.flaky_in_dev
+@pytest.mark.skipif(
+    cur_platform.device_name() != 'cuda',
+    reason="StragglerDetector uses CUDA/NCCL-backed distributed timing paths.",
+)
 def test_straggler_detector():
     world = int(os.getenv('WORLD_SIZE', '1'))
     rank = int(os.getenv('RANK', '0'))

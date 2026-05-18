@@ -5,6 +5,7 @@ import inspect
 import json
 import os
 import sys
+from importlib.util import find_spec
 from typing import Any, Dict, Mapping, Tuple
 
 import pytest  # type: ignore[import]
@@ -27,6 +28,7 @@ from megatron.training.global_vars import (
 from tests.unit_tests.test_utilities import Utils
 
 cur_platform = get_platform()
+MAMBA_SSM_AVAILABLE = find_spec("mamba_ssm") is not None
 
 GOLDEN_CONFIG: Dict[str, Any] = {
     "_cpu_offloading_context": None,
@@ -409,6 +411,7 @@ def _diff_configs(expected: Mapping[str, Any], actual: Mapping[str, Any]) -> Tup
     return added, removed, changed
 
 
+@pytest.mark.skipif(not MAMBA_SSM_AVAILABLE, reason="MambaSSM is not installed.")
 class TestMambaMoEModel:
     """Test the initialization and use of an MoE Mamba model."""
 

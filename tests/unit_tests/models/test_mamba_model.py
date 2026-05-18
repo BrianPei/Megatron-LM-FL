@@ -1,6 +1,7 @@
 # Copyright (c) 2024, NVIDIA CORPORATION. All rights reserved.
 
 import os
+from importlib.util import find_spec
 from datetime import timedelta
 from itertools import accumulate
 
@@ -28,8 +29,10 @@ from tests.unit_tests.test_utilities import Utils
 
 cur_platform = get_platform()
 CUDA_ONLY_REASON = "Mamba forward test calls CUDA-only tensor APIs."
+MAMBA_SSM_AVAILABLE = find_spec("mamba_ssm") is not None
 
 
+@pytest.mark.skipif(not MAMBA_SSM_AVAILABLE, reason="MambaSSM is not installed.")
 class TestMambaModel:
 
     def setup_method(self, method):
