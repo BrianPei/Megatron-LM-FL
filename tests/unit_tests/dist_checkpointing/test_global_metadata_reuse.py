@@ -106,6 +106,10 @@ class TestGlobalMetadataReuse:
     @pytest.mark.flaky
     @pytest.mark.flaky_in_dev  # Issue #2856
     @pytest.mark.parametrize(('tp,pp'), [(2, 4)])
+    @pytest.mark.skipif(
+        get_platform().device_name() != 'cuda',
+        reason="setup_model_and_optimizer calls model.cuda(), requires CUDA",
+    )
     def test_no_global_metadata_reuse_on_different_parallelism(self, tmp_path_dist_ckpt, tp, pp):
         Utils.initialize_model_parallel(tp, pp)
         num_floating_point_operations_so_far = 0

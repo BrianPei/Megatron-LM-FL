@@ -236,19 +236,23 @@ def test_preprocess_data_gpt():
 
 def test_preprocess_data_gpt_optimal_workers():
     with tempfile.TemporaryDirectory() as temp_dir:
+        input_path = os.path.join(temp_dir, "optimal_workers.jsonl")
+        with open(input_path, "w") as writer:
+            for i in range(1002):
+                writer.write(json.dumps({"text": f"document {i}"}) + "\n")
 
         # gpt specific args
         gpt_args = [
             "--input",
-            "/opt/data/datasets/dclm/dclm.jsonl",
+            input_path,
             "--output-prefix",
             f"{temp_dir}/optimal_workers",
             "--tokenizer-type",
             "GPT2BPETokenizer",
             "--vocab-file",
-            "/opt/data/tokenizers/megatron/gpt2-vocab.json",
+            gpt2_vocab(temp_dir),
             "--merge-file",
-            "/opt/data/tokenizers/megatron/gpt2-merges.txt",
+            gpt2_merge(temp_dir),
             "--append-eod",
             "--workers",
             "2",
@@ -262,8 +266,11 @@ def test_preprocess_data_gpt_optimal_workers():
             "--max-documents",
             "1002",
         ]
-        sys.argv = ["/opt/megatron-lm/tools/preprocess_data.py"] + gpt_args
-        runpy.run_path("/opt/megatron-lm/tools/preprocess_data.py", run_name="__main__")
+        preprocess_data_path = os.path.abspath(
+            os.path.join(os.path.dirname(__file__), "../../../tools/preprocess_data.py")
+        )
+        sys.argv = [preprocess_data_path] + gpt_args
+        runpy.run_path(preprocess_data_path, run_name="__main__")
 
 
 def bert_vocab(odir):
