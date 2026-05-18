@@ -2,6 +2,7 @@
 
 import inspect
 import os
+from dataclasses import replace
 from datetime import timedelta
 from unittest.mock import MagicMock, patch
 
@@ -27,6 +28,8 @@ from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.tensor_parallel.random import model_parallel_cuda_manual_seed
 from megatron.core.transformer.enums import AttnBackend
 from megatron.core.transformer.module import Float16Module
+from megatron.core.transformer.torch_norm import WrappedTorchNorm
+from megatron.core.transformer.transformer_block import TransformerBlockSubmodules
 from megatron.core.transformer.transformer_config import TransformerConfig
 from megatron.core.utils import is_fa_min_version, is_te_min_version
 from megatron.plugin.platform import get_platform
@@ -34,6 +37,25 @@ from tests.unit_tests.test_utilities import Utils
 
 cur_platform = get_platform()
 MUSA_WITHOUT_TE = cur_platform.device_name() == "musa"
+
+
+def get_gpt_layer_local_spec_for_platform(num_layers):
+    local_layer_spec = get_gpt_layer_local_spec()
+    if not MUSA_WITHOUT_TE:
+        return local_layer_spec
+
+    local_layer_spec = replace(
+        local_layer_spec,
+        submodules=replace(
+            local_layer_spec.submodules,
+            input_layernorm=WrappedTorchNorm,
+            pre_mlp_layernorm=WrappedTorchNorm,
+        ),
+    )
+    return TransformerBlockSubmodules(
+        layer_specs=[local_layer_spec] * num_layers,
+        layer_norm=WrappedTorchNorm,
+    )
 
 
 class TestGPTModel:
@@ -55,7 +77,7 @@ class TestGPTModel:
         self.gpt_model = GPTModel(
             config=transformer_config,
             transformer_layer_spec=(
-                get_gpt_layer_local_spec()
+                get_gpt_layer_local_spec_for_platform(transformer_config.num_layers)
                 if MUSA_WITHOUT_TE
                 else get_gpt_layer_with_transformer_engine_spec()
             ),
