@@ -280,20 +280,88 @@ def bert_vocab(odir):
     return _download_once(__HUGGINGFACE_BERT_BASE_UNCASED_VOCAB, "bert-base-uncased-vocab.txt")
 
 
+def local_bert_tokenizer(odir):
+    tokenizer_dir = os.path.join(odir, "bert_tokenizer")
+    os.makedirs(tokenizer_dir, exist_ok=True)
+
+    vocab_file = os.path.join(tokenizer_dir, "vocab.txt")
+    vocab_tokens = [
+        "[PAD]",
+        "[UNK]",
+        "[CLS]",
+        "[SEP]",
+        "[MASK]",
+        "text",
+        "document",
+        "test",
+        "numbers",
+        "ascending",
+        "import",
+        "def",
+        "with",
+        "for",
+        "in",
+        "range",
+        "json",
+        "line",
+        ".",
+        ",",
+        ":",
+        "(",
+        ")",
+        "[",
+        "]",
+        "{",
+        "}",
+        "_",
+        "-",
+    ] + [str(i) for i in range(1003)]
+    with open(vocab_file, "w", encoding="utf-8") as writer:
+        writer.write("\n".join(vocab_tokens))
+
+    with open(os.path.join(tokenizer_dir, "config.json"), "w", encoding="utf-8") as writer:
+        json.dump({"model_type": "bert"}, writer)
+
+    with open(
+        os.path.join(tokenizer_dir, "tokenizer_config.json"), "w", encoding="utf-8"
+    ) as writer:
+        json.dump(
+            {"do_lower_case": True, "model_max_length": 512, "tokenizer_class": "BertTokenizer"},
+            writer,
+        )
+
+    with open(
+        os.path.join(tokenizer_dir, "special_tokens_map.json"), "w", encoding="utf-8"
+    ) as writer:
+        json.dump(
+            {
+                "unk_token": "[UNK]",
+                "sep_token": "[SEP]",
+                "pad_token": "[PAD]",
+                "cls_token": "[CLS]",
+                "mask_token": "[MASK]",
+            },
+            writer,
+        )
+
+    return tokenizer_dir, vocab_file
+
+
 @pytest.mark.flaky
 @pytest.mark.flaky_in_dev
 def test_preprocess_data_bert():
     with tempfile.TemporaryDirectory() as temp_dir:
+        tokenizer_dir, vocab_file = local_bert_tokenizer(temp_dir)
 
         # bert specific args
         bert_args = [
             "--tokenizer-type",
             "BertWordPieceLowerCase",
             "--vocab-file",
-            "/opt/data/tokenizers/megatron/gpt2-vocab.json",
-            "--split-sentences",
+            vocab_file,
+            "--tokenizer-hf-no-use-fast",
             "--workers",
-            "10",
+            "2",
             "--log-interval",
             "1",
             "--partitions",
@@ -301,7 +369,16 @@ def test_preprocess_data_bert():
             "--keep-sequential-samples",
         ]
 
-        do_test_preprocess_data(temp_dir, extra_args=bert_args)
+        original_tokenizer_name = MEGATRON_CONFIG_MAP["BertWordPieceLowerCase"][
+            "tokenizer_name"
+        ]
+        MEGATRON_CONFIG_MAP["BertWordPieceLowerCase"]["tokenizer_name"] = tokenizer_dir
+        try:
+            do_test_preprocess_data(temp_dir, extra_args=bert_args)
+        finally:
+            MEGATRON_CONFIG_MAP["BertWordPieceLowerCase"][
+                "tokenizer_name"
+            ] = original_tokenizer_name
 
 
 if __name__ == "__main__":

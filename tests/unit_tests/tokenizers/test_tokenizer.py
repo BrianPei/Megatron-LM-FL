@@ -139,7 +139,7 @@ LOCAL_HF_TOKENIZER_PATH = "/opt/data/tokenizers/huggingface"
 def _load_local_hf_tokenizer_or_skip(*args, **kwargs):
     try:
         return MegatronTokenizer.from_pretrained(*args, **kwargs)
-    except ValueError as exc:
+    except (OSError, ValueError) as exc:
         pytest.skip(f"Local HuggingFace tokenizer data not available: {exc}")
 
 
@@ -334,7 +334,7 @@ def test_multimodal_tokenizer():
     prompt_format = "qwen2p0"
     special_tokens = ["<image>"]
     image_tag_type = "nvlm"
-    tokenizer = MegatronTokenizer.from_pretrained(
+    tokenizer = _load_local_hf_tokenizer_or_skip(
         tokenizer_path="/opt/data/tokenizers/multimodal",
         metadata_path={"library": "multimodal"},
         prompt_format=prompt_format,
@@ -392,7 +392,7 @@ def test_null_multimodal_tokenizer():
 def test_sft_tokenizer():
     """Test SFTTokenizer."""
     prompt_format = "nemotron-nano-v2"
-    tokenizer = MegatronTokenizer.from_pretrained(
+    tokenizer = _load_local_hf_tokenizer_or_skip(
         tokenizer_path="/opt/data/tokenizers/multimodal",
         metadata_path={"library": "sft"},
         prompt_format=prompt_format,

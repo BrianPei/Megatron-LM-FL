@@ -18,12 +18,14 @@ from megatron.core.inference.contexts.dynamic_context import DynamicInferenceCon
 from megatron.core.inference.inference_request import DynamicInferenceRequest
 from megatron.core.inference.sampling_params import SamplingParams
 from megatron.core.models.gpt.gpt_layer_specs import (
+    get_gpt_layer_local_spec,
     get_gpt_layer_with_transformer_engine_spec,
     get_mlp_module_spec,
 )
 from megatron.core.models.gpt.gpt_model import GPTModel
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.tensor_parallel.random import model_parallel_cuda_manual_seed
+from megatron.core.transformer.enums import AttnBackend
 from megatron.core.transformer.module import Float16Module
 from megatron.core.transformer.transformer_config import TransformerConfig
 from megatron.core.utils import is_fa_min_version, is_te_min_version
@@ -31,6 +33,7 @@ from megatron.plugin.platform import get_platform
 from tests.unit_tests.test_utilities import Utils
 
 cur_platform = get_platform()
+MUSA_WITHOUT_TE = cur_platform.device_name() == "musa"
 
 
 class TestGPTModel:
@@ -47,10 +50,15 @@ class TestGPTModel:
             num_attention_heads=4,
             use_cpu_initialization=True,
             embedding_init_method_std=1.0,  # Test that we can initialize the embedding weights to something else.
+            attention_backend=AttnBackend.local if MUSA_WITHOUT_TE else AttnBackend.unfused,
         )
         self.gpt_model = GPTModel(
             config=transformer_config,
-            transformer_layer_spec=get_gpt_layer_with_transformer_engine_spec(),
+            transformer_layer_spec=(
+                get_gpt_layer_local_spec()
+                if MUSA_WITHOUT_TE
+                else get_gpt_layer_with_transformer_engine_spec()
+            ),
             vocab_size=100,
             max_sequence_length=4,
         )
