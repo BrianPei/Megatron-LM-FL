@@ -48,5 +48,4 @@ __all__ = [
 
 from .safe_globals import register_safe_globals
 
-if is_torch_min_version("2.6a0"):
-    register_safe_globals()
+register_safe_globals()
