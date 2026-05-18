@@ -216,10 +216,15 @@ def test_megatron_tokenizer():
     version.parse(torch.__version__) < version.parse('2.3.0'), reason="Not supported for LTS"
 )
 def test_tiktoken_tokenizer():
+    if not os.path.isfile(TIKTOKEN_TOKENIZER_PATH):
+        pytest.skip(f"Tokenizer data not available: {TIKTOKEN_TOKENIZER_PATH}")
+
     # Load tiktoken tokenizer
+    metadata = {"library": "tiktoken"}
     chat_template = get_chat_template()
     tokenizer = MegatronTokenizer.from_pretrained(
-        tokenizer_path="/opt/data/tokenizers/tiktoken/tiktoken.vocab.json",
+        tokenizer_path=TIKTOKEN_TOKENIZER_PATH,
+        metadata_path=metadata,
         chat_template=chat_template,
         vocab_size=131072,
     )
