@@ -23,7 +23,11 @@ from megatron.core.transformer import TransformerConfig
 from megatron.core.transformer.enums import AttnBackend
 from megatron.core.transformer.module import Float16Module
 from megatron.core.utils import divide, is_fa_min_version, is_torch_min_version
+from megatron.plugin.platform import get_platform
 from tests.unit_tests.test_utilities import Utils
+
+cur_platform = get_platform()
+CUDA_ONLY_REASON = "Mamba forward test calls CUDA-only tensor APIs."
 
 
 class TestMambaModel:
@@ -70,6 +74,7 @@ class TestMambaModel:
         assert self.model.decoder.input_tensor.shape[1] == micro_batch_size
         assert self.model.decoder.input_tensor.shape[2] == config.hidden_size
 
+    @pytest.mark.skipif(cur_platform.device_name() != "cuda", reason=CUDA_ONLY_REASON)
     def test_forward(self):
         sequence_length = self.model.max_sequence_length
         micro_batch_size = 2
@@ -91,6 +96,7 @@ class TestMambaModel:
         assert logits.shape[1] == sequence_length
         assert logits.shape[2] == self.model.vocab_size
 
+    @pytest.mark.skipif(cur_platform.device_name() != "cuda", reason=CUDA_ONLY_REASON)
     def test_forward_packed_sequence(self):
         os.environ.pop('NVTE_FUSED_ATTN', None)
         os.environ.pop('NVTE_FLASH_ATTN', None)
@@ -154,6 +160,7 @@ class TestMambaModel:
         assert logits.shape[1] == sequence_length
         assert logits.shape[2] == model.vocab_size
 
+    @pytest.mark.skipif(cur_platform.device_name() != "cuda", reason=CUDA_ONLY_REASON)
     def test_inference(self):
         micro_batch_size = 2
         inference_context: BaseInferenceContext = StaticInferenceContext(
@@ -210,6 +217,7 @@ class TestMambaModel:
         not is_torch_min_version("2.4.0"),
         reason="torch.distributed.init_device_mesh requires torch >= 2.4.0",
     )
+    @pytest.mark.skipif(cur_platform.device_name() != "cuda", reason=CUDA_ONLY_REASON)
     @pytest.mark.parametrize("tp_size,cp_size,pp_size", [(2, 1, 4), (1, 1, 8), (8, 1, 1)])
     def test_with_custom_process_groups(self, tmp_path, tp_size, cp_size, pp_size):
         """Test MambaModel with custom process groups."""
@@ -328,6 +336,7 @@ class TestMambaWithDynamicInference:
         Utils.destroy_model_parallel()
 
     @pytest.mark.internal
+    @pytest.mark.skipif(cur_platform.device_name() != "cuda", reason=CUDA_ONLY_REASON)
     @pytest.mark.skipif(
         not is_fa_min_version("2.7.3"), reason="need latest flash attn for dynamic batching"
     )

@@ -42,7 +42,9 @@ from tests.unit_tests.dist_checkpointing import (
 )
 from tests.unit_tests.test_utilities import Utils
 
-DEVICE = get_platform().device()
+cur_platform = get_platform()
+DEVICE = cur_platform.device()
+CUDA_ONLY_DIST_OPT_REASON = "Distributed optimizer checkpointing setup moves models through CUDA-only paths."
 
 
 class Model(torch.nn.Module):
@@ -342,6 +344,7 @@ def load_checkpoint_no_arg_checks(*args, **kwargs):
             return load_checkpoint(*args, **kwargs)
 
 
+@pytest.mark.skipif(cur_platform.device_name() != 'cuda', reason=CUDA_ONLY_DIST_OPT_REASON)
 class TestDistributedOptimizer:
     def setup_method(self, method):
         pass

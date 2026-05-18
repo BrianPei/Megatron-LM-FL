@@ -26,6 +26,7 @@ from tests.unit_tests.test_utilities import Utils
 
 cur_platform = get_platform()
 success_string = "hello,world"
+CUDA_ONLY_PARAM_NORM_REASON = "Parameter norm tests call CUDA-only training utility paths."
 
 
 @util.experimental_cls(introduced_with_version="0.1.0")
@@ -264,6 +265,7 @@ def test_cross_check_param_hashes_across_dp_replicas():
 @pytest.mark.flaky
 @pytest.mark.flaky_in_dev
 @pytest.mark.internal
+@pytest.mark.skipif(cur_platform.device_name() != 'cuda', reason=CUDA_ONLY_PARAM_NORM_REASON)
 def test_param_norm_linear(use_distributed_optimizer: bool):
     world = int(os.getenv('WORLD_SIZE', '1'))
     rank = int(os.getenv('RANK', '0'))
@@ -316,6 +318,7 @@ def test_param_norm_linear(use_distributed_optimizer: bool):
 @pytest.mark.flaky
 @pytest.mark.flaky_in_dev
 @pytest.mark.internal
+@pytest.mark.skipif(cur_platform.device_name() != 'cuda', reason=CUDA_ONLY_PARAM_NORM_REASON)
 def test_param_norm_moe(use_distributed_optimizer: bool):
     world = int(os.getenv('WORLD_SIZE', '1'))
     rank = int(os.getenv('RANK', '0'))
