@@ -1,4 +1,4 @@
-name: musa_tests
+name: s5000_tests
 
 on:
   push:

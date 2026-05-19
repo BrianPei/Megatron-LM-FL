@@ -2,7 +2,7 @@
 # This file defines CI/CD settings for Moore Threads MUSA-based unit testing.
 
 hardware_name: musa
-display_name: 'MUSA Tests'
+display_name: 'S5000 Tests'
 
 # Runner labels for Moore Threads node
 runner_labels:
@@ -30,13 +30,13 @@ container_options: >-
 
 # Device types to run tests on
 device_types:
-  - musa
+  - s5000
 
 # Test matrix configuration
 test_matrix:
   unit:
     devices:
-      - musa
+      - s5000
     # Start with a conservative MUSA smoke set while validating runtime and TE plugin coverage.
     ignored_tests:
       # ── Core tests that genuinely require CUDA/NCCL/Apex/TE GPU paths ──────────
