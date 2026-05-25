@@ -14,8 +14,8 @@ ci_image: harbor.baai.ac.cn/flagscale/megatron-lm-with-te:202603231839
 
 # Container volumes for online env
 container_volumes:
-  - /mnt/op/cicd/baai_datasets:/home/gitlab-runner/data
-  - /mnt/op/cicd/baai_tokenizers:/home/gitlab-runner/tokenizers
+  - /mnt/airs-business/cicd/baai_datasets:/home/gitlab-runner/data
+  - /mnt/airs-business/cicd/baai_tokenizers:/home/gitlab-runner/tokenizers
 
 # Container options (hardware-specific settings)
 container_options: >-
