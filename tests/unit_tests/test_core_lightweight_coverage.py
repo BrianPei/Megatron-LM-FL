@@ -32,6 +32,7 @@ from megatron.core.models.mimo.config.role import (
     ModuleLayout,
     RankRole,
 )
+from megatron.core.transformer.spec_utils import ModuleSpec
 from megatron.core.tokenizers.text.models.bert_tokenizer import BertTokenizer
 from megatron.core.tokenizers.text.models.default_tokenizer import DefaultTokenizerText
 from megatron.core.tokenizers.text.models.gpt_tokenizer import GPTTokenizer
@@ -69,10 +70,17 @@ def test_mimo_model_config_defaults_emit_experimental_warning():
     with pytest.warns(UserWarning, match="experimental"):
         module = importlib.reload(module)
 
-    config = module.MimoModelConfig(special_token_ids={"vision": -200})
+    language_spec = ModuleSpec(module=object)
+    vision_spec = ModuleSpec(module=object)
+    config = module.MimoModelConfig(
+        language_model_spec=language_spec,
+        modality_submodules_spec={"vision": vision_spec},
+        special_token_ids={"vision": -200},
+    )
     assert config.kv_format == "sbhd"
+    assert config.language_model_spec is language_spec
     assert config.special_token_ids == {"vision": -200}
-    assert config.modality_submodules_spec == {}
+    assert config.modality_submodules_spec == {"vision": vision_spec}
 
 
 def test_rank_role_unified_properties_and_stage_queries():
