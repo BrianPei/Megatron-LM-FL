@@ -257,8 +257,14 @@ def test_inference_request_serialization_deserialization_and_events():
         )
     assert legacy.sampling_params.temperature == 0.5
 
-    event = DynamicInferenceEvent(type=DynamicInferenceEventType.GENERATED_TOKEN)
+    event = DynamicInferenceEvent(
+        type=DynamicInferenceEventType.GENERATED_TOKEN, payload={"token_id": 42}
+    )
     assert event.type is DynamicInferenceEventType.GENERATED_TOKEN
+    assert "token=42" in str(event)
+
+    pause_event = DynamicInferenceEvent(type=DynamicInferenceEventType.PAUSE)
+    assert pause_event.payload is None
 
 
 def test_inference_request_tensor_and_hash_helpers(monkeypatch):
