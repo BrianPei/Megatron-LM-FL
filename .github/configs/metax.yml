@@ -75,6 +75,9 @@ test_matrix:
       # Metax C500 MIMO checkpoint follows the same HyperCommGrid + TE attention path and fails with
       # "tensor model parallel group is not initialized" when GPTModel/SelfAttention is instantiated.
       - tests/unit_tests/models/test_mimo_checkpoint.py
+      # Metax C500 TE package misses transformer_engine_torch.get_fused_attn_backend.
+      - tests/unit_tests/models/test_llava_model.py::TestLLaVAModel::test_forward
+      - tests/unit_tests/models/test_llava_model.py::TestLLaVAModel::test_forward_fsdp
 
       # 3.transformer
       # TE _extra_state compatibility issue with AbsorbedMLA
@@ -133,6 +136,8 @@ test_matrix:
       - tests/unit_tests/dist_checkpointing/test_layer_wise_optimizer.py::TestLayerWiseOptimizer::test_optimizer_common_state_dict
       # Metax CI image does not install nvidia-resiliency-ext; keep mcore async strategy covered.
       - tests/unit_tests/dist_checkpointing/test_async_save.py::TestAsyncSave::test_get_async_strategy[nvrx]
+      # Metax torch-dist checkpointing strategy does not expose remove_sharded_tensors in this image.
+      - tests/unit_tests/dist_checkpointing/test_serialization.py::TestSerialization::test_remove_sharded_tensors
 
       # 6.distributed
       - tests/unit_tests/distributed/test_distributed_data_parallel.py
@@ -219,6 +224,8 @@ test_matrix:
       - tests/unit_tests/pipeline_parallel/test_bridge_communicator.py::TestBridgeCommunicator::test_send_forward_recv_backward_send_backward_recv_forward
       # Metax C500 transformer-block bridge path hits NCCL/Maca invalid device pointer during all_reduce.
       - tests/unit_tests/pipeline_parallel/test_bridge_communicator.py::TestBridgeCommunicator::test_bridge_communicator_with_transformer_blocks
+      # Metax C500 TE package misses transformer_engine_torch.get_fused_attn_backend.
+      - tests/unit_tests/pipeline_parallel/test_pipeline_layout.py::test_forward_vpp
       # Metax C500 pipeline CI hits flaky fine-grained activation offload paths.
       - tests/unit_tests/pipeline_parallel/test_fine_grained_activation_offloading.py::test_gpt_fine_grained_activation_offloading_correctness_and_memory
       - tests/unit_tests/pipeline_parallel/test_fine_grained_activation_offloading.py::test_fine_grained_activation_offload_with_ep_a2a_overlap_compatibility

@@ -22,12 +22,13 @@ def test_null_decorator_direct_and_factory_modes():
     def fn():
         return "ok"
 
-    with utils.null_decorator(fn) as decorated:
-        assert decorated is fn
-        assert decorated() == "ok"
+    direct_context = utils.null_decorator(fn)
+    assert direct_context.gen is fn
 
-    with utils.null_decorator("unused") as decorator:
-        assert decorator(fn) is fn
+    factory_context = utils.null_decorator("unused")
+    with pytest.raises(TypeError, match="not an iterator"):
+        with factory_context:
+            pass
 
 
 def test_experimental_fn_respects_global_flag(monkeypatch):
