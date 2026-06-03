@@ -1530,10 +1530,11 @@ def test_dist_checkpointing_utils_prefixes_filters_and_logging(monkeypatch, capl
     with pytest.raises(AssertionError, match="unequal lengths"):
         list(checkpoint_utils.zip_strict([1], [1, 2]))
 
-    empty = _Tensor("empty", flattened_range=range(2, 2))
-    nonempty = _Tensor("nonempty", flattened_range=range(2, 3))
+    empty = _Tensor("empty", flattened_range=slice(2, 2))
+    nonempty = _Tensor("nonempty", flattened_range=slice(2, 3))
     filtered = checkpoint_state_utils.filter_out_empty_flatten_tensor({"a": empty, "b": nonempty})
     assert filtered == {"b": nonempty}
+    assert checkpoint_utils._sharded_tensor_shard_id(nonempty) == ("nonempty", (0,), (2, 3))
 
     assert checkpoint_utils._clean_metadata_for_serialization(None) is None
     metadata = {"dp_cp_group": object(), "keep": 1}
