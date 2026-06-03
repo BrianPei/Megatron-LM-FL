@@ -1542,7 +1542,7 @@ def test_dist_checkpointing_utils_prefixes_filters_and_logging(monkeypatch, capl
     logger = logging.getLogger("test_dist_checkpointing_utils")
     caplog.set_level(logging.DEBUG, logger="test_dist_checkpointing_utils")
     with checkpoint_utils.logger_stack("outer", logger):
-        with checkpoint_utils.logger_stack("inner"):
+        with checkpoint_utils.logger_stack("inner", logger):
             checkpoint_utils.debug_msg("hello")
     assert "outer.inner hello" in caplog.text
 
@@ -1846,7 +1846,7 @@ def test_fine_grained_offload_pool_group_handler_and_manager_paths(monkeypatch):
     monkeypatch.setattr(offload, "cur_platform", fake_platform)
     monkeypatch.setattr(offload, "is_graph_capturing", lambda: False)
     monkeypatch.setattr(offload.torch.cuda, "nvtx", SimpleNamespace(range_push=lambda name: calls.append(("nvtx-push", name)), range_pop=lambda: calls.append(("nvtx-pop",))))
-    offload.PipelineOffloadManager.OFFLOAD_MGR = None
+    monkeypatch.setattr(offload.PipelineOffloadManager, "OFFLOAD_MGR", None)
 
     pool = offload.GPUTensorPool(device="cpu", pin_memory=False)
     first = pool.allocate((2, 3), torch.float32)
