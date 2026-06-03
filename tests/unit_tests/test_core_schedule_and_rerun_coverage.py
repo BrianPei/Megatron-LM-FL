@@ -8,11 +8,14 @@ import pytest
 import torch
 
 from megatron.core.enums import Fp4Recipe, Fp8Recipe
+from megatron.core import utils as core_utils
+from megatron.core.packed_seq_params import PackedSeqParams
 from megatron.core.models.common import model_chunk_schedule_plan as schedule_plan
 from megatron.core.models.gpt import fine_grained_callables as fine_callables
 from megatron.core import rerun_state_machine as rerun
 from megatron.core import timers
 from megatron.core.inference import inference_request as inference_request_module
+from megatron.core.inference import utils as inference_utils
 from megatron.core.inference.inference_request import (
     DynamicInferenceEventType,
     DynamicInferenceRequest,
@@ -23,14 +26,25 @@ from megatron.core.inference.sampling_params import SamplingParams
 from megatron.core.inference.text_generation_controllers.text_generation_controller import (
     TextGenerationController,
 )
+from megatron.core.inference import batch_dimensions_utils
 from megatron.core.dist_checkpointing import tensor_aware_state_dict as tensor_aware
 from megatron.core.dist_checkpointing import exchange_utils
+from megatron.core.dist_checkpointing import mapping as checkpoint_mapping
 from megatron.core.dist_checkpointing import dict_utils as checkpoint_dict_utils
 from megatron.core.dist_checkpointing import state_dict_utils as checkpoint_state_utils
 from megatron.core.dist_checkpointing import utils as checkpoint_utils
+from megatron.core.pipeline_parallel import fine_grained_activation_offload as offload
+from megatron.core.datasets import utils as dataset_utils
+from megatron.core.quantization import utils as quantization_utils
+from megatron.core.quantization.quant_config import GlobMatcher, MatchContext, RecipeConfig
+from megatron.core import fp4_utils
 from megatron.core.pipeline_parallel import utils as pipeline_utils
+from megatron.core.tensor_parallel import utils as tensor_parallel_utils
 from megatron.core.transformer.transformer_config import TransformerConfig
+from megatron.core.transformer.identity_op import IdentityFuncOp, IdentityOp
+from megatron.core.transformer import spec_utils
 from megatron.core.transformer import utils as transformer_utils
+from megatron.core import _rank_utils as rank_utils
 from megatron.core.resharding import utils as reshard_utils
 
 
@@ -67,6 +81,30 @@ class _FakePlatform:
 
     def Event(self):
         return _FakeEvent(self.calls)
+
+    def Stream(self):
+        return _FakeStream(self.calls, "platform-stream")
+
+    def is_available(self):
+        return False
+
+    def empty_cache(self):
+        self.calls.append(("empty-cache",))
+
+
+class _FakeStream:
+    def __init__(self, calls, name):
+        self.calls = calls
+        self.name = name
+
+    def wait_event(self, event):
+        self.calls.append((self.name, "wait-event", event))
+
+    def wait_stream(self, stream):
+        self.calls.append((self.name, "wait-stream", stream))
+
+    def record_event(self, event):
+        self.calls.append((self.name, "record-event", event))
 
 
 class _ScheduleNode:
@@ -515,8 +553,10 @@ def test_transformer_layer_node_backward_and_dw_without_real_autograd(monkeypatc
 
 
 def test_timers_start_stop_elapsed_and_log_level_filtering(monkeypatch):
+    from itertools import chain, count
+
     calls = []
-    time_values = iter([0.0, 10.0, 11.5, 20.0, 22.0, 30.0, 31.0])
+    time_values = chain([0.0, 10.0, 11.5, 20.0, 22.0, 30.0, 31.0], count(40.0))
     monkeypatch.setattr(timers.time, "time", lambda: next(time_values))
     monkeypatch.setattr(timers, "cur_platform", SimpleNamespace(synchronize=lambda: calls.append("sync")))
 
@@ -534,7 +574,7 @@ def test_timers_start_stop_elapsed_and_log_level_filtering(monkeypatch):
     assert timer._started is True
     timer.stop()
     assert timer.active_time() == 4.5
-    assert calls.count("sync") == 6
+    assert calls.count("sync") == 5
 
     group = timers.Timers(log_level=1, log_option="minmax")
     enabled = group("enabled", log_level=1)
@@ -1772,3 +1812,1348 @@ def test_rerun_state_machine_validation_paths_and_checkpoint_helpers(monkeypatch
         )
     )
     assert rerun.RerunStateMachine.get_skipped_iterations_from_tracker_file(str(tracker)) == [4]
+
+
+def test_fine_grained_offload_pool_group_handler_and_manager_paths(monkeypatch):
+    calls = []
+    fake_platform = _FakePlatform(calls)
+    monkeypatch.setattr(offload, "cur_platform", fake_platform)
+    monkeypatch.setattr(offload, "is_graph_capturing", lambda: False)
+    monkeypatch.setattr(offload.torch.cuda, "nvtx", SimpleNamespace(range_push=lambda name: calls.append(("nvtx-push", name)), range_pop=lambda: calls.append(("nvtx-pop",))))
+    offload.PipelineOffloadManager.OFFLOAD_MGR = None
+
+    pool = offload.GPUTensorPool(device="cpu", pin_memory=False)
+    first = pool.allocate((2, 3), torch.float32)
+    assert first.shape == (2, 3)
+    assert pool.get_pool_status((2, 3), torch.float32)["allocated_count"] == 1
+    pool.free(first)
+    assert pool.get_pool_status((2, 3), torch.float32)["free_count"] == 1
+    second = pool.allocate((2, 3), torch.float32)
+    assert second is first
+    assert pool.get_pool_status()["global_stats"]["pool_hits"] == 1
+    with pytest.raises(ValueError, match="dtype must be specified"):
+        pool.get_pool_status((2, 3))
+    with pytest.raises(ValueError, match="No pool exists"):
+        pool.get_pool_status((4,), torch.float16)
+    with pytest.raises(ValueError, match="doesn't belong"):
+        pool.free(torch.empty(2, 3))
+    pool.reset()
+    assert pool.get_pool_status((2, 3), torch.float32)["allocated_count"] == 0
+    pool.clear()
+    assert pool.get_pool_status()["pools"] == {}
+
+    group = offload.OffloadTensorGroup("attention")
+    tensor = torch.arange(4, dtype=torch.float32)
+    group.push_tensor(("tag", 0), tensor)
+    assert group.pop_tensor(("tag", 0)) is tensor
+    group.record_offload_event("d2h")
+    group.wait_offload_event(_FakeStream(calls, "consumer"))
+    group.record_reload_event("h2d")
+    group.wait_reload_event(_FakeStream(calls, "compute"))
+    group.update_offload_info(tensor)
+    assert group.total_tensor_count == 1
+    assert group.total_offload_bytes == tensor.numel() * tensor.element_size()
+    assert offload.OffloadTensorGroup("expert_fc1").use_cpu_pool is False
+    assert offload.OffloadTensorGroup("moe_act").use_cpu_pool is False
+
+    manager = offload.PipelineOffloadManager.get_instance()
+    manager._cpu_tensor_pool = offload.GPUTensorPool(device="cpu", pin_memory=False)
+    manager.init_model_chunk_offload_handler(vp_size=2, vp_stage=0, min_offloaded_tensor_size=2)
+    first_chunk = manager.cur_forward_chunk()
+    manager.init_model_chunk_offload_handler(vp_size=2, vp_stage=1, min_offloaded_tensor_size=2)
+    second_chunk = manager.cur_forward_chunk()
+    assert first_chunk.vpp_rank == 0
+    assert second_chunk.vpp_rank == 1
+    assert first_chunk in manager._cached_chunks_forward
+    assert second_chunk in manager._cached_chunks_backward
+
+    manager.disable_offload()
+    assert manager.do_offload is False
+    assert all(not chunk.do_offload for chunk in manager._cached_chunks_forward)
+    manager.enable_offload()
+    assert manager.do_offload is True
+    assert all(chunk.do_offload for chunk in manager._cached_chunks_forward)
+
+    released = torch.ones(4)
+    manager.mark_not_offloadable(released)
+    assert released.offloading_activation is False
+
+    delayed_calls = []
+    manager.push_offload_groups(lambda forced: delayed_calls.append(("first", tuple(forced))), [1])
+    manager.push_offload_groups(lambda forced: delayed_calls.append(("second", tuple(forced))), [2])
+    manager.flush_delayed_groups()
+    assert delayed_calls == [("second", (2,)), ("first", (1,))]
+    assert manager._delayed_offload_groups == []
+
+    chunk = offload.ChunkOffloadHandler(min_offloaded_tensor_size=2, cpu_tensor_pool=manager.cpu_tensor_pool)
+    assert chunk.is_empty_chunk()
+    chunk.on_group_start_forward("mlp")
+    assert chunk.find_group_with_name("mlp") is chunk.offload_groups[0]
+    pushed_tag = chunk.tensor_push(torch.arange(4, dtype=torch.float32))
+    assert pushed_tag == (1, 0)
+    assert chunk.tensor_need_offloading_checker(torch.ones(1)) is False
+    large = torch.ones(3)
+    large.offloading_activation = False
+    assert chunk.tensor_need_offloading_checker(large) is False
+    assert chunk.tensor_need_offloading_checker(torch.ones(3)) is True
+    assert chunk.get_max_deduplicated_groups() == 1
+    assert chunk.finish_all_groups("missing") is True
+
+    state = chunk.offload(torch.arange(3, dtype=torch.float32), pin_memory=False, use_cpu_pool=True)
+    restored = chunk.reload(state, non_blocking=False)
+    assert torch.equal(restored, torch.arange(3, dtype=torch.float32))
+    raw_state = chunk.offload(torch.arange(2, dtype=torch.float32), pin_memory=False, use_cpu_pool=False)
+    assert raw_state[2] is False
+    assert torch.equal(chunk.reload(raw_state, non_blocking=False), torch.arange(2, dtype=torch.float32))
+
+    class _RecordableTensor:
+        shape = torch.Size([4])
+        dtype = torch.float32
+
+        def __init__(self, payload):
+            self.payload = payload
+            self.streams = []
+
+        def numel(self):
+            return self.payload.numel()
+
+        def element_size(self):
+            return self.payload.element_size()
+
+        def is_contiguous(self):
+            return True
+
+        def record_stream(self, stream):
+            self.streams.append(stream)
+
+    recordable = _RecordableTensor(torch.arange(4, dtype=torch.float32))
+    chunk.offload_groups[0]._tensors = {pushed_tag: recordable}
+    monkeypatch.setattr(chunk, "offload", lambda tensor, pin_memory=True, use_cpu_pool=True: ("cpu", tensor.payload.clone(), use_cpu_pool))
+    monkeypatch.setattr(chunk, "reload", lambda state, non_blocking=None: state[1].clone())
+    chunk.bulk_offload_group()
+    assert chunk._groups_to_offload == []
+    assert len(chunk._groups_to_reload) == 1
+    chunk.bulk_reload_group()
+    assert chunk._groups_to_reload == []
+    assert len(chunk._reloading_group) == 1
+    recovered = chunk.tensor_pop(pushed_tag)
+    assert torch.equal(recovered, torch.arange(4, dtype=torch.float32))
+    chunk.reset()
+    assert chunk._offloaded_group_index == 0
+    assert chunk._groups_to_offload == []
+
+    manager._cached_chunks_backward = [chunk]
+    manager._cached_chunks_index_backward = 0
+    assert manager.front_backward_chunk("mlp") is chunk
+    manager.pop_backward_chunk("mlp")
+    assert manager.cur_backward_chunk() is chunk
+    with pytest.raises(AssertionError, match="No non-empty chunk"):
+        manager.pop_backward_chunk("absent")
+
+    manager._cached_chunks_forward = [chunk]
+    manager._cached_chunks_backward = [chunk]
+    chunk.is_warmup = True
+    chunk.offload_groups[0].offload = True
+    chunk.offload_groups[0].total_tensor_count = 2
+    chunk.offload_groups[0].total_offload_bytes = 32
+    monkeypatch.setattr(chunk, "get_max_deduplicated_groups", lambda: 0)
+    monkeypatch.setattr(offload, "print_offload_summary_table", lambda table: calls.append(("summary", dict(table))))
+    manager._is_warmup = True
+    manager._offload_margin = 0
+    manager.post_warmup_callback()
+    assert manager.offload_summary_bytes == {"mlp": 32}
+    assert manager.offload_summary_total_bytes == 32
+    assert ("summary", {"mlp": 32}) in calls
+
+    assert offload.fine_grained_offloading_group_commit((), "none") == ()
+    assert offload.fine_grained_offloading_group_commit([], "none") == []
+    manager._cur_forward_chunk = None
+    passthrough = torch.tensor([1.0])
+    assert offload.fine_grained_offloading_group_commit(passthrough, "none") is passthrough
+    assert offload.fine_grained_offloading_group_start(passthrough, "none") is passthrough
+    offload.fine_grained_offloading_disable_offload()
+    assert offload.PipelineOffloadManager.get_instance().do_offload is False
+    offload.fine_grained_offloading_enable_offload()
+    assert offload.PipelineOffloadManager.get_instance().do_offload is True
+    with offload.FineGrainedActivationOffloadingInterface.get_context(False):
+        pass
+    offload.FineGrainedActivationOffloadingInterface.reset()
+    offload.PipelineOffloadManager.OFFLOAD_MGR = None
+
+
+def test_dist_checkpointing_mapping_tensor_object_factory_and_errors():
+    data = torch.arange(6, dtype=torch.float32).reshape(2, 3)
+    shard = checkpoint_mapping.ShardedTensor.from_rank_offsets(
+        "weight",
+        data,
+        (0, 1, 2),
+        replica_id=(0, 0),
+        prepend_axis_num=1,
+    )
+    assert shard.has_regular_grid is True
+    assert shard.global_shape == (1, 4, 3)
+    assert shard.global_offset == (0, 2, 0)
+    assert shard.global_slice() == (0, slice(2, 4), slice(0, 3))
+    assert shard.local_chunk_offset_in_global() == (0, 1, 0)
+    assert shard.max_allowed_chunks() == (1, 2, 3)
+    assert shard.without_data().data is None
+
+    empty = shard.without_data()
+    init_calls = []
+    empty.init_data("cpu", init_fn=lambda shape, dtype, device: init_calls.append((shape, dtype, device)) or torch.zeros(shape, dtype=dtype))
+    assert torch.equal(empty.data, torch.zeros(2, 3))
+    assert init_calls == [((2, 3), torch.float32, "cpu")]
+    empty.init_data("cpu", init_fn=lambda *args, **kwargs: pytest.fail("init_data should not reinitialize existing data"))
+
+    narrowed = shard.narrow(dim=1, start=1, length=2)
+    assert len(narrowed) == 1
+    assert torch.equal(narrowed[0].data, data.narrow(1, 1, 2))
+    assert narrowed[0].local_shape == torch.Size([2, 2])
+
+    with pytest.raises(ValueError, match="from_rank_offsets_flat"):
+        checkpoint_mapping.ShardedTensor.from_rank_offsets("bad", data, flattened_range=slice(0, 1))
+    with pytest.raises(checkpoint_mapping.CheckpointingException, match="Invalid rank offsets"):
+        checkpoint_mapping.ShardedTensor.from_rank_offsets("bad", data, (0, 2, 2))
+    with pytest.raises(checkpoint_mapping.CheckpointingException, match="Data dtype"):
+        checkpoint_mapping.ShardedTensor(
+            key="bad",
+            data=data.to(torch.float16),
+            dtype=torch.float32,
+            local_shape=tuple(data.shape),
+            global_shape=tuple(data.shape),
+            global_offset=(0, 0),
+            axis_fragmentations=(1, 1),
+        )
+    with pytest.raises(checkpoint_mapping.CheckpointingException, match="Data shape"):
+        checkpoint_mapping.ShardedTensor(
+            key="bad",
+            data=data,
+            dtype=data.dtype,
+            local_shape=(3, 2),
+            global_shape=(3, 2),
+            global_offset=(0, 0),
+            axis_fragmentations=(1, 1),
+        )
+    with pytest.raises(checkpoint_mapping.CheckpointingException, match="Global offset dimensions"):
+        checkpoint_mapping.ShardedTensor(
+            key="bad",
+            data=data,
+            dtype=data.dtype,
+            local_shape=tuple(data.shape),
+            global_shape=(2, 3),
+            global_offset=(0,),
+            axis_fragmentations=(1, 1),
+        )
+    with pytest.raises(checkpoint_mapping.CheckpointingException, match="Local shape together"):
+        checkpoint_mapping.ShardedTensor(
+            key="bad",
+            data=data,
+            dtype=data.dtype,
+            local_shape=tuple(data.shape),
+            global_shape=(1, 2, 3, 4),
+            global_offset=(0, 0, 0, 0),
+            axis_fragmentations=(1, 1, 1, 1),
+        )
+    with pytest.raises(checkpoint_mapping.CheckpointingException, match="Global offset"):
+        checkpoint_mapping.ShardedTensor(
+            key="bad",
+            data=data,
+            dtype=data.dtype,
+            local_shape=tuple(data.shape),
+            global_shape=(4, 3),
+            global_offset=(1, 0),
+            axis_fragmentations=(2, 1),
+        )
+    with pytest.raises(checkpoint_mapping.CheckpointingException, match="Axis shape"):
+        checkpoint_mapping.ShardedTensor(
+            key="bad",
+            data=data,
+            dtype=data.dtype,
+            local_shape=tuple(data.shape),
+            global_shape=(5, 3),
+            global_offset=(0, 0),
+            axis_fragmentations=(2, 1),
+        ).max_allowed_chunks()
+    with pytest.raises(checkpoint_mapping.CheckpointingException, match="flattened_range"):
+        checkpoint_mapping.ShardedTensor(
+            key="bad",
+            data=data,
+            dtype=data.dtype,
+            local_shape=tuple(data.shape),
+            global_shape=tuple(data.shape),
+            global_offset=(0, 0),
+            axis_fragmentations=(1, 1),
+            flattened_range=slice(0, 1),
+        )
+
+    assert checkpoint_mapping.is_main_replica(0) is True
+    assert checkpoint_mapping.is_main_replica(1) is False
+    assert checkpoint_mapping.is_main_replica((0, 0, 0)) is True
+    assert checkpoint_mapping.is_main_replica((0, 1)) is False
+    wrapped = checkpoint_mapping.LocalNonpersistentObject({"local": True})
+    assert wrapped.unwrap() == {"local": True}
+
+    obj = checkpoint_mapping.ShardedObject("obj", {"payload": 1}, (2, 3), (1, 2), replica_id=(0, 1))
+    assert obj.unique_key == "obj/shard_1.2_2.3"
+    assert str(obj) == "ShardedObject(key='obj')"
+    assert obj.without_data().data is None
+    assert checkpoint_mapping.ShardedObject.empty_from_unique_key(obj.unique_key).global_shape == (2, 3)
+    assert checkpoint_mapping.ShardedObject.empty_from_unique_key("legacy/shard_0.1.2_3.4").global_shape == (3, 4, -1)
+    with pytest.raises(checkpoint_mapping.CheckpointingException, match="Global offset dimensions"):
+        checkpoint_mapping.ShardedObject("bad", None, (1,), (1, 2))
+
+    factory = checkpoint_mapping.ShardedTensorFactory(
+        "factory",
+        torch.tensor([1.0, 2.0]),
+        build_fn=lambda key, tensor, replica_id, flattened_range: {
+            "left": checkpoint_mapping.ShardedTensor.from_rank_offsets(key + ".left", tensor[:1]),
+            "right": checkpoint_mapping.ShardedTensor.from_rank_offsets(key + ".right", tensor[1:]),
+        },
+        merge_fn=lambda loaded: torch.cat([loaded["left"], loaded["right"]]),
+    )
+    built = factory.build()
+    assert sorted(built) == ["left", "right"]
+    assert factory.without_data().data is None
+    state = {"outer": factory}
+    checkpoint_mapping.apply_factories(state)
+    assert isinstance(state["outer"]["left"], checkpoint_mapping.ShardedTensor)
+
+    merge_template = {"outer": checkpoint_mapping.ShardedTensorFactory("merge", torch.tensor([0.0]), lambda *args: {}, lambda loaded: loaded["x"] + loaded["y"])}
+    loaded = {"outer": {"x": torch.tensor([1.0]), "y": torch.tensor([2.0])}}
+    assert torch.equal(checkpoint_mapping.apply_factory_merges(loaded, merge_template)["outer"], torch.tensor([3.0]))
+    nested_loaded = {"a": [torch.tensor([1]), torch.tensor([2])]}
+    nested_template = {"a": {1: checkpoint_mapping.ShardedTensorFactory("merge", torch.tensor([0]), lambda *args: {}, lambda value: value + 3)}}
+    assert torch.equal(checkpoint_mapping.apply_factory_merges(nested_loaded, nested_template)["a"][1], torch.tensor([5]))
+
+    with pytest.raises(ValueError, match="Different dict keys"):
+        checkpoint_mapping.apply_factory_merges({}, {"missing": factory})
+    with pytest.raises(ValueError, match="different lengths"):
+        checkpoint_mapping.apply_factory_merges([1], [factory, factory])
+    with pytest.raises(ValueError, match="non-integer"):
+        checkpoint_mapping.apply_factory_merges([1], {"bad": factory})
+    with pytest.raises(ValueError, match="out of bound"):
+        checkpoint_mapping.apply_factory_merges([1], {3: factory})
+    with pytest.raises(ValueError, match="Duplicate non-dict"):
+        checkpoint_mapping.apply_factory_merges(1, 2)
+
+
+def test_inference_batch_dimensions_builder_matching_and_sampling(monkeypatch):
+    dims = batch_dimensions_utils.InferenceBatchDimensions(8, 2, 3)
+    assert str(dims) == "[8]: 2 P + 3 D"
+    assert dims.req_count == 5
+    assert dims == batch_dimensions_utils.InferenceBatchDimensions(8, 2, 3)
+    assert dims != None  # noqa: E711
+    assert len({dims, batch_dimensions_utils.InferenceBatchDimensions(8, 2, 3)}) == 1
+
+    decode_graph = batch_dimensions_utils.InferenceBatchDimensions(6, 0, 3)
+    decode_real = batch_dimensions_utils.InferenceBatchDimensions(4, 0, 2)
+    assert decode_graph.is_applicable_for_batch_dim(decode_real) is True
+    assert batch_dimensions_utils.InferenceBatchDimensions(6, 1, 2).is_applicable_for_batch_dim(decode_real) is False
+    mixed_graph = batch_dimensions_utils.InferenceBatchDimensions(12, 3, 2)
+    mixed_real = batch_dimensions_utils.InferenceBatchDimensions(8, 2, 3)
+    assert mixed_graph.is_applicable_for_batch_dim(mixed_real, strict=False) is True
+    assert mixed_graph.is_applicable_for_batch_dim(mixed_real, strict=True) is False
+
+    assert batch_dimensions_utils.InferenceBatchDimensions(4, 2, 2).is_valid(4, 8, 0) is True
+    assert batch_dimensions_utils.InferenceBatchDimensions(4, 3, 2).is_valid(4, 8, 0) is False
+    assert batch_dimensions_utils.InferenceBatchDimensions(4, -1, 1).is_valid(4, 8, 0) is False
+    assert batch_dimensions_utils.InferenceBatchDimensions(2, 1, 2).is_valid(4, 8, 0) is False
+    assert batch_dimensions_utils.InferenceBatchDimensions(20, 1, 0).is_valid(4, 8, 0) is False
+
+    builder = batch_dimensions_utils.CUDAGraphBatchDimensionBuilder
+    assert builder._calculate_cuda_graph_token_counts(tp_size=2, num_cuda_graphs=1, cuda_graph_max_tokens=18) == [18]
+    assert builder._calculate_cuda_graph_token_counts(tp_size=2, num_cuda_graphs=3, cuda_graph_max_tokens=24) == [24, 16, 8]
+    auto_counts = builder._calculate_cuda_graph_token_counts(tp_size=4, num_cuda_graphs=-1, cuda_graph_max_tokens=20)
+    assert auto_counts[0] == 20
+    assert auto_counts[-1] == 4
+    with pytest.raises(AssertionError, match="num_cuda_graphs"):
+        builder._calculate_cuda_graph_token_counts(tp_size=1, num_cuda_graphs=0, cuda_graph_max_tokens=8)
+    with pytest.raises(AssertionError, match="cuda_graph_max_tokens"):
+        builder._calculate_cuda_graph_token_counts(tp_size=1, num_cuda_graphs=1, cuda_graph_max_tokens=0)
+
+    decode_dims, decode_counts = builder.generate_cuda_graph_batch_dimensions_list(
+        tp_size=2,
+        num_cuda_graphs=3,
+        cuda_graph_max_tokens=8,
+        cuda_graph_mixed_prefill_request_count=0,
+        max_requests=4,
+        max_tokens=8,
+        max_sequence_length=16,
+        use_cuda_graphs_for_non_decode_steps=False,
+        num_speculative_tokens=1,
+    )
+    assert decode_counts == [8, 6]
+    assert all(dim.prefill_req_count == 0 for dim in decode_dims)
+
+    mixed_dims, mixed_counts = builder.generate_cuda_graph_batch_dimensions_list(
+        tp_size=2,
+        num_cuda_graphs=2,
+        cuda_graph_max_tokens=8,
+        cuda_graph_mixed_prefill_request_count=2,
+        max_requests=4,
+        max_tokens=8,
+        max_sequence_length=16,
+        use_cuda_graphs_for_non_decode_steps=True,
+        num_speculative_tokens=1,
+    )
+    assert mixed_counts == [8, 4]
+    assert any(dim.prefill_req_count > 0 for dim in mixed_dims)
+    assert mixed_dims == sorted(
+        mixed_dims,
+        key=lambda item: (item.token_count - item.decode_req_count * 2, item.decode_req_count),
+        reverse=True,
+    )
+    none_dims, none_counts = builder.generate_cuda_graph_batch_dimensions_list(
+        tp_size=2,
+        num_cuda_graphs=None,
+        cuda_graph_max_tokens=8,
+        cuda_graph_mixed_prefill_request_count=2,
+        max_requests=4,
+        max_tokens=8,
+        max_sequence_length=16,
+        use_cuda_graphs_for_non_decode_steps=True,
+    )
+    assert none_dims == []
+    assert none_counts is None
+    with pytest.raises(AssertionError, match="must equal"):
+        builder.generate_cuda_graph_batch_dimensions_list(
+            tp_size=2,
+            num_cuda_graphs=1,
+            cuda_graph_max_tokens=6,
+            cuda_graph_mixed_prefill_request_count=0,
+            max_requests=4,
+            max_tokens=8,
+            max_sequence_length=16,
+            use_cuda_graphs_for_non_decode_steps=False,
+            num_speculative_tokens=1,
+        )
+
+    monkeypatch.setattr(batch_dimensions_utils, "get_pg_size", lambda group=None: 1)
+    assert (
+        batch_dimensions_utils.InferenceBatchDimensions.adjust_batch_dims_for_expert_parallelism(
+            mixed_real,
+            strict=False,
+            decode_only_cuda_graphs=False,
+            smallest_non_decode_cuda_graph_size=16,
+        )
+        is mixed_real
+    )
+    assert builder.match_graph_config(
+        real_batch_dim=decode_real,
+        cuda_graph_batch_dimensions_list=decode_dims,
+        smallest_non_decode_cuda_graph_size=8,
+    ) == min(dim for dim in decode_dims if dim.is_applicable_for_batch_dim(decode_real))
+    assert builder.match_graph_config(
+        real_batch_dim=batch_dimensions_utils.InferenceBatchDimensions(100, 10, 0),
+        cuda_graph_batch_dimensions_list=decode_dims,
+        smallest_non_decode_cuda_graph_size=8,
+    ) is None
+    monkeypatch.setattr(
+        batch_dimensions_utils.InferenceBatchDimensions,
+        "adjust_batch_dims_for_expert_parallelism",
+        staticmethod(lambda *args, **kwargs: None),
+    )
+    assert builder.match_graph_config(decode_real, decode_dims, 8, decode_only_cuda_graphs=True) is None
+
+    with pytest.warns(DeprecationWarning):
+        legacy = SamplingParams(return_prompt_top_n_logprobs=True, top_n_logprobs=2)
+    assert legacy.return_prompt_top_n_logprobs is True
+    with pytest.raises(AssertionError, match="requires"):
+        SamplingParams(return_prompt_top_n_logprobs=True, skip_prompt_log_probs=True)
+    params = SamplingParams(top_n_logprobs=4, skip_prompt_log_probs=True)
+    assert params.return_prompt_top_n_logprobs is False
+    params.add_attributes({"top_n_logprobs": 2, "skip_prompt_log_probs": False, "custom": "value"})
+    assert params.return_prompt_top_n_logprobs is True
+    assert params.custom == "value"
+    restored = SamplingParams.deserialize(params.serialize())
+    assert restored.serialize()["custom"] == "value"
+
+
+def test_spec_rank_and_tensor_parallel_utils_cpu_paths(monkeypatch):
+    class ToyModule:
+        def __init__(self, value, scale=1, submodules=None):
+            self.value = value
+            self.scale = scale
+            self.submodules = submodules
+
+    def helper_function():
+        return "helper"
+
+    assert spec_utils.get_module(ToyModule) is ToyModule
+    assert spec_utils.get_module(spec_utils.ModuleSpec(module=ToyModule)) is ToyModule
+    assert spec_utils.build_module(helper_function) is helper_function
+    assert spec_utils.build_module(spec_utils.ModuleSpec(module=helper_function)) is helper_function
+    module = spec_utils.build_module(
+        spec_utils.ModuleSpec(module=ToyModule, params={"scale": 2}, submodules={"inner": True}),
+        5,
+    )
+    assert (module.value, module.scale, module.submodules) == (5, 2, {"inner": True})
+    module_override = spec_utils.build_module(spec_utils.ModuleSpec(module=ToyModule, params={"scale": 2}), 5, scale=7)
+    assert module_override.scale == 7
+    spec = spec_utils.ModuleSpec(module=ToyModule, params={"scale": 3})
+    assert spec(4).scale == 3
+    assert spec_utils.get_submodules(spec_utils.ModuleSpec(module=ToyModule, submodules="sub")) == "sub"
+    with pytest.raises(ValueError, match="Could not find"):
+        spec_utils.get_submodules(object())
+
+    monkeypatch.setattr(spec_utils, "import_module", lambda module_path: helper_function if module_path == ("pkg", "helper") else ToyModule)
+    assert spec_utils.get_module(spec_utils.ModuleSpec(module=("pkg", "helper"))) is helper_function
+    assert spec_utils.build_module(spec_utils.ModuleSpec(module=("pkg", "toy"), params={"scale": 9}), 1).scale == 9
+    bad_spec = spec_utils.ModuleSpec(module=ToyModule, params={"unknown": True})
+    with pytest.raises(TypeError, match="when instantiating ToyModule"):
+        spec_utils.build_module(bad_spec, 1)
+
+    monkeypatch.setattr(rank_utils.torch.distributed, "is_initialized", lambda: False)
+    monkeypatch.setenv("RANK", "5")
+    assert rank_utils.safe_get_rank() == 5
+    monkeypatch.setenv("RANK", "not-an-int")
+    assert rank_utils.safe_get_rank() == 0
+    monkeypatch.setattr(rank_utils.torch.distributed, "is_initialized", lambda: True)
+    monkeypatch.setattr(rank_utils.torch.distributed, "get_rank", lambda: 3)
+    assert rank_utils.safe_get_rank() == 3
+    log_calls = []
+    fake_logger = SimpleNamespace(log=lambda *args, **kwargs: log_calls.append((args, kwargs)))
+    rank_utils.log_single_rank(fake_logger, logging.INFO, "visible", rank=3, marker=True)
+    rank_utils.log_single_rank(fake_logger, logging.INFO, "hidden", rank=0)
+    assert log_calls == [((logging.INFO, "visible"), {"marker": True})]
+
+    matrix = torch.arange(12).reshape(3, 4)
+    chunks = tensor_parallel_utils.split_tensor_along_last_dim(matrix, 2)
+    assert [chunk.tolist() for chunk in chunks] == [
+        [[0, 1], [4, 5], [8, 9]],
+        [[2, 3], [6, 7], [10, 11]],
+    ]
+    contiguous_chunks = tensor_parallel_utils.split_tensor_along_last_dim(matrix, 2, contiguous_split_chunks=True)
+    assert all(chunk.is_contiguous() for chunk in contiguous_chunks)
+
+    class _FakeTensorParallelGroup:
+        def __init__(self, rank, size):
+            self._rank = rank
+            self._size = size
+
+        def rank(self):
+            return self._rank
+
+        def size(self):
+            return self._size
+
+    group = _FakeTensorParallelGroup(rank=1, size=3)
+    assert torch.equal(tensor_parallel_utils.split_tensor_into_1d_equal_chunks(torch.arange(12), tp_group=group), torch.arange(4, 8))
+    monkeypatch.setattr(tensor_parallel_utils.cur_platform, "current_device", lambda: "cpu")
+    new_buffer = tensor_parallel_utils.split_tensor_into_1d_equal_chunks(torch.arange(12), new_buffer=True, tp_group=group)
+    assert torch.equal(new_buffer, torch.arange(4, 8))
+    assert new_buffer._base is None
+    gathered_calls = []
+    monkeypatch.setattr(
+        tensor_parallel_utils,
+        "dist_all_gather_func",
+        lambda gathered, tensor, group: gathered.copy_(torch.cat([tensor + 10 * i for i in range(group.size())])) or gathered_calls.append(group),
+    )
+    assert torch.equal(tensor_parallel_utils.gather_split_1d_tensor(torch.tensor([1, 2]), tp_group=group), torch.tensor([1, 2, 11, 12, 21, 22]))
+    assert gathered_calls == [group]
+    assert tensor_parallel_utils.VocabUtility.vocab_range_from_per_partition_vocab_size(8, rank=2, world_size=4) == (16, 24)
+    assert tensor_parallel_utils.VocabUtility.vocab_range_from_global_vocab_size(32, rank=3, world_size=4) == (24, 32)
+
+
+def test_core_utils_cpu_helpers_wrappers_versions_and_memory(monkeypatch):
+    core_utils._te_version = None
+    core_utils._flashinfer_version = None
+    monkeypatch.setattr(core_utils, "PkgVersion", lambda value: tuple(int(part) for part in str(value).split(".")[:3]))
+    monkeypatch.setattr(core_utils, "HAVE_PACKAGING", True)
+    monkeypatch.setattr(core_utils, "version", lambda name: {"transformer-engine": "2.8.0", "flashinfer": "1.2.3"}[name])
+    monkeypatch.setitem(__import__("sys").modules, "transformer_engine", SimpleNamespace(__version__="0.1.0+te2.9.1"))
+    assert core_utils.get_te_version() == (2, 9, 1)
+    assert core_utils.is_te_min_version("2.9.0") is True
+    assert core_utils.is_te_min_version("2.9.1", check_equality=False) is False
+    core_utils._te_version = None
+    monkeypatch.setitem(__import__("sys").modules, "transformer_engine", SimpleNamespace())
+    assert core_utils.get_te_version() == (2, 8, 0)
+
+    monkeypatch.setitem(__import__("sys").modules, "flashinfer", SimpleNamespace(__version__="1.2.4"))
+    assert core_utils.get_flashinfer_version() == (1, 2, 4)
+    assert core_utils.is_flashinfer_min_version("1.2.0") is True
+    core_utils._flashinfer_version = None
+
+    assert core_utils.divide(12, 3) == 4
+    with pytest.raises(AssertionError, match="not divisible"):
+        core_utils.ensure_divisibility(10, 3)
+
+    class _Group:
+        def __init__(self, rank, size):
+            self._rank = rank
+            self._size = size
+
+        def rank(self):
+            return self._rank
+
+        def size(self):
+            return self._size
+
+    monkeypatch.setattr(core_utils.torch.distributed, "is_initialized", lambda: False)
+    assert core_utils.get_pg_size(_Group(1, 8)) == 1
+    assert core_utils.get_pg_rank(_Group(1, 8)) == 0
+    assert core_utils.get_pg_src_rank(_Group(1, 8)) == 0
+    monkeypatch.setattr(core_utils.torch.distributed, "is_initialized", lambda: True)
+    monkeypatch.setattr(core_utils.torch.distributed, "get_process_group_ranks", lambda group: [5, 6, 7])
+    assert core_utils.get_pg_size(_Group(2, 9)) == 9
+    assert core_utils.get_pg_rank(_Group(2, 9)) == 2
+    assert core_utils.get_pg_size([_Group(3, 4)]) == 4
+    assert core_utils.get_pg_rank([_Group(3, 4)]) == 3
+    assert core_utils.get_pg_src_rank(_Group(2, 9)) == 5
+
+    class _Inner:
+        model_type = "gpt"
+        config = {"hidden": 8}
+        xattn_needed = True
+
+    wrapped = SimpleNamespace(module=SimpleNamespace(module=_Inner()))
+    assert core_utils.get_attr_wrapped_model(wrapped, "model_type") == "gpt"
+    assert isinstance(core_utils.get_attr_wrapped_model(wrapped, "config", allow_none=False, return_model_obj=True), _Inner)
+    assert core_utils.get_model_type(wrapped) == "gpt"
+    assert core_utils.get_model_config(wrapped) == {"hidden": 8}
+    assert core_utils.get_model_xattn(wrapped) is True
+    assert core_utils.get_model_xattn(SimpleNamespace()) is False
+    with pytest.raises(RuntimeError, match="given a list"):
+        core_utils.get_attr_wrapped_model([wrapped], "model_type")
+    with pytest.raises(RuntimeError, match="couldn't find"):
+        core_utils.get_attr_wrapped_model(SimpleNamespace(), "missing")
+
+    monkeypatch.setattr(core_utils.cur_platform, "current_device", lambda: "cpu")
+    buffer = core_utils.GlobalMemoryBuffer()
+    alloc_context_calls = []
+
+    class _AllocContext:
+        def __enter__(self):
+            alloc_context_calls.append("enter")
+
+        def __exit__(self, *exc):
+            alloc_context_calls.append("exit")
+
+    first = buffer.get_tensor((2, 2), torch.float32, "workspace", mem_alloc_context=_AllocContext)
+    first.fill_(3)
+    second = buffer.get_tensor((1, 4), torch.float32, "workspace")
+    assert torch.equal(second, torch.full((1, 4), 3.0))
+    bigger = buffer.get_tensor((3, 3), torch.float32, "workspace")
+    assert bigger.shape == (3, 3)
+    assert alloc_context_calls == ["enter", "exit"]
+
+    wrapped_tensor = core_utils.WrappedTensor(torch.tensor([1.0]))
+    assert torch.equal(wrapped_tensor.unwrap(), torch.tensor([1.0]))
+    with pytest.raises(RuntimeError, match="already been unwrapped"):
+        wrapped_tensor.unwrap()
+
+    base = torch.arange(6.0, requires_grad=True)
+    view = base.view(2, 3)
+    viewless = core_utils.make_viewless_tensor(view, requires_grad=True, keep_graph=False)
+    assert viewless._base is None
+    assert torch.equal(viewless, view)
+    graph_viewless = core_utils.make_viewless_tensor(view, requires_grad=True, keep_graph=True)
+    assert graph_viewless._base is None
+    assert torch.equal(graph_viewless, view)
+    assert core_utils.make_viewless_tensor(base, requires_grad=True, keep_graph=False) is base
+    assert core_utils.assert_viewless_tensor(viewless) is viewless
+    assert core_utils.assert_viewless_tensor([viewless]) == [viewless]
+    assert core_utils.assert_viewless_tensor("not-a-tensor") == "not-a-tensor"
+    with pytest.raises(AssertionError, match="Ensure tensor._base"):
+        core_utils.assert_viewless_tensor(view, extra_msg="extra")
+    replacement = torch.ones_like(viewless)
+    core_utils.safely_set_viewless_tensor_data(viewless, replacement)
+    assert torch.equal(viewless, replacement)
+    with pytest.raises(AssertionError, match="FYI"):
+        core_utils.safely_set_viewless_tensor_data(view, replacement)
+
+    init_target = torch.empty(4)
+    core_utils.init_method_normal(0.0)(init_target)
+    assert torch.equal(init_target, torch.zeros(4))
+    scaled_target = torch.empty(4)
+    core_utils.scaled_init_method_normal(0.0, num_layers=2)(scaled_target)
+    assert torch.equal(scaled_target, torch.zeros(4))
+    mup_target = torch.empty(4)
+    core_utils.mup_scaled_init_method_normal(0.0, num_layers=2, width_mult=4)(mup_target)
+    assert torch.equal(mup_target, torch.zeros(4))
+
+    log_calls = []
+    logger = SimpleNamespace(log=lambda *args, **kwargs: log_calls.append((args, kwargs)))
+    monkeypatch.setattr(core_utils.parallel_state, "get_tensor_model_parallel_rank", lambda: 0)
+    monkeypatch.setattr(core_utils.parallel_state, "get_data_parallel_rank", lambda with_context_parallel=True: 0)
+    core_utils.log_on_each_pipeline_stage(logger, logging.INFO, "stage")
+    assert log_calls == [((logging.INFO, "stage"), {})]
+    log_calls.clear()
+    monkeypatch.setattr(core_utils.parallel_state, "get_data_parallel_rank", lambda with_context_parallel=True: 1)
+    core_utils.log_on_each_pipeline_stage(logger, logging.INFO, "hidden")
+    assert log_calls == []
+    with pytest.raises(ValueError, match="must be provided"):
+        core_utils.log_on_each_pipeline_stage(logger, logging.INFO, "bad", tp_group=_Group(0, 1))
+
+
+def test_tensor_aware_state_dict_cpu_lifecycle_and_conversion(monkeypatch):
+    tensor_a = checkpoint_mapping.ShardedTensor.from_rank_offsets(
+        "a",
+        torch.tensor([1.0, 2.0]),
+    )
+    tensor_b = checkpoint_mapping.ShardedTensor.from_rank_offsets(
+        "b",
+        torch.tensor([3.0]),
+    )
+    sharded_object = checkpoint_mapping.ShardedObject("obj", {"payload": True}, (1,), (0,))
+    tasd = tensor_aware.MCoreTensorAwareStateDict(
+        common={"meta": {"step": 7}},
+        sharded_state_dict={"layer": {"a": tensor_a, "b": [tensor_b], "obj": sharded_object}},
+    )
+
+    assert tasd.is_hollow is False
+    assert [tensor.tolist() for tensor in tasd.tensors] == [[1.0, 2.0], [3.0]]
+    assert tasd.common_state_dict == {"meta": {"step": 7}}
+    popped = tasd.pop_tensors()
+    assert [tensor.tolist() for tensor in popped] == [[1.0, 2.0], [3.0]]
+    assert tasd.is_hollow is True
+    assert tensor_a.data is None
+    assert hasattr(tensor_a, "orig_device")
+    with pytest.raises(AssertionError):
+        list(tasd.tensors)
+
+    tasd.insert_tensors([torch.tensor([5.0, 6.0]), torch.tensor([7.0])])
+    assert tasd.is_hollow is False
+    assert torch.equal(tensor_a.data, torch.tensor([5.0, 6.0]))
+    assert not hasattr(tensor_a, "orig_device")
+    with pytest.raises(AssertionError):
+        tasd.insert_tensors([torch.tensor([1.0])])
+
+    popped_again = tasd.pop_tensors()
+    assert len(popped_again) == 2
+    tasd.init_tensors()
+    assert tasd.is_hollow is False
+    assert tensor_a.data.shape == (2,)
+    assert tensor_b.data.shape == (1,)
+
+    original_a = tensor_a.data
+    tasd.copy_tensors_to_cpu(non_blocking=False)
+    assert tensor_a.data.device.type == "cpu"
+    assert tensor_a.data is not original_a
+    tensor_a.orig_device = "cpu"
+    tasd.restore_tensor_device(non_blocking=False)
+    assert not hasattr(tensor_a, "orig_device")
+
+    sharded_template = {
+        "layer": {
+            "a": checkpoint_mapping.ShardedTensor.from_rank_offsets("a", torch.zeros(2)),
+            "b": [checkpoint_mapping.ShardedTensor.from_rank_offsets("b", torch.zeros(1))],
+            "obj": checkpoint_mapping.ShardedObject("obj", None, (1,), (0,)),
+        }
+    }
+    monkeypatch.setattr(tensor_aware, "load_preprocess", lambda state: (state, {"local": {"keep": 1}}, {}))
+    monkeypatch.setattr(tensor_aware, "parse_strict_flag", lambda strict: strict)
+    monkeypatch.setattr(tensor_aware.StrictHandling, "requires_explicit_ckpt_mismatch_check", staticmethod(lambda strict: False))
+    monkeypatch.setattr(tensor_aware.StrictHandling, "requires_global_app_metadata", staticmethod(lambda strict: False))
+    monkeypatch.setattr(tensor_aware, "determine_global_metadata", lambda state: pytest.fail("global metadata should not be needed"))
+    monkeypatch.setattr(
+        tensor_aware,
+        "validate_integrity_and_strict_load",
+        lambda sharded_part, strict, validate_access_integrity, local_metadata, global_metadata, ckpt_sharded_metadata: (
+            sharded_part,
+            ["missing"],
+            ["unexpected"],
+        ),
+    )
+    recreated, missing, unexpected = tasd.to_state_dict(
+        sharded_template,
+        algo="atomic",
+        validate_access_integrity=False,
+        strict=object(),
+        return_mismatch_keys=True,
+    )
+    assert recreated["meta"] == {"step": 7}
+    assert recreated["local"] == {"keep": 1}
+    assert torch.equal(recreated["layer"]["a"], tensor_a.data)
+    assert torch.equal(recreated["layer"]["b"][0], tensor_b.data)
+    assert recreated["layer"]["obj"] == {"payload": True}
+    assert missing == ["missing"]
+    assert unexpected == ["unexpected"]
+
+    monkeypatch.setattr(tensor_aware, "HAVE_NVRX", False)
+    with pytest.raises(ImportError, match="nvidia_resiliency_ext"):
+        tensor_aware.MCoreTensorAwareStateDict.from_state_dict({})
+    with pytest.raises(NotImplementedError, match="atomic"):
+        tensor_aware.MCoreTensorAwareStateDict._validate_params("unsupported")
+
+
+def test_dynamic_inference_requests_hashes_events_records_and_identity_ops(monkeypatch):
+    nvtx_calls = []
+    monkeypatch.setattr(
+        inference_request_module.torch.cuda,
+        "nvtx",
+        SimpleNamespace(
+            range_push=lambda name: nvtx_calls.append(("push", name)),
+            range_pop=lambda: nvtx_calls.append(("pop",)),
+        ),
+    )
+    monkeypatch.setattr(inference_request_module.torch.distributed, "is_initialized", lambda: False)
+    inference_request_module._hash_powers = None
+
+    def _as_msgpack_round_trip(value):
+        if isinstance(value, tuple):
+            return [_as_msgpack_round_trip(item) for item in value]
+        if isinstance(value, list):
+            return [_as_msgpack_round_trip(item) for item in value]
+        if isinstance(value, dict):
+            return {key: _as_msgpack_round_trip(item) for key, item in value.items()}
+        return value
+
+    prompt_tokens = torch.tensor([1, 2, 3, 4, 5], dtype=torch.int64)
+    assert inference_request_module.compute_block_hashes_batched(prompt_tokens, block_size=8) == []
+    hashes = inference_request_module.compute_block_hashes_batched(prompt_tokens, block_size=2)
+    expected_first = (1 * 1 + 2 * inference_request_module.HASH_BASE) % inference_request_module.HASH_PRIME
+    expected_second_token_hash = (3 * 1 + 4 * inference_request_module.HASH_BASE) % inference_request_module.HASH_PRIME
+    expected_second = ((expected_first + 1) * inference_request_module.HASH_BASE + expected_second_token_hash) % inference_request_module.HASH_PRIME + 1
+    assert hashes == [expected_first + 1, expected_second]
+
+    tensor = torch.tensor([[1, 2], [3, 4]])
+    assert inference_request_module.serialize_tensor(tensor) == [[1, 2], [3, 4]]
+    assert torch.equal(inference_request_module.deserialize_tensor([[5, 6]]), torch.tensor([[5, 6]]))
+    assert inference_request_module.unwrap_serialized_tensors({"a": ("tensor", [1]), "b": 2}) == {"a": [1], "b": 2}
+
+    with pytest.warns(UserWarning, match="renamed"):
+        legacy = inference_request_module.InferenceRequest(
+            request_id=1,
+            prompt="hello",
+            inference_parameters=SamplingParams(top_k=3),
+            status=Status.ACTIVE_AND_GENERATING_TOKENS,
+            generated_tokens=torch.tensor([7, 8]),
+        )
+    serialized = legacy.serialize()
+    assert serialized["status"] == "ACTIVE_AND_GENERATING_TOKENS"
+    assert serialized["generated_tokens"][0] == "tensor"
+    round_tripped = inference_request_module.InferenceRequest.deserialize(_as_msgpack_round_trip(serialized))
+    assert round_tripped.status == Status.ACTIVE_AND_GENERATING_TOKENS
+    assert round_tripped.sampling_params.top_k == 3
+    assert torch.equal(round_tripped.generated_tokens, torch.tensor([7, 8]))
+
+    event = inference_request_module.DynamicInferenceEvent(
+        timestamp=1.25,
+        type=DynamicInferenceEventType.GENERATED_TOKEN,
+        payload={"token_id": 99},
+    )
+    assert str(event) == "[1.250] GENERATED_TOKEN, token=99"
+    assert inference_request_module.DynamicInferenceEvent.deserialize(event.serialize()).payload == {"token_id": 99}
+    assert str(inference_request_module.DynamicInferenceEvent(timestamp=2.0, type=DynamicInferenceEventType.PAUSE)) == "[2.000] PAUSE"
+    with pytest.raises(AssertionError):
+        inference_request_module.DynamicInferenceEvent(type="bad")
+    with pytest.raises(AssertionError):
+        inference_request_module.DynamicInferenceEvent(type=DynamicInferenceEventType.GENERATED_TOKEN)
+    with pytest.raises(AssertionError):
+        inference_request_module.DynamicInferenceEvent(type=DynamicInferenceEventType.ERROR_TRANSIENT)
+
+    sampling = SamplingParams(num_tokens_to_generate=5, top_k=2)
+    request = DynamicInferenceRequest(
+        request_id=11,
+        prompt="prompt",
+        prompt_tokens=torch.tensor([10, 11, 12, 13]),
+        sampling_params=sampling,
+        status=Status.WAITING_IN_QUEUE,
+        block_size_tokens=2,
+        enable_prefix_caching=True,
+    )
+    assert request.remaining_prompt_tokens is request.prompt_tokens
+    assert request.remaining_prompt_length == 4
+    assert request.precomputed_block_hashes == inference_request_module.compute_block_hashes_batched(torch.tensor([10, 11, 12, 13]), 2)
+    assert request.sampling_params is not sampling
+    assert "id 11" in str(request)
+
+    with pytest.warns(UserWarning, match="termination_id"):
+        tracked = request.tracked_metadata
+    assert request.sampling_params.termination_id == -1
+    assert tracked[:3] == [1.0, 2, 0.0]
+    assert [name for name, _, _ in DynamicInferenceRequest.get_metadata_types()] == [
+        "temperature",
+        "top_k",
+        "top_p",
+        "termination_id",
+        "return_log_probs",
+        "skip_prompt_log_probs",
+        "top_n_logprobs",
+    ]
+    assert request.add_event_add_engine().type == DynamicInferenceEventType.ADD_ENGINE
+    assert request.add_event_add_context().type == DynamicInferenceEventType.ADD_CONTEXT
+    generated_event = request.add_event_generated_token(
+        42,
+        blocks_total=8,
+        blocks_hashed_total=4,
+        blocks_hashed_active=3,
+        blocks_ref_count=2,
+        pre_fwd_active_token_count=6,
+        pre_fwd_step_count=1,
+    )
+    assert generated_event.payload["token_id"] == 42
+    assert generated_event.payload["blocks_total"] == 8
+    assert request.add_event_pause().type == DynamicInferenceEventType.PAUSE
+    assert request.add_event_evict().type == DynamicInferenceEventType.EVICT
+    assert request.add_event_finish().type == DynamicInferenceEventType.FINISH
+    assert request.add_event_fail().type == DynamicInferenceEventType.FAIL
+    request.status = Status.COMPLETED
+    assert request.succeeded() is True
+    request.status = Status.FAILED
+    assert request.failed() is True
+
+    request.generated_tokens = [14, 15]
+    request.generated_text = "ab"
+    request.generated_log_probs = [0.1]
+    request.generated_top_n_logprobs = [{"a": -0.1}]
+    request.tpot = [1]
+    request.policy_epoch = [(0, 1)]
+    request.kv_cache_epoch = [(2, 3)]
+    request.routing_indices = torch.zeros((5, 1, 1), dtype=torch.int64)
+    serialized_request = request.serialize()
+    assert "event_add_engine" not in serialized_request
+    assert len(serialized_request["events"]) == len(request.events)
+    request_copy = DynamicInferenceRequest.deserialize(_as_msgpack_round_trip(serialized_request))
+    assert request_copy.events[2].payload["token_id"] == 42
+
+    bad_routing = DynamicInferenceRequest(
+        request_id=12,
+        prompt_tokens=torch.tensor([1, 2]),
+        sampling_params=SamplingParams(),
+        generated_tokens=[3],
+        routing_indices=torch.zeros((5, 1, 1), dtype=torch.int64),
+    )
+    with pytest.raises(AssertionError, match="routing_indices"):
+        bad_routing.serialize()
+
+    record = DynamicInferenceRequestRecord.from_request(request)
+    assert record.request_id == 11
+    record.checkpoint()
+    assert len(record.requests) == 2
+    assert torch.equal(record.requests[1].prompt_tokens, torch.tensor([10, 11, 12, 13, 14, 15]))
+    assert record.requests[1].sampling_params.num_tokens_to_generate == 3
+    assert record.requests[1].event_add_engine is request.event_add_engine
+    record.requests[1].generated_tokens = [16]
+    record.requests[1].generated_text = "c"
+    record.requests[1].generated_log_probs = [0.2]
+    record.requests[1].generated_top_n_logprobs = [{"c": -0.2}]
+    record.requests[1].tpot = [2]
+    record.requests[1].events = [inference_request_module.DynamicInferenceEvent(timestamp=4.0, type=DynamicInferenceEventType.FINISH)]
+    record.requests[1].status = Status.COMPLETED
+    request.routing_indices = None
+    record.latency = 9.5
+    merged = record.merge()
+    assert merged.generated_tokens == [14, 15, 16]
+    assert merged.generated_text == "abc"
+    assert merged.generated_length == 3
+    assert merged.status == Status.COMPLETED
+    assert merged.latency == 9.5
+    record_serialized = record.serialize()
+    record_round_trip = DynamicInferenceRequestRecord.deserialize(_as_msgpack_round_trip(record_serialized))
+    assert record_round_trip.requests[0].request_id == 11
+
+    vlm = inference_request_module.VLMInferenceRequest(
+        request_id=21,
+        prompt="describe",
+        num_img_embeddings_per_tile=2,
+        imgs=torch.zeros(1, 3, 4, 4),
+        num_tiles=torch.tensor([1]),
+        decoder_seq_length=8,
+    )
+    assert vlm.decoder_seq_length == 8
+
+    identity = IdentityOp()
+    payload = {"x": 1}
+    assert identity(payload, ignored=True) is payload
+    identity_func = IdentityFuncOp()()
+    assert identity_func("kept", "dropped") == "kept"
+
+    packed = PackedSeqParams(cu_seqlens_q=torch.tensor([0, 2, 5], dtype=torch.int32), total_tokens=7)
+    assert torch.equal(packed.seq_idx, torch.tensor([[0, 0, 1, 1, 1, 2, 2]], dtype=torch.int32))
+    padded = PackedSeqParams(
+        cu_seqlens_q=torch.tensor([0, 1], dtype=torch.int32),
+        cu_seqlens_q_padded=torch.tensor([0, 3, 10], dtype=torch.int32),
+        total_tokens=5,
+    )
+    assert torch.equal(padded.seq_idx, torch.tensor([[0, 0, 0, 1, 1]], dtype=torch.int32))
+    no_tokens = PackedSeqParams(cu_seqlens_q=torch.tensor([0, 1], dtype=torch.int32))
+    assert no_tokens.seq_idx is None
+
+
+def test_state_dict_utils_preprocess_filter_factories_and_nonpersistent(monkeypatch):
+    factory_source = torch.tensor([1.0, 2.0])
+
+    def build_fn(key, tensor, replica_id, flattened_range):
+        return {
+            "left": checkpoint_mapping.ShardedTensor.from_rank_offsets(key + ".left", tensor[:1]),
+            "right": checkpoint_mapping.ShardedTensor.from_rank_offsets(key + ".right", tensor[1:]),
+        }
+
+    factory = checkpoint_mapping.ShardedTensorFactory(
+        "factory",
+        factory_source,
+        build_fn=build_fn,
+        merge_fn=lambda loaded: torch.cat([loaded["left"], loaded["right"]]),
+    )
+    nonpersistent = checkpoint_mapping.LocalNonpersistentObject({"rank-local": 1})
+    state = {
+        "factory": factory,
+        "plain": 3,
+        "local": nonpersistent,
+        "content_metadata": {"tuple": (1, 2), "set": {"a", "b"}},
+    }
+
+    validated = []
+    monkeypatch.setattr(checkpoint_state_utils, "determine_global_metadata", lambda sharded_part: ("local", {"global": sorted(sharded_part)}))
+    monkeypatch.setattr(
+        checkpoint_state_utils,
+        "validate_sharding_integrity",
+        lambda global_metadata, common_state_dict=None: validated.append((global_metadata, common_state_dict)),
+    )
+    sharded_part, common = checkpoint_state_utils.save_preprocess(
+        state,
+        validate_access_integrity=True,
+        preprocess_common_before_consistancy_check=lambda common_state: {**common_state, "preprocessed": True},
+    )
+    assert sorted(sharded_part["factory"]) == ["left", "right"]
+    assert common["plain"] == 3
+    assert "local" not in common
+    assert validated[0][0] == {"global": ["factory"]}
+    assert validated[0][1]["preprocessed"] is True
+
+    load_factory = checkpoint_mapping.ShardedTensorFactory(
+        "load_factory",
+        torch.tensor([5.0, 6.0]),
+        build_fn=build_fn,
+        merge_fn=lambda loaded: torch.cat([loaded["left"], loaded["right"]]),
+    )
+    load_state = {
+        "layer": [load_factory, checkpoint_mapping.LocalNonpersistentObject("local-value")],
+        "common": "kept",
+    }
+    loaded_sharded, loaded_local, factories = checkpoint_state_utils.load_preprocess(load_state)
+    assert isinstance(loaded_sharded["layer"][0]["left"], checkpoint_mapping.ShardedTensor)
+    assert loaded_local == {"layer": ["local-value"]}
+    assert factories["layer"][0].data is None
+    assert load_factory.data is not None
+    assert load_state["layer"][1].unwrap() == "local-value"
+
+    empty_flat = checkpoint_mapping.ShardedTensor.from_rank_offsets("empty", torch.empty(0))
+    empty_flat.flattened_range = slice(0, 0)
+    non_empty_flat = checkpoint_mapping.ShardedTensor.from_rank_offsets("nonempty", torch.ones(1))
+    non_empty_flat.flattened_range = slice(0, 1)
+    filtered = checkpoint_state_utils.filter_out_empty_flatten_tensor(
+        {"keep": non_empty_flat, "drop": empty_flat, "nested": [empty_flat, non_empty_flat]}
+    )
+    assert "drop" not in filtered
+    assert filtered["keep"] is non_empty_flat
+    assert filtered["nested"] == [non_empty_flat]
+
+
+def test_inference_dataset_quantization_and_fp4_utility_paths(monkeypatch, tmp_path):
+    counter = inference_utils.Counter(start=3)
+    assert next(counter) == 3
+    assert next(counter) == 4
+    counter.reset()
+    assert next(counter) == 0
+
+    class _FakeDispatcher:
+        def __init__(self):
+            self.drop_and_pad = False
+            self.config = SimpleNamespace()
+            self.input_splits = [1]
+            self.output_splits = [2]
+            self.output_splits_tp = [3]
+            self.tokens_per_expert = [4]
+            self.num_global_tokens_per_local_expert = [5]
+            self.reversed_local_input_permutation_mapping = [6]
+            self.capacity = 7
+            self.cuda_sync_point = "sync"
+
+    class _FakeRouter:
+        def __init__(self):
+            self.config = SimpleNamespace()
+
+    class _FakeMoELayer:
+        def __init__(self):
+            self.token_dispatcher = _FakeDispatcher()
+            self.router = _FakeRouter()
+            self.capture_calls = []
+
+        def children(self):
+            return []
+
+        def set_inference_cuda_graphed_iteration(self):
+            self.capture_calls.append("set")
+
+        def unset_inference_cuda_graphed_iteration(self):
+            self.capture_calls.append("unset")
+
+    class _FakeModel:
+        def __init__(self, child):
+            self.config = SimpleNamespace(
+                moe_pad_expert_input_to_capacity=False,
+                moe_expert_capacity_factor=None,
+            )
+            self._child = child
+
+        def children(self):
+            return [self._child]
+
+    moe_layer = _FakeMoELayer()
+    model = _FakeModel(moe_layer)
+    monkeypatch.setattr(inference_utils, "MoELayer", _FakeMoELayer)
+    inference_utils.moe_layer_cache = None
+    inference_utils.set_decode_expert_padding(model, set_to=True, capacity_factor=2)
+    assert model.config.moe_pad_expert_input_to_capacity is True
+    assert model.config.moe_expert_capacity_factor == 2
+    assert moe_layer.token_dispatcher.drop_and_pad is True
+    assert moe_layer.token_dispatcher.input_splits is None
+    assert moe_layer.token_dispatcher.output_splits is None
+    assert moe_layer.token_dispatcher.cuda_sync_point == "no_sync"
+    assert moe_layer.router.moe_expert_capacity_factor == 2
+    assert inference_utils.moe_layer_cache == [moe_layer]
+    inference_utils.set_decode_expert_padding(model, set_to=False, capacity_factor=None)
+    assert moe_layer.token_dispatcher.drop_and_pad is False
+    inference_utils.set_inference_cuda_graphed_iteration_for_ep_inference(model)
+    inference_utils.unset_inference_cuda_graphed_iteration_for_ep_inference(model)
+    assert moe_layer.capture_calls == ["set", "unset"]
+
+    values = torch.tensor([10, 20, 30, 40])
+    inference_utils.tensor_swap(values, torch.tensor([0, 2]), torch.tensor([1, 3]))
+    assert torch.equal(values, torch.tensor([20, 10, 40, 30]))
+
+    monkeypatch.setattr(inference_utils, "FLASHINFER_JIT_CACHE_VERSION", "1.0.0")
+    inference_utils.check_flashinfer_jit_cache_installed(log_version=True)
+    monkeypatch.setattr(inference_utils, "FLASHINFER_JIT_CACHE_VERSION", None)
+    monkeypatch.setattr(inference_utils.torch.version, "cuda", "12.9")
+    with pytest.raises(RuntimeError, match="cu129"):
+        inference_utils.check_flashinfer_jit_cache_installed()
+    monkeypatch.setattr(inference_utils.torch.version, "cuda", "13.0")
+    with pytest.raises(RuntimeError, match="cu130"):
+        inference_utils.check_flashinfer_jit_cache_installed()
+    monkeypatch.setattr(inference_utils.torch.version, "cuda", None)
+    with pytest.raises(RuntimeError, match="flashinfer-jit-cache"):
+        inference_utils.check_flashinfer_jit_cache_installed()
+
+    async def _exercise_queue_and_process_helpers():
+        queue = inference_utils.asyncio_Queue()
+        queue.put_nowait("item")
+        assert await queue.get() == "item"
+        queue.shutdown()
+        with pytest.raises(inference_utils.asyncio_QueueShutDown):
+            await queue.get()
+        with pytest.raises(inference_utils.asyncio_QueueShutDown):
+            queue.put_nowait("late")
+        if hasattr(inference_utils, "_SHUTDOWN_SENTINEL"):
+            fresh_queue = inference_utils.asyncio_Queue()
+            with pytest.raises(ValueError, match="reserved"):
+                fresh_queue.put_nowait(inference_utils._SHUTDOWN_SENTINEL)
+
+        attempts = {"count": 0}
+
+        def wait_call(timeout):
+            attempts["count"] += 1
+            return attempts["count"] >= 2
+
+        alive_process = SimpleNamespace(is_alive=lambda: True, name="alive", pid=123)
+        await inference_utils.await_process_call(wait_call, alive_process, timeout=0.001)
+        dead_process = SimpleNamespace(is_alive=lambda: False, name="dead", pid=456)
+        with pytest.raises(RuntimeError, match="dead"):
+            await inference_utils.await_process_call(lambda timeout: False, dead_process, timeout=0.001)
+
+    import asyncio
+
+    asyncio.run(_exercise_queue_and_process_helpers())
+
+    assert dataset_utils.Split.train.value == 0
+    assert dataset_utils.normalize([1.0, 1.0, 2.0]) == [0.25, 0.25, 0.5]
+    assert dataset_utils.get_blend_from_list(None) is None
+    assert dataset_utils.get_blend_from_list(["a", "b", "c"]) == (["a", "b", "c"], None)
+    assert dataset_utils.get_blend_from_list(["0.25", " a ", "0.75", " b "]) == (["a", "b"], [0.25, 0.75])
+    assert dataset_utils.get_blend_from_list(["a", "b"]) == (["a", "b"], None)
+
+    matcher = GlobMatcher(pattern="*layers.3*fc1*", config_key="fp4")
+    matching_context = MatchContext(module_path="decoder.layers.3.mlp.fc1", layer_number=3)
+    assert matcher.match(matching_context) == "fp4"
+    assert matcher.match(MatchContext(module_path="decoder.layers.4.mlp.fc2", layer_number=4)) is None
+    assert "GlobMatcher" in repr(matcher)
+
+    recipe = RecipeConfig.from_config_dict(
+        {
+            "configs": {"fp4": {"bits": 4}, "fallback": {"bits": 8}},
+            "matchers": {
+                "disabled": {
+                    "enabled": False,
+                    "type": "glob",
+                    "pattern": "*disabled*",
+                    "config": "fallback",
+                },
+                "fc1": {
+                    "enabled": True,
+                    "type": "glob",
+                    "pattern": "*fc1*",
+                    "config": "fp4",
+                },
+            },
+        }
+    )
+    quant_config = recipe.match(matching_context)
+    assert quant_config.config == {"bits": 4}
+    assert quant_config.match_input == matching_context
+    assert quant_config.config_key == "fp4"
+    quant_config.config["bits"] = 2
+    assert recipe.configs["fp4"] == {"bits": 4}
+    assert recipe.match(MatchContext(module_path="decoder.layers.3.mlp.fc2", layer_number=3)) is None
+    assert "RecipeConfig" in repr(recipe)
+    with pytest.raises(AssertionError, match="type"):
+        RecipeConfig.from_config_dict({"matchers": {"bad": {"enabled": True}}})
+    with pytest.raises(AssertionError, match="pattern"):
+        RecipeConfig.from_config_dict({"matchers": {"bad": {"enabled": True, "type": "glob", "config": "x"}}})
+    with pytest.raises(AssertionError, match="config"):
+        RecipeConfig.from_config_dict({"matchers": {"bad": {"enabled": True, "type": "glob", "pattern": "*"}}})
+    with pytest.raises(NotImplementedError, match="Match type"):
+        RecipeConfig.from_config_dict({"matchers": {"bad": {"enabled": True, "type": "regex"}}})
+
+    recipe_path = tmp_path / "recipe.yaml"
+    recipe_path.write_text(
+        "\n".join(
+            [
+                "configs:",
+                "  default:",
+                "    bits: 8",
+                "matchers:",
+                "  all:",
+                "    enabled: true",
+                "    type: glob",
+                "    pattern: '*'",
+                "    config: default",
+            ]
+        )
+    )
+    loaded_recipe = quantization_utils.load_quantization_recipe(str(recipe_path))
+    assert loaded_recipe.match(MatchContext("anything.layers.9", 9)).config == {"bits": 8}
+    kitchen = quantization_utils.kitchen_quantization_recipe_config(7)
+    assert quantization_utils.get_quant_config_or_none("module.layers.12.linear", kitchen).config["recipe_idx"] == 7
+    assert quantization_utils.get_quant_config_or_none("module.no_layer.linear", None) is None
+    matched_no_layer = quantization_utils.get_quant_config_or_none("module.no_layer.linear", kitchen)
+    assert matched_no_layer.match_input.layer_number is None
+
+    assert fp4_utils.is_nvfp4tensor(torch.tensor([1.0])) is False
+    assert fp4_utils.get_nvfp4_rowwise_packed_shape(torch.Size([])) == torch.Size([])
+    assert fp4_utils.get_nvfp4_rowwise_packed_shape(torch.Size([2, 8])) == torch.Size([2, 4])
+    with pytest.raises(AssertionError, match="inner dimension"):
+        fp4_utils.get_nvfp4_rowwise_packed_shape(torch.Size([3]))
+    with pytest.raises(ValueError, match="NVFP4"):
+        fp4_utils.modify_nvfp4_rowwise_storage(torch.tensor([1], dtype=torch.uint8), torch.tensor([2], dtype=torch.uint8))
+    monkeypatch.setattr(fp4_utils, "HAVE_TE_FP4_TENSOR_CLASS", True)
+    monkeypatch.setattr(fp4_utils, "FP4_TENSOR_CLASS", object)
+    fake_fp4 = SimpleNamespace(_rowwise_data=torch.tensor([1, 2], dtype=torch.uint8))
+    new_storage = torch.empty(2, dtype=torch.uint8)
+    fp4_utils.modify_nvfp4_rowwise_storage(fake_fp4, new_storage)
+    assert fake_fp4._rowwise_data is new_storage
+    assert torch.equal(new_storage, torch.tensor([1, 2], dtype=torch.uint8))
+    fake_missing_storage = SimpleNamespace()
+    with pytest.raises(RuntimeError, match="missing rowwise"):
+        fp4_utils.modify_nvfp4_rowwise_storage(fake_missing_storage, torch.empty(1, dtype=torch.uint8))
+    fake_bad_dtype = SimpleNamespace(_rowwise_data=torch.tensor([1], dtype=torch.int32))
+    with pytest.raises(AssertionError, match="uint8"):
+        fp4_utils.modify_nvfp4_rowwise_storage(fake_bad_dtype, torch.empty(1, dtype=torch.uint8))
+    assert fp4_utils.get_fp4_align_size(Fp4Recipe.nvfp4) == 128
+    monkeypatch.setattr(fp4_utils, "is_te_min_version", lambda version: True)
+    fake_dequant = SimpleNamespace(dequantize=lambda: torch.tensor([9.0]))
+    assert torch.equal(fp4_utils.dequantize_fp4_tensor(fake_dequant), torch.tensor([9.0]))
+    monkeypatch.setattr(fp4_utils, "is_te_min_version", lambda version: False)
+    with pytest.raises(RuntimeError, match="FP4 dequantization"):
+        fp4_utils.dequantize_fp4_tensor(fake_dequant)
+    if not fp4_utils.HAVE_TE:
+        assert fp4_utils.get_fp4_recipe(SimpleNamespace()) is None
+        with fp4_utils.get_fp4_context(SimpleNamespace(), layer_no=0):
+            pass
+
+
+def test_core_utils_deprecated_args_submodules_wgrad_and_context_parallel(monkeypatch):
+    @core_utils.deprecate_args("old", message="{name} is gone")
+    def _new_api(**kwargs):
+        return kwargs
+
+    assert _new_api(new=1) == {"new": 1}
+    with pytest.raises(TypeError, match="old is gone"):
+        _new_api(old=1)
+
+    sentinel = object()
+    with pytest.warns(UserWarning, match="renamed"):
+        assert core_utils.deprecate_inference_params(None, sentinel) is sentinel
+    assert core_utils.deprecate_inference_params("context", sentinel) == "context"
+
+    grad_output = torch.arange(24, dtype=torch.float32).reshape(2, 3, 4).transpose(0, 1)
+    gathered_input = torch.arange(24, dtype=torch.float32).reshape(2, 3, 4).transpose(0, 1)
+    prepared_grad, prepared_input = core_utils.prepare_input_tensors_for_wgrad_compute(
+        grad_output,
+        gathered_input,
+    )
+    assert prepared_grad.shape == (6, 4)
+    assert prepared_input.shape == (6, 4)
+    assert prepared_grad.is_contiguous()
+    two_d_grad, two_d_input = core_utils.prepare_input_tensors_for_wgrad_compute(
+        torch.arange(6, dtype=torch.float32).reshape(2, 3).t(),
+        torch.arange(6, dtype=torch.float32).reshape(2, 3).t(),
+    )
+    assert two_d_grad.shape == (3, 2)
+    assert two_d_grad.is_contiguous()
+    assert two_d_input.is_contiguous()
+
+    src = torch.tensor([1.0, 2.0])
+    dst = torch.empty_like(src)
+    core_utils.local_multi_tensor_scale(0, None, [[src], [dst]], scale=3.0)
+    assert torch.equal(dst, torch.tensor([3.0, 6.0]))
+    assert core_utils.local_multi_tensor_applier(
+        lambda chunk_size, noop, tensor_lists, value: (chunk_size, noop, tensor_lists, value),
+        "noop",
+        [[src]],
+        "arg",
+    ) == (2048 * 32, "noop", [[src]], "arg")
+
+    parent = torch.nn.Sequential(torch.nn.Linear(2, 2), torch.nn.ReLU())
+    child = parent[0]
+    assert core_utils.is_submodule(child, parent) is True
+    assert core_utils.is_submodule(parent, parent) is False
+    assert core_utils.is_submodule(parent, parent, strict=False) is True
+    assert core_utils.is_submodule(torch.nn.Linear(2, 2), parent) is False
+
+    class _ContextGroup:
+        def __init__(self, rank, size):
+            self._rank = rank
+            self._size = size
+
+        def rank(self):
+            return self._rank
+
+        def size(self):
+            return self._size
+
+    batch = {
+        "tokens": torch.arange(16).reshape(1, 8, 2),
+        "labels": torch.arange(16, 32).reshape(1, 8, 2),
+        "attention_mask": torch.arange(64).reshape(1, 1, 8, 8),
+        "optional": None,
+    }
+    sliced = core_utils.get_batch_on_this_cp_rank(batch, cp_group=_ContextGroup(rank=1, size=2))
+    assert torch.equal(sliced["tokens"], torch.cat([torch.arange(4, 8).reshape(1, 2, 2), torch.arange(8, 12).reshape(1, 2, 2)], dim=1))
+    assert torch.equal(sliced["labels"], torch.cat([torch.arange(20, 24).reshape(1, 2, 2), torch.arange(24, 28).reshape(1, 2, 2)], dim=1))
+    assert sliced["attention_mask"].shape == (1, 1, 4, 8)
+    assert sliced["optional"] is None
+
+    unchanged = {"tokens": torch.arange(4).reshape(1, 2, 2)}
+    assert core_utils.get_batch_on_this_cp_rank(unchanged, cp_group=_ContextGroup(rank=0, size=1)) is unchanged
+
+    value_a = core_utils._ValueWithRank(1.234, 2, "ms")
+    value_b = core_utils._ValueWithRank(2.0, 3, "ms")
+    assert value_a < value_b
+    assert value_b > value_a
+    assert value_a() == (1.234, 2, "ms")
+    assert str(value_a) == "1.23ms/2"
+    detector = core_utils.StragglerDetector()
+    detector._off = True
+    assert detector.elapsed() == (0, 0, 0, 0, 0, 0)
+    assert detector.enabled is False
+    detector.world = 8
+    detector.rank = 4
+    assert detector.world_size == 8
+    assert detector.my_rank == 4
+    detector.null_method()
+    with detector:
+        pass
+    assert detector(bdata=True) is detector
