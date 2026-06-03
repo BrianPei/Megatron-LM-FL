@@ -2,6 +2,7 @@
 
 from contextlib import nullcontext
 import logging
+import sys
 from types import SimpleNamespace
 
 import pytest
@@ -14,6 +15,7 @@ from megatron.core.models.common import model_chunk_schedule_plan as schedule_pl
 from megatron.core.models.gpt import fine_grained_callables as fine_callables
 from megatron.core import rerun_state_machine as rerun
 from megatron.core import timers
+from megatron.core.inference.contexts import dynamic_context
 from megatron.core.inference import inference_request as inference_request_module
 from megatron.core.inference import utils as inference_utils
 from megatron.core.inference.inference_request import (
@@ -1112,6 +1114,27 @@ def test_text_generation_controller_lightweight_tokenization_detokenization_and_
     assert text == "1-2-3:skip"
     assert segments == [["1-", "2-", "3:skip"]]
 
+    generation_done, generation_lengths = controller.update_generation_status(
+        torch.tensor([[1, 102, 9], [3, 4, 5]]),
+        torch.tensor([True, True]),
+        1,
+        torch.tensor([False, False]),
+        torch.tensor([0, 0]),
+    )
+    assert torch.equal(generation_done, torch.tensor([True, False]))
+    assert torch.equal(generation_lengths, torch.tensor([0, 1], dtype=torch.int32))
+
+    generation_done, generation_lengths = controller.update_generation_status(
+        torch.tensor([[1, 7], [3, 99]]),
+        torch.tensor([False, True]),
+        1,
+        generation_done,
+        generation_lengths,
+        termination_id=99,
+    )
+    assert torch.equal(generation_done, torch.tensor([True, True]))
+    assert torch.equal(generation_lengths, torch.tensor([0, 1], dtype=torch.int32))
+
     controller.sampling_rng = torch.Generator()
     controller.sampling_rng.manual_seed(123)
     logits = torch.tensor([[0.1, 2.0, 0.3], [3.0, 0.2, 0.1]])
@@ -1136,6 +1159,58 @@ def test_text_generation_controller_lightweight_tokenization_detokenization_and_
         controller._torch_sampling_func(logits, temperature=1.0, top_k=4, top_p=0.0)
     with pytest.raises(AssertionError, match="top-k is larger than vocab size"):
         controller._torch_sampling_func(logits, temperature=1.0, top_k=2, top_p=0.0, vocab_size=2)
+
+
+def test_dynamic_context_errors_factory_and_memory_size_strings():
+    base_error = dynamic_context.ContextOverflowError(7, "full")
+    assert str(base_error) == "request 7 | full"
+    assert base_error.is_transient is True
+
+    permanent_error = dynamic_context.MaxSequenceLengthOverflowError(3, "too long")
+    serialized = dynamic_context.ContextErrorFactory.serialize(permanent_error)
+    assert serialized == {
+        "type": "MaxSequenceLengthOverflowError",
+        "request_id": 3,
+        "message": "too long",
+        "is_transient": False,
+    }
+    restored = dynamic_context.ContextErrorFactory.deserialize(serialized)
+    assert isinstance(restored, dynamic_context.MaxSequenceLengthOverflowError)
+    assert restored.request_id == 3
+    assert restored.message == "too long"
+    assert restored.is_transient is False
+
+    for error_type, expected_cls in (
+        ("ContextOverflowError", dynamic_context.ContextOverflowError),
+        ("RequestOverflowError", dynamic_context.RequestOverflowError),
+        ("TokenOverflowError", dynamic_context.TokenOverflowError),
+        ("BlockOverflowError", dynamic_context.BlockOverflowError),
+        ("ActiveRequestCountOverflowError", dynamic_context.ActiveRequestCountOverflowError),
+    ):
+        error = dynamic_context.ContextErrorFactory.deserialize(
+            {
+                "type": error_type,
+                "request_id": None,
+                "message": "overflow",
+                "is_transient": True,
+            }
+        )
+        assert isinstance(error, expected_cls)
+        assert error.message == "overflow"
+
+    active_error = dynamic_context.ActiveRequestCountOverflowError(2, 3)
+    assert "active_request_count (3) > max_request_count (2)" in str(active_error)
+    assert active_error.request_id is None
+
+    with pytest.raises(AssertionError):
+        dynamic_context.ContextErrorFactory.serialize(ValueError("not a context error"))
+    with pytest.raises(KeyError):
+        dynamic_context.ContextErrorFactory.deserialize({"type": "UnknownContextError"})
+
+    assert dynamic_context.get_mem_size_str(1) == "1 bytes"
+    assert dynamic_context.get_mem_size_str(1024**2) == "1 MB"
+    assert dynamic_context.get_mem_size_str(1024**3) == "1 GB"
+    assert dynamic_context.get_mem_size_str(1024**4) == "1 TB"
 
 
 def test_tensor_aware_state_dict_tensor_lifecycle(monkeypatch):
@@ -2398,15 +2473,15 @@ def test_core_utils_cpu_helpers_wrappers_versions_and_memory(monkeypatch):
     core_utils._flashinfer_version = None
     monkeypatch.setattr(core_utils, "HAVE_PACKAGING", True)
     monkeypatch.setattr(core_utils, "version", lambda name: {"transformer-engine": "2.8.0", "flashinfer": "1.2.3"}[name])
-    monkeypatch.setitem(__import__("sys").modules, "transformer_engine", SimpleNamespace(__version__="0.1.0+te2.9.1"))
+    monkeypatch.setitem(sys.modules, "transformer_engine", SimpleNamespace(__version__="0.1.0+te2.9.1"))
     assert str(core_utils.get_te_version()) == "2.9.1"
     assert core_utils.is_te_min_version("2.9.0") is True
     assert core_utils.is_te_min_version("2.9.1", check_equality=False) is False
     core_utils._te_version = None
-    monkeypatch.setitem(__import__("sys").modules, "transformer_engine", SimpleNamespace())
+    monkeypatch.setitem(sys.modules, "transformer_engine", SimpleNamespace())
     assert str(core_utils.get_te_version()) == "2.8.0"
 
-    monkeypatch.setitem(__import__("sys").modules, "flashinfer", SimpleNamespace(__version__="1.2.4"))
+    monkeypatch.setitem(sys.modules, "flashinfer", SimpleNamespace(__version__="1.2.4"))
     assert str(core_utils.get_flashinfer_version()) == "1.2.4"
     assert core_utils.is_flashinfer_min_version("1.2.0") is True
     core_utils._flashinfer_version = None
@@ -2521,6 +2596,63 @@ def test_core_utils_cpu_helpers_wrappers_versions_and_memory(monkeypatch):
     assert log_calls == []
     with pytest.raises(ValueError, match="must be provided"):
         core_utils.log_on_each_pipeline_stage(logger, logging.INFO, "bad", tp_group=_Group(0, 1))
+
+
+def test_core_utils_optional_package_version_helpers(monkeypatch):
+    monkeypatch.setattr(core_utils, "HAVE_PACKAGING", True)
+    monkeypatch.setattr(core_utils, "_fa_version", None)
+    monkeypatch.setattr(core_utils, "_mamba_ssm_version", None)
+    monkeypatch.setattr(core_utils, "_causal_conv1d_version", None)
+
+    fallback_versions = {
+        "flash-attn": "2.5.0",
+        "mamba_ssm": "1.1.0",
+        "causal_conv1d": "1.2.0",
+    }
+    monkeypatch.setattr(core_utils, "version", lambda name: fallback_versions[name])
+
+    monkeypatch.setitem(sys.modules, "flash_attn", SimpleNamespace(__version__="2.6.1"))
+    assert str(core_utils.get_fa_version()) == "2.6.1"
+    assert core_utils.get_fa_version() is core_utils.get_fa_version()
+    assert core_utils.is_fa_min_version("2.6.0") is True
+    assert core_utils.is_fa_min_version("2.6.1", check_equality=False) is False
+
+    monkeypatch.setattr(core_utils, "_fa_version", None)
+    monkeypatch.setitem(sys.modules, "flash_attn", SimpleNamespace())
+    assert str(core_utils.get_fa_version()) == "2.5.0"
+
+    monkeypatch.setitem(sys.modules, "mamba_ssm", SimpleNamespace(__version__="1.2.3"))
+    assert str(core_utils.get_mamba_version()) == "1.2.3"
+    assert core_utils.is_mamba_min_version("1.2.0") is True
+    assert core_utils.is_mamba_min_version("1.2.3", check_equality=False) is False
+
+    monkeypatch.setattr(core_utils, "_mamba_ssm_version", None)
+    monkeypatch.setitem(sys.modules, "mamba_ssm", SimpleNamespace())
+    assert str(core_utils.get_mamba_version()) == "1.1.0"
+
+    monkeypatch.setitem(sys.modules, "causal_conv1d", SimpleNamespace(__version__="1.3.0"))
+    assert str(core_utils.get_causal_conv1d_version()) == "1.3.0"
+    assert core_utils.is_causal_conv1d_min_version("1.2.9") is True
+    assert core_utils.is_causal_conv1d_min_version("1.3.0", check_equality=False) is False
+
+    monkeypatch.setattr(core_utils, "_causal_conv1d_version", None)
+    monkeypatch.setitem(sys.modules, "causal_conv1d", SimpleNamespace())
+    assert str(core_utils.get_causal_conv1d_version()) == "1.2.0"
+
+    monkeypatch.setattr(core_utils, "HAVE_PACKAGING", False)
+    for helper in (
+        core_utils.is_torch_min_version,
+        core_utils.get_fa_version,
+        core_utils.is_fa_min_version,
+        core_utils.get_mamba_version,
+        core_utils.is_mamba_min_version,
+        core_utils.get_causal_conv1d_version,
+        core_utils.is_causal_conv1d_min_version,
+        core_utils.get_flashinfer_version,
+        core_utils.is_flashinfer_min_version,
+    ):
+        with pytest.raises(ImportError, match="packaging is not installed"):
+            helper("1.0") if helper.__name__.startswith("is_") else helper()
 
 
 def test_tensor_aware_state_dict_cpu_lifecycle_and_conversion(monkeypatch):
