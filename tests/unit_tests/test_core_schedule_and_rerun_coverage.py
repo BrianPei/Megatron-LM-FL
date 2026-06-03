@@ -765,6 +765,20 @@ def test_transformer_utils_cpu_helpers_and_attribute_caches(monkeypatch):
     assert masked[1, 1].item() == 0.0
 
     x = torch.tensor([-1.0, 0.0, 1.0])
+    monkeypatch.setattr(
+        transformer_utils,
+        "gelu_impl",
+        lambda value: 0.5
+        * value
+        * (1.0 + torch.tanh(0.7978845608028654 * value * (1.0 + 0.044715 * value * value))),
+    )
+    monkeypatch.setattr(
+        transformer_utils,
+        "erf_gelu",
+        lambda value: value
+        * 0.5
+        * (torch.erf(value / 1.41421).to(dtype=value.dtype) + torch.ones_like(value).to(dtype=value.dtype)),
+    )
     assert torch.allclose(transformer_utils.openai_gelu(x), transformer_utils.gelu_impl(x))
     assert transformer_utils.erf_gelu(x).shape == x.shape
 
@@ -928,6 +942,15 @@ def test_transformer_utils_cpu_helpers_and_attribute_caches(monkeypatch):
 
 
 def test_dynamic_inference_request_record_checkpoint_merge_and_serialization(monkeypatch):
+    def _as_msgpack_round_trip(value):
+        if isinstance(value, tuple):
+            return [_as_msgpack_round_trip(item) for item in value]
+        if isinstance(value, list):
+            return [_as_msgpack_round_trip(item) for item in value]
+        if isinstance(value, dict):
+            return {key: _as_msgpack_round_trip(item) for key, item in value.items()}
+        return value
+
     nvtx_calls = []
     fake_nvtx = SimpleNamespace(
         range_push=lambda name: nvtx_calls.append(("push", name)),
@@ -975,7 +998,7 @@ def test_dynamic_inference_request_record_checkpoint_merge_and_serialization(mon
     request.generated_tokens = [5, 6]
     request.routing_indices = torch.zeros(5, 1, 1, dtype=torch.int64)
     serialized = request.serialize()
-    restored = DynamicInferenceRequest.deserialize(serialized)
+    restored = DynamicInferenceRequest.deserialize(_as_msgpack_round_trip(serialized))
     assert restored.events[2].payload["blocks_ref_count"] == 3
     assert torch.equal(restored.routing_indices, request.routing_indices)
     assert any(call == ("push", "DynamicInferenceRequest.serialize") for call in nvtx_calls)
@@ -1025,7 +1048,7 @@ def test_dynamic_inference_request_record_checkpoint_merge_and_serialization(mon
     assert len(merged.events) == len(request.events) + 1
 
     serialized_record = record.serialize()
-    restored_record = DynamicInferenceRequestRecord.deserialize(serialized_record)
+    restored_record = DynamicInferenceRequestRecord.deserialize(_as_msgpack_round_trip(serialized_record))
     assert restored_record.request_id == 11
     assert len(restored_record.requests) == 2
 
