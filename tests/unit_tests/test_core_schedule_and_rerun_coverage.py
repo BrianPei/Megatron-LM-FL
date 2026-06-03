@@ -1272,7 +1272,7 @@ def test_pipeline_utils_rank_helpers_streams_and_schedule_node(monkeypatch):
         forward_func=lambda value: value * 3,
         stream=lambda: "node-stream",
         event=event,
-        backward_func=lambda outputs, output_grad: output_grad,
+        backward_func=lambda outputs, output_grad: (None,),
         name="unit-node",
     )
     output = node.forward(tensor)
