@@ -2396,19 +2396,18 @@ def test_spec_rank_and_tensor_parallel_utils_cpu_paths(monkeypatch):
 def test_core_utils_cpu_helpers_wrappers_versions_and_memory(monkeypatch):
     core_utils._te_version = None
     core_utils._flashinfer_version = None
-    monkeypatch.setattr(core_utils, "PkgVersion", lambda value: tuple(int(part) for part in str(value).split(".")[:3]))
     monkeypatch.setattr(core_utils, "HAVE_PACKAGING", True)
     monkeypatch.setattr(core_utils, "version", lambda name: {"transformer-engine": "2.8.0", "flashinfer": "1.2.3"}[name])
     monkeypatch.setitem(__import__("sys").modules, "transformer_engine", SimpleNamespace(__version__="0.1.0+te2.9.1"))
-    assert core_utils.get_te_version() == (2, 9, 1)
+    assert str(core_utils.get_te_version()) == "2.9.1"
     assert core_utils.is_te_min_version("2.9.0") is True
     assert core_utils.is_te_min_version("2.9.1", check_equality=False) is False
     core_utils._te_version = None
     monkeypatch.setitem(__import__("sys").modules, "transformer_engine", SimpleNamespace())
-    assert core_utils.get_te_version() == (2, 8, 0)
+    assert str(core_utils.get_te_version()) == "2.8.0"
 
     monkeypatch.setitem(__import__("sys").modules, "flashinfer", SimpleNamespace(__version__="1.2.4"))
-    assert core_utils.get_flashinfer_version() == (1, 2, 4)
+    assert str(core_utils.get_flashinfer_version()) == "1.2.4"
     assert core_utils.is_flashinfer_min_version("1.2.0") is True
     core_utils._flashinfer_version = None
 
