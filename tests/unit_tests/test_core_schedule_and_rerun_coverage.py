@@ -2377,10 +2377,15 @@ def test_spec_rank_and_tensor_parallel_utils_cpu_paths(monkeypatch):
     assert torch.equal(new_buffer, torch.arange(4, 8))
     assert new_buffer._base is None
     gathered_calls = []
+
+    def fake_all_gather(gathered, tensor, group):
+        gathered.copy_(torch.cat([tensor + 10 * i for i in range(group.size())]))
+        gathered_calls.append(group)
+
     monkeypatch.setattr(
         tensor_parallel_utils,
         "dist_all_gather_func",
-        lambda gathered, tensor, group: gathered.copy_(torch.cat([tensor + 10 * i for i in range(group.size())])) or gathered_calls.append(group),
+        fake_all_gather,
     )
     assert torch.equal(tensor_parallel_utils.gather_split_1d_tensor(torch.tensor([1, 2]), tp_group=group), torch.tensor([1, 2, 11, 12, 21, 22]))
     assert gathered_calls == [group]
