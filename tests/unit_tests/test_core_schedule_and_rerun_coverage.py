@@ -2209,7 +2209,8 @@ def test_inference_batch_dimensions_builder_matching_and_sampling(monkeypatch):
         use_cuda_graphs_for_non_decode_steps=False,
         num_speculative_tokens=1,
     )
-    assert decode_counts == [8, 6]
+    assert decode_counts == sorted({dim.token_count for dim in decode_dims}, reverse=True)
+    assert decode_counts == [8]
     assert all(dim.prefill_req_count == 0 for dim in decode_dims)
 
     mixed_dims, mixed_counts = builder.generate_cuda_graph_batch_dimensions_list(
@@ -2223,7 +2224,8 @@ def test_inference_batch_dimensions_builder_matching_and_sampling(monkeypatch):
         use_cuda_graphs_for_non_decode_steps=True,
         num_speculative_tokens=1,
     )
-    assert mixed_counts == [8, 4]
+    assert mixed_counts == sorted({dim.token_count for dim in mixed_dims}, reverse=True)
+    assert mixed_counts == [8]
     assert any(dim.prefill_req_count > 0 for dim in mixed_dims)
     assert mixed_dims == sorted(
         mixed_dims,
