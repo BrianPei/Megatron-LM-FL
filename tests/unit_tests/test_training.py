@@ -2186,6 +2186,14 @@ def test_get_optimizer_param_scheduler_iteration_and_sample_modes(monkeypatch):
     assert scheduler.kwargs["wsd_decay_steps"] == 20
 
 
+def test_get_optimizer_param_scheduler_rejects_missing_training_horizon(monkeypatch):
+    args = SimpleNamespace(train_iters=None, train_samples=None)
+    monkeypatch.setattr(training, "get_args", lambda: args)
+
+    with pytest.raises(Exception, match="either train-iters or train-samples"):
+        get_optimizer_param_scheduler("optimizer")
+
+
 def test_get_megatron_optimizer_config_selects_supported_optimizers():
     adam_config, adam_overrides = get_megatron_optimizer_config(SimpleNamespace(optimizer="adam"))
     muon_config, _ = get_megatron_optimizer_config(SimpleNamespace(optimizer="muon"))
@@ -2499,6 +2507,98 @@ def test_get_model_wraps_with_fsdp2_and_broadcasts_params(monkeypatch):
     assert ("defaults", (2,)) in calls
     assert ("wrap", False) in calls
     assert "broadcast" in calls
+    assert "stream-enter" in calls and "stream-exit" in calls
+
+
+def test_get_model_wraps_virtual_chunks_with_ddp_config_and_side_stream(monkeypatch):
+    calls = []
+
+    class FakeModel(torch.nn.Module):
+        def __init__(self, **metadata):
+            super().__init__()
+            self.param = torch.nn.Parameter(torch.ones(4))
+            self.metadata = metadata
+
+    class FakeDDP:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+            calls.append(
+                (
+                    "ddp",
+                    kwargs["module"].metadata["vp_stage"],
+                    kwargs["disable_bucketing"],
+                    kwargs["ddp_config"].bucket_size,
+                )
+            )
+
+    class FakeStream:
+        def wait_stream(self, stream):
+            calls.append(("wait", stream))
+
+    class FakeStreamContext:
+        def __enter__(self):
+            calls.append("stream-enter")
+
+        def __exit__(self, exc_type, exc, tb):
+            calls.append("stream-exit")
+
+    args = SimpleNamespace(
+        virtual_pipeline_model_parallel_size=2,
+        init_model_with_meta_device=True,
+        load=None,
+        export_kd_teacher_load=None,
+        use_torch_fsdp2=False,
+        use_cpu_initialization=False,
+        use_megatron_fsdp=False,
+        fp16=False,
+        bf16=False,
+        accumulate_allreduce_grads_in_fp32=True,
+        check_for_nan_in_loss_and_grad=True,
+        check_for_large_grads=False,
+        ddp_num_buckets=2,
+        ddp_bucket_size=None,
+        ddp_pad_buckets_for_high_nccl_busbw=True,
+        ddp_reduce_scatter_with_fp32_accumulation=False,
+        ddp_param_name_patterns_for_fp32_local_accumulation=[".*weight"],
+        ddp_average_in_collective=True,
+        overlap_grad_reduce=True,
+        megatron_fsdp_main_params_dtype=torch.float32,
+        megatron_fsdp_main_grads_dtype=torch.float32,
+        megatron_fsdp_grad_comm_dtype=torch.float32,
+        overlap_param_gather_with_optimizer_step=False,
+        data_parallel_random_init=False,
+    )
+    pg_collection = SimpleNamespace(pp="pp", dp="dp", cp="cp", tp="tp")
+    monkeypatch.setattr(training, "DDP", FakeDDP)
+    monkeypatch.setattr(training, "get_args", lambda: args)
+    monkeypatch.setattr(training.ProcessGroupCollection, "use_mpu_process_groups", lambda: pg_collection)
+    monkeypatch.setattr(training, "get_pg_size", lambda group: 2 if group == "pp" else 1)
+    monkeypatch.setattr(training, "get_pg_rank", lambda group: 0)
+    monkeypatch.setattr(training, "is_pp_first_stage", lambda pp: True)
+    monkeypatch.setattr(training, "is_pp_last_stage", lambda pp: True)
+    monkeypatch.setattr(training, "is_vp_first_stage", lambda vp_stage, vp_size: vp_stage == 0)
+    monkeypatch.setattr(training, "is_vp_last_stage", lambda vp_stage, vp_size: vp_stage == vp_size - 1)
+    monkeypatch.setattr(
+        training.tensor_parallel,
+        "set_defaults_if_not_set_tensor_model_parallel_attributes",
+        lambda param: calls.append(("defaults", param.nelement())),
+    )
+    monkeypatch.setattr(training, "to_empty_if_meta_device", lambda model, device: model)
+    monkeypatch.setattr(training, "get_model_config", lambda model: SimpleNamespace())
+    monkeypatch.setattr(training.torch.cuda, "Stream", lambda: FakeStream())
+    monkeypatch.setattr(training.torch.cuda, "current_stream", lambda: FakeStream())
+    monkeypatch.setattr(training.torch.cuda, "stream", lambda stream: FakeStreamContext())
+    monkeypatch.setattr(training, "correct_amax_history_if_needed", lambda model: calls.append(("amax", len(model))))
+
+    model = get_model(lambda **kwargs: FakeModel(**kwargs), wrap_with_ddp=True)
+
+    assert len(model) == 2
+    assert [chunk.kwargs["module"].metadata["pre_process"] for chunk in model] == [True, False]
+    assert [chunk.kwargs["module"].metadata["post_process"] for chunk in model] == [False, True]
+    assert ("ddp", 0, False, 4) in calls
+    assert ("ddp", 1, True, 4) in calls
+    assert ("defaults", 4) in calls
+    assert ("amax", 2) in calls
     assert "stream-enter" in calls and "stream-exit" in calls
 
 

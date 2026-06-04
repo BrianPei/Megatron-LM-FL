@@ -10,6 +10,7 @@ import torch
 
 from megatron.core.enums import Fp4Recipe, Fp8Recipe
 from megatron.core import utils as core_utils
+from megatron.core.fusions.fused_bias_geglu import quick_gelu
 from megatron.core.packed_seq_params import PackedSeqParams
 from megatron.core.models.common import model_chunk_schedule_plan as schedule_plan
 from megatron.core.models.gpt import fine_grained_callables as fine_callables
@@ -1055,7 +1056,7 @@ def test_dynamic_inference_request_record_checkpoint_merge_and_serialization(mon
     assert len(restored_record.requests) == 2
 
 
-def test_text_generation_controller_lightweight_tokenization_detokenization_and_sampling():
+def test_text_generation_controller_lightweight_tokenization_detokenization_and_sampling(monkeypatch):
     class _TokenizerWithSkip:
         bos = 101
         eod = 102
@@ -1160,6 +1161,47 @@ def test_text_generation_controller_lightweight_tokenization_detokenization_and_
     with pytest.raises(AssertionError, match="top-k is larger than vocab size"):
         controller._torch_sampling_func(logits, temperature=1.0, top_k=2, top_p=0.0, vocab_size=2)
 
+    monkeypatch.setattr(torch.cuda, "current_device", lambda: "cpu")
+    padded = controller.pad_input_prompt_tokens([[1, 2], [3]], 3, 4)
+    assert torch.equal(
+        padded,
+        torch.tensor(
+            [
+                [1, 2, 102, 102],
+                [3, 102, 102, 102],
+                [102, 102, 102, 102],
+            ]
+        ),
+    )
+    assert torch.equal(controller.unpad_input_prompt_tokens(padded, 2), padded[:2])
+
+    top_n_logprobs = {0: [], 1: []}
+    sampled = controller.sample_from_logits(
+        torch.tensor([[0.1, 2.0, 0.3], [3.0, 0.2, 0.1]]),
+        SamplingParams(top_k=1, top_n_logprobs=2, skip_prompt_log_probs=True),
+        generation_started=torch.tensor([True, False]),
+        top_n_logprobs_dict=top_n_logprobs,
+    )
+    assert torch.equal(sampled, torch.tensor([1, 0]))
+    assert len(top_n_logprobs[0]) == 1
+    assert top_n_logprobs[1] == []
+    assert {"1:skip", "2:skip"} == set(top_n_logprobs[0][0])
+
+    prompt_top_n = {0: [], 1: []}
+    controller.sample_from_logits(
+        torch.tensor([[0.1, 2.0, 0.3], [3.0, 0.2, 0.1]]),
+        SamplingParams(top_k=1, top_n_logprobs=1, skip_prompt_log_probs=False),
+        generation_started=torch.tensor([False, False]),
+        top_n_logprobs_dict=prompt_top_n,
+        logits=torch.tensor(
+            [
+                [[0.0, 1.0, 0.5], [2.0, 0.0, 0.1]],
+                [[1.0, 0.2, 0.3], [0.0, 1.0, 2.0]],
+            ]
+        ),
+    )
+    assert [len(prompt_top_n[idx]) for idx in (0, 1)] == [2, 2]
+
 
 def test_dynamic_context_errors_factory_and_memory_size_strings():
     base_error = dynamic_context.ContextOverflowError(7, "full")
@@ -1211,6 +1253,294 @@ def test_dynamic_context_errors_factory_and_memory_size_strings():
     assert dynamic_context.get_mem_size_str(1024**2) == "1 MB"
     assert dynamic_context.get_mem_size_str(1024**3) == "1 GB"
     assert dynamic_context.get_mem_size_str(1024**4) == "1 TB"
+
+
+@pytest.mark.parametrize(
+    ("overrides", "expected_error"),
+    [
+        ({"fp16": True, "bf16": True}, ValueError),
+        ({"num_attention_heads": 3, "tensor_model_parallel_size": 2}, ValueError),
+        ({"num_query_groups": 3, "tensor_model_parallel_size": 2}, ValueError),
+        ({"experimental_attention_variant": "gated_delta_net"}, AssertionError),
+        (
+            {
+                "experimental_attention_variant": "gated_delta_net",
+                "linear_attention_freq": 1,
+                "linear_conv_kernel_dim": 3,
+                "linear_key_head_dim": 4,
+                "linear_value_head_dim": 4,
+                "linear_num_key_heads": 2,
+                "linear_num_value_heads": 3,
+            },
+            AssertionError,
+        ),
+        (
+            {
+                "experimental_attention_variant": "gated_delta_net",
+                "linear_attention_freq": 1,
+                "linear_conv_kernel_dim": 3,
+                "linear_key_head_dim": 4,
+                "linear_value_head_dim": 4,
+                "linear_num_key_heads": 2,
+                "linear_num_value_heads": 4,
+                "context_parallel_size": 2,
+            },
+            AssertionError,
+        ),
+        (
+            {"fp8": True, "first_last_layers_bf16": True, "fp8_recipe": Fp8Recipe.delayed},
+            ValueError,
+        ),
+        (
+            {
+                "fp8": True,
+                "first_last_layers_bf16": True,
+                "fp8_recipe": Fp8Recipe.blockwise,
+                "num_layers_at_start_in_bf16": 5,
+            },
+            ValueError,
+        ),
+        ({"fp8": True, "fp8_recipe": Fp8Recipe.custom}, ValueError),
+        ({"fp8_param": True}, ValueError),
+        ({"fp4_param": True}, ValueError),
+        ({"fp4": True, "fp8": True}, ValueError),
+        ({"fp4": True, "fp4_recipe": Fp4Recipe.custom}, ValueError),
+        ({"expert_model_parallel_size": 2}, ValueError),
+        (
+            {
+                "transformer_impl": "inference_optimized",
+                "num_moe_experts": 2,
+                "expert_tensor_parallel_size": 2,
+            },
+            ValueError,
+        ),
+        (
+            {
+                "transformer_impl": "inference_optimized",
+                "num_moe_experts": 2,
+                "moe_expert_capacity_factor": 1.0,
+            },
+            ValueError,
+        ),
+        (
+            {
+                "transformer_impl": "inference_optimized",
+                "num_moe_experts": 2,
+                "moe_router_dtype": "fp16",
+            },
+            ValueError,
+        ),
+        (
+            {
+                "transformer_impl": "inference_optimized",
+                "num_moe_experts": 2,
+                "cuda_graph_impl": "local",
+                "inference_grouped_gemm_backend": "te",
+            },
+            ValueError,
+        ),
+        ({"num_moe_experts": 0}, ValueError),
+        ({"moe_ffn_hidden_size": 32}, AssertionError),
+        ({"moe_enable_deepep": True, "moe_token_dispatcher_type": "alltoall"}, ValueError),
+        (
+            {
+                "moe_enable_deepep": True,
+                "moe_token_dispatcher_type": "flex",
+                "moe_flex_dispatcher_backend": "hybridep",
+            },
+            ValueError,
+        ),
+        (
+            {
+                "moe_token_dispatcher_type": "flex",
+                "moe_flex_dispatcher_backend": "deepep",
+                "moe_pad_expert_input_to_capacity": True,
+                "moe_expert_capacity_factor": 1.0,
+            },
+            ValueError,
+        ),
+        ({"moe_shared_expert_intermediate_size": 0}, ValueError),
+        (
+            {
+                "moe_shared_expert_intermediate_size": 8,
+                "moe_shared_expert_overlap": True,
+                "moe_token_dispatcher_type": "allgather",
+            },
+            ValueError,
+        ),
+        (
+            {
+                "moe_router_load_balancing_type": ["aux_loss", "none"],
+                "moe_aux_loss_coeff": [0.1],
+            },
+            AssertionError,
+        ),
+        (
+            {
+                "moe_expert_capacity_factor": 1.0,
+                "moe_router_load_balancing_type": "sinkhorn",
+            },
+            ValueError,
+        ),
+        ({"moe_pad_expert_input_to_capacity": True}, ValueError),
+        ({"cpu_offloading": True, "cpu_offloading_num_layers": 4}, ValueError),
+        ({"cpu_offloading": True, "cpu_offloading_num_layers": 1, "pipeline_model_parallel_size": 2}, ValueError),
+        ({"cpu_offloading": True, "cpu_offloading_num_layers": 1, "recompute_granularity": "full"}, ValueError),
+        ({"recompute_granularity": "bad"}, ValueError),
+        ({"recompute_granularity": "full", "recompute_method": "bad"}, ValueError),
+        ({"recompute_granularity": "full", "recompute_method": "block"}, ValueError),
+        ({"recompute_granularity": "selective", "recompute_num_layers": 1}, ValueError),
+        (
+            {
+                "recompute_granularity": "full",
+                "recompute_method": "block",
+                "recompute_num_layers": 1,
+                "distribute_saved_activations": True,
+                "sequence_parallel": True,
+            },
+            ValueError,
+        ),
+        ({"recompute_granularity": "selective", "recompute_modules": ["not_supported"]}, AssertionError),
+        ({"recompute_granularity": "selective", "recompute_modules": ["moe_act"]}, ValueError),
+        ({"recompute_granularity": "selective", "recompute_modules": ["mla_up_proj"]}, ValueError),
+        (
+            {
+                "recompute_granularity": "selective",
+                "recompute_modules": ["shared_experts"],
+                "moe_shared_expert_intermediate_size": 8,
+                "moe_shared_expert_overlap": True,
+                "moe_token_dispatcher_type": "alltoall",
+            },
+            ValueError,
+        ),
+        ({"moe_layer_recompute": True, "recompute_granularity": "full"}, ValueError),
+        ({"fine_grained_activation_offloading": True, "cpu_offloading": True}, AssertionError),
+        ({"fine_grained_activation_offloading": True, "offload_modules": []}, AssertionError),
+        ({"fine_grained_activation_offloading": True, "offload_modules": ["bad"]}, AssertionError),
+        ({"fine_grained_activation_offloading": True, "offload_modules": ["attn_proj"]}, ValueError),
+        (
+            {
+                "num_layers_in_first_pipeline_stage": 1,
+                "account_for_embedding_in_pipeline_split": True,
+            },
+            ValueError,
+        ),
+        (
+            {
+                "pipeline_model_parallel_layout": "t|t",
+                "account_for_loss_in_pipeline_split": True,
+            },
+            ValueError,
+        ),
+        ({"num_layers_in_first_pipeline_stage": 0, "pipeline_model_parallel_size": 2}, ValueError),
+        (
+            {
+                "num_layers_in_first_pipeline_stage": 3,
+                "virtual_pipeline_model_parallel_size": 2,
+                "pipeline_model_parallel_size": 2,
+            },
+            ValueError,
+        ),
+        ({"num_layers_in_last_pipeline_stage": 0, "pipeline_model_parallel_size": 2}, ValueError),
+        (
+            {
+                "num_layers_in_first_pipeline_stage": 1,
+                "pipeline_model_parallel_size": 4,
+            },
+            ValueError,
+        ),
+        (
+            {
+                "account_for_embedding_in_pipeline_split": True,
+                "pipeline_model_parallel_size": 3,
+            },
+            ValueError,
+        ),
+        ({"bias_activation_fusion": True, "activation_func": torch.nn.functional.relu}, ValueError),
+        (
+            {
+                "bias_activation_fusion": True,
+                "add_bias_linear": False,
+            },
+            ValueError,
+        ),
+        (
+            {
+                "bias_activation_fusion": True,
+                "activation_func": quick_gelu,
+                "gated_linear_unit": False,
+            },
+            ValueError,
+        ),
+        (
+            {
+                "bias_activation_fusion": True,
+                "activation_func": torch.nn.functional.gelu,
+                "glu_linear_offset": 0.5,
+            },
+            ValueError,
+        ),
+        ({"bias_activation_fusion": True, "use_te_activation_func": True}, ValueError),
+        ({"fused_residual_rmsnorm": True, "normalization": "LayerNorm"}, ValueError),
+        ({"use_te_activation_func": True, "activation_func": torch.tanh}, ValueError),
+        ({"activation_func_fp8_input_store": True}, ValueError),
+    ],
+)
+def test_transformer_config_validation_rejects_incompatible_options(overrides, expected_error):
+    kwargs = {
+        "num_layers": 4,
+        "hidden_size": 16,
+        "num_attention_heads": 4,
+    }
+    kwargs.update(overrides)
+
+    with pytest.raises(expected_error):
+        TransformerConfig(**kwargs)
+
+
+def test_transformer_config_validation_mutates_supported_legacy_options():
+    scaled = TransformerConfig(
+        num_layers=2,
+        hidden_size=8,
+        num_attention_heads=2,
+        fp32_residual_connection=True,
+        pipeline_dtype=torch.float16,
+        apply_query_key_layer_scaling=True,
+    )
+    assert scaled.pipeline_dtype is torch.float
+    assert scaled.attention_softmax_in_fp32 is True
+
+    with pytest.warns(UserWarning, match="moe_ffn_hidden_size is not set"):
+        moe = TransformerConfig(num_layers=2, hidden_size=8, num_attention_heads=2, num_moe_experts=2)
+    assert moe.moe_ffn_hidden_size == moe.ffn_hidden_size
+
+    capacity = TransformerConfig(
+        num_layers=2,
+        hidden_size=8,
+        num_attention_heads=2,
+        moe_expert_capacity_factor=-1.0,
+    )
+    assert capacity.moe_expert_capacity_factor is None
+
+    with pytest.warns(UserWarning, match="moe_enable_deepep is deprecated"):
+        deepep = TransformerConfig(
+            num_layers=2,
+            hidden_size=8,
+            num_attention_heads=2,
+            moe_enable_deepep=True,
+            moe_token_dispatcher_type="flex",
+        )
+    assert deepep.moe_flex_dispatcher_backend == "deepep"
+
+    with pytest.warns(UserWarning, match="moe-layer-recompute is deprecated"):
+        recompute = TransformerConfig(
+            num_layers=2,
+            hidden_size=8,
+            num_attention_heads=2,
+            moe_layer_recompute=True,
+        )
+    assert recompute.recompute_granularity == "selective"
+    assert "moe" in recompute.recompute_modules
 
 
 def test_tensor_aware_state_dict_tensor_lifecycle(monkeypatch):
