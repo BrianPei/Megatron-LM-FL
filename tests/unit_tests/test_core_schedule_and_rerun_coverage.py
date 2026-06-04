@@ -5,6 +5,7 @@ import importlib
 from importlib.machinery import ModuleSpec
 import json
 from contextlib import nullcontext
+from dataclasses import dataclass
 import logging
 import sys
 from types import ModuleType
@@ -52,6 +53,7 @@ from megatron.core.tensor_parallel import utils as tensor_parallel_utils
 from megatron.core.transformer.transformer_config import TransformerConfig
 from megatron.core.transformer.identity_op import IdentityFuncOp, IdentityOp
 from megatron.core.transformer import spec_utils
+from megatron.core.transformer import cuda_graphs
 from megatron.core.transformer import utils as transformer_utils
 from megatron.core import _rank_utils as rank_utils
 from megatron.core.resharding import utils as reshard_utils
@@ -1002,6 +1004,142 @@ def test_transformer_utils_cpu_helpers_and_attribute_caches(monkeypatch):
     assert transformer_utils.is_layer_window_attention((4, 4), [False, True], 2) is True
     with pytest.raises(ValueError, match="Invalid"):
         transformer_utils.is_layer_window_attention((4, 4), "bad", 1)
+
+
+def test_cuda_graphs_cpu_metadata_tree_pool_and_global_record_paths(monkeypatch):
+    @dataclass
+    class _Payload:
+        tensor: object
+        nested: object
+
+    monkeypatch.setattr(cuda_graphs, "_IS_GRAPH_CAPTURING", False)
+    monkeypatch.setattr(cuda_graphs, "_IS_GRAPH_WARMUP", False)
+    cuda_graphs._set_capture_start()
+    assert cuda_graphs.is_graph_capturing() is True
+    cuda_graphs._set_capture_end()
+    assert cuda_graphs.is_graph_capturing() is False
+    cuda_graphs._set_warmup_start()
+    assert cuda_graphs.is_graph_warmup() is True
+    cuda_graphs._set_warmup_end()
+    assert cuda_graphs.is_graph_warmup() is False
+
+    tensor = torch.randn(2, 3, requires_grad=True)
+    tensor.cg_buffer_metadata = cuda_graphs.CudagraphBufferMetadata(
+        is_cudagraph_input=True,
+        input_use_count=2,
+    )
+    meta = cuda_graphs.ArgMetadata(tensor)
+    assert meta.type is torch.Tensor
+    assert meta.shape == tensor.shape
+    assert meta.dtype == tensor.dtype
+    assert meta.device == tensor.device
+    assert meta.value == tensor.data_ptr()
+    assert meta.requires_grad is True
+    assert meta.cg_buffer_metadata is tensor.cg_buffer_metadata
+    zero = meta.zeros_like()
+    assert zero.shape == tensor.shape
+    assert zero.requires_grad is True
+
+    scalar_meta = cuda_graphs.ArgMetadata("token")
+    assert scalar_meta.type is str
+    assert scalar_meta.value == "token"
+
+    monkeypatch.setattr(cuda_graphs.TensorReusePool, "tensor_strong_refs", [])
+    monkeypatch.setattr(cuda_graphs.TensorReusePool, "tensor_strong_refs_dataptrs", set())
+    monkeypatch.setattr(cuda_graphs.TensorReusePool, "pool", [])
+    pool = cuda_graphs.TensorReusePool()
+    first = pool.get(meta)
+    assert first.shape == tensor.shape
+    assert pool.owns(first) is True
+    pool.insert(first)
+    assert pool.get(meta) is first
+
+    payload = _Payload(torch.tensor([1]), {"items": [torch.tensor([2]), "kept"]})
+    mapped = cuda_graphs.tree_map(
+        lambda value: value + 10 if torch.is_tensor(value) else value,
+        payload,
+    )
+    assert torch.equal(mapped.tensor, torch.tensor([11]))
+    assert torch.equal(mapped.nested["items"][0], torch.tensor([12]))
+    assert mapped.nested["items"][1] == "kept"
+
+    cuda_graphs._check_supported_type(cuda_graphs.ArgMetadata(None))
+    cuda_graphs._check_supported_type(cuda_graphs.ArgMetadata(payload))
+    with pytest.raises(AssertionError, match="not supported"):
+        cuda_graphs._check_supported_type(cuda_graphs.ArgMetadata(object()))
+
+    cloned = cuda_graphs._clone_nested_tensors(
+        {"a": tensor, "b": [torch.tensor([3]), (torch.tensor([4]),)]}
+    )
+    assert torch.equal(cloned["a"], tensor)
+    assert cloned["a"].data_ptr() != tensor.data_ptr()
+    assert torch.equal(cloned["b"][0], torch.tensor([3]))
+    with pytest.raises(TypeError, match="Sets of tensors"):
+        cuda_graphs._clone_nested_tensors({torch.tensor(1)})
+
+    class _FakeGenerator:
+        def __init__(self):
+            self.state = torch.tensor([1, 2, 3], dtype=torch.uint8)
+
+        def get_state(self):
+            return self.state
+
+        def set_state(self, state):
+            self.state = state
+
+    generator = _FakeGenerator()
+    original_state = generator.state
+    assert cuda_graphs._ensure_generator_state_is_cudagraph_safe(generator) is generator
+    assert torch.equal(generator.state, original_state)
+    assert generator.state.data_ptr() != original_state.data_ptr()
+
+    record = cuda_graphs._CudagraphGlobalRecord
+    monkeypatch.setattr(record, "cudagraph_created", False)
+    monkeypatch.setattr(record, "cudagraph_record", [])
+    monkeypatch.setattr(record, "cudagraph_inference_record", [])
+    assert record.create_cudagraphs() is None
+    runner = SimpleNamespace(base_module=SimpleNamespace(modules=lambda: []))
+    record.record_fwd_graph(runner, (tensor,), {"hidden_states": tensor}, tensor)
+    record.record_bwd_graph(runner)
+    assert record.cudagraph_record[0][1] == "fwd"
+    assert record.cudagraph_record[1][1] == "bwd"
+    monkeypatch.setattr(record, "cudagraph_created", True)
+    with pytest.raises(AssertionError, match="already created"):
+        record.create_cudagraphs()
+
+
+def test_cuda_graphs_record_and_replay_nodes_validate_status_and_surfaces(monkeypatch):
+    record = cuda_graphs._CudagraphGlobalRecord
+    monkeypatch.setattr(record, "cudagraph_record", [])
+    runner = SimpleNamespace(
+        status=cuda_graphs._GraphStatus.FWD_READY,
+        bwd_graph_recorded=False,
+    )
+    ctx = SimpleNamespace()
+    inputs = torch.tensor([1.0], requires_grad=True)
+    assert cuda_graphs._CudagraphRecordNode.forward(ctx, runner, inputs) is inputs
+    assert ctx.runner is runner
+    runner.status = cuda_graphs._GraphStatus.BWD_READY
+    grads = torch.tensor([2.0])
+    assert cuda_graphs._CudagraphRecordNode.backward(ctx, grads) == (None, grads)
+    assert runner.status == cuda_graphs._GraphStatus.FWD_READY
+    assert runner.bwd_graph_recorded is True
+    assert record.cudagraph_record == [(runner, "bwd")]
+
+    with pytest.raises(AssertionError, match="bwd cudagraph was expected"):
+        cuda_graphs._CudagraphRecordNode.forward(
+            SimpleNamespace(),
+            SimpleNamespace(status=cuda_graphs._GraphStatus.BWD_READY),
+            inputs,
+        )
+
+    replay_runner = SimpleNamespace(
+        fwd_graph=None,
+        status=cuda_graphs._GraphStatus.FWD_READY,
+        fwd_graph_input_surface=[],
+    )
+    with pytest.raises(AssertionError, match="before calling"):
+        cuda_graphs._CudagraphReplayNode.forward(SimpleNamespace(), replay_runner, True, inputs)
 
 
 def test_dynamic_inference_request_record_checkpoint_merge_and_serialization(monkeypatch):
