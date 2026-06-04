@@ -494,6 +494,7 @@ def test_get_train_valid_test_num_samples_iteration_sample_and_phase_paths(monke
 
 
 def test_checkpointing_versions_paths_metadata_and_storage_branches(monkeypatch, tmp_path):
+    original_isfile = checkpointing.isfile
     monkeypatch.setattr(checkpointing, "_CHECKPOINT_VERSION", None)
     checkpointing.set_checkpoint_version(3.0)
     assert checkpointing.get_checkpoint_version() == 3.0
@@ -589,6 +590,7 @@ def test_checkpointing_versions_paths_metadata_and_storage_branches(monkeypatch,
             makedirs=lambda dirname, exist_ok=True: msc_calls.append((dirname, exist_ok)),
         )
     )
+    monkeypatch.setattr(checkpointing, "isfile", original_isfile)
     monkeypatch.setattr(checkpointing.MultiStorageClientFeature, "is_enabled", lambda: True)
     monkeypatch.setattr(checkpointing.MultiStorageClientFeature, "import_package", lambda: fake_msc)
     assert checkpointing.isfile("remote") is True
