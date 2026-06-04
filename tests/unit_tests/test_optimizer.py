@@ -11,6 +11,7 @@ import torch.nn.functional as F
 from torch.optim import SGD, Adam
 
 import megatron.core.optimizer.clip_grads as clip_grads_module
+import megatron.core.optimizer.distrib_optimizer as distrib_optimizer_module
 import megatron.core.optimizer.grad_scaler as grad_scaler_module
 import megatron.core.optimizer.layer_wise_optimizer as layer_wise_optimizer_module
 import megatron.core.optimizer.optimizer as optimizer_module
@@ -553,6 +554,228 @@ def test_megatron_optimizer_base_decoupled_clip_count_offload_and_steps(monkeypa
     state = {"state": {0: {}, 1: {"step": 0}}}
     optimizer_module.MegatronOptimizer._restore_common_per_param_step(state, 5)
     assert state == {"state": {0: {"step": 5}, 1: {"step": 5}}}
+
+
+def test_distributed_optimizer_range_maps_and_cpu_copy_paths(monkeypatch):
+    monkeypatch.setattr(distrib_optimizer_module.cur_platform, "device_name", lambda: "cpu")
+    monkeypatch.setattr(distrib_optimizer_module.cur_platform, "current_device", lambda: "cpu")
+    monkeypatch.setattr(
+        distrib_optimizer_module.tensor_parallel,
+        "copy_tensor_model_parallel_attributes",
+        lambda dst, src: setattr(dst, "copied_tp_attrs", True),
+    )
+    monkeypatch.setattr(distrib_optimizer_module, "is_float8tensor", lambda param: False)
+    monkeypatch.setattr(distrib_optimizer_module, "is_nvfp4tensor", lambda param: False)
+
+    Range = distrib_optimizer_module.Range
+    DistributedOptimizer = distrib_optimizer_module.DistributedOptimizer
+    base_range = Range(5, 13)
+    assert len(base_range) == 8
+    assert str(base_range) == "5,13 [8]"
+    assert repr(base_range) == "5,13 [8]"
+    assert (base_range.normalize(0).start, base_range.normalize(0).end) == (0, 8)
+
+    p1 = torch.nn.Parameter(torch.arange(6.0))
+    p2 = torch.nn.Parameter(torch.arange(6.0, 12.0))
+    p3 = torch.nn.Parameter(torch.arange(20.0, 24.0))
+    range_map = DistributedOptimizer._build_model_gbuf_param_range_map(
+        {p1: (0, 6, None), p2: (6, 12, None), p3: (20, 24, None)},
+        Range(5, 15),
+        bucket_offset=2,
+    )
+    assert set(range_map) == {p1, p2}
+    assert (range_map[p1]["gbuf_local"].start, range_map[p1]["gbuf_local"].end) == (0, 1)
+    assert (range_map[p1]["param"].start, range_map[p1]["param"].end) == (5, 6)
+    assert (
+        range_map[p2]["gbuf_world_in_bucket"].start,
+        range_map[p2]["gbuf_world_in_bucket"].end,
+    ) == (4, 10)
+    assert (range_map[p2]["param"].start, range_map[p2]["param"].end) == (0, 6)
+
+    class _Group:
+        def __init__(self, rank, size):
+            self._rank = rank
+            self._size = size
+
+        def rank(self):
+            return self._rank
+
+        def size(self):
+            return self._size
+
+    bucket0 = SimpleNamespace(grad_data=torch.zeros(12), offset=0, numel_unpadded=10)
+    bucket1 = SimpleNamespace(grad_data=torch.zeros(6), offset=12, numel_unpadded=5)
+    buffer = SimpleNamespace(
+        data_parallel_group=_Group(rank=1, size=3),
+        buckets=[bucket0, bucket1],
+        param_dtype=torch.float32,
+        grad_dtype=torch.float32,
+        numel_unpadded=15,
+        get_unpacked_index_map=lambda: {
+            p1: (0, 6, None),
+            p2: (6, 12, None),
+            p3: (12, 18, None),
+        },
+    )
+    bucket_range = DistributedOptimizer._build_model_gbuf_range(buffer, 0)
+    assert set(bucket_range["param_map"]) == {p1, p2}
+    full_range_map = DistributedOptimizer._build_gbuf_range_map(buffer)
+    dtype_key = (torch.float32, torch.float32)
+    assert len(full_range_map[dtype_key]) == 2
+    param_gbuf_map = DistributedOptimizer._build_model_param_gbuf_map([full_range_map])
+    assert param_gbuf_map[p1] == (0, dtype_key, 0)
+    assert param_gbuf_map[p3] == (0, dtype_key, 1)
+    with pytest.raises(AssertionError, match="single bucket"):
+        DistributedOptimizer._build_model_param_gbuf_map(
+            [{dtype_key: [{"param_map": {p1: {}}}, {"param_map": {p1: {}}}]}]
+        )
+
+    groups = [
+        {"params": [p1, p3], "wd_mult": 1.0},
+        {"params": [p2], "wd_mult": 0.5},
+    ]
+    local_map, group_ranges = DistributedOptimizer._build_optimizer_group_ranges(
+        groups, [full_range_map]
+    )
+    assert local_map[p1] == (0, 0)
+    assert local_map[p2] == (1, 0)
+    assert local_map[p3] == (0, 1)
+    assert group_ranges[0]["orig_group"] is groups[0]
+    assert len(group_ranges[1]["params"]) == 1
+    assert group_ranges[1]["params"][0] is p2
+
+    bf16_param = torch.nn.Parameter(torch.tensor([1.0, 2.0], dtype=torch.bfloat16))
+    fp32_param = torch.nn.Parameter(torch.tensor([3.0, 4.0, 5.0], dtype=torch.float32))
+    gbuf_ranges = [
+        {
+            dtype_key: [
+                {
+                    "param_map": {
+                        bf16_param: {
+                            "param": Range(0, 2),
+                            "gbuf_world_in_bucket": Range(0, 2),
+                            "gbuf_local": Range(0, 2),
+                            "gbuf_world": Range(0, 2),
+                        },
+                        fp32_param: {
+                            "param": Range(1, 3),
+                            "gbuf_world_in_bucket": Range(2, 4),
+                            "gbuf_local": Range(2, 4),
+                            "gbuf_world": Range(2, 4),
+                        },
+                    }
+                }
+            ]
+        }
+    ]
+    param_gbuf_map = {bf16_param: (0, dtype_key, 0), fp32_param: (0, dtype_key, 0)}
+    opt_group_ranges = [
+        {
+            "params": [bf16_param, fp32_param],
+            "orig_group": {"params": [bf16_param, fp32_param]},
+        }
+    ]
+    config = OptimizerConfig(bf16=True)
+    model_f16, model_fp32, shard_f16, shard_fp32, shard_main = (
+        DistributedOptimizer._build_model_and_main_param_groups(
+            gbuf_ranges,
+            param_gbuf_map,
+            opt_group_ranges,
+            config,
+        )
+    )
+    assert model_f16[0][0] is bf16_param
+    assert model_fp32[0][0] is fp32_param
+    assert shard_f16[0][0].dtype == torch.bfloat16
+    assert shard_fp32[0][0].tolist() == [4.0, 5.0]
+    assert shard_main[0][0].dtype == torch.float32
+    assert bf16_param.main_param is shard_main[0][0]
+    assert opt_group_ranges[0]["orig_group"]["params"][0] is shard_fp32[0][0]
+    assert opt_group_ranges[0]["orig_group"]["params"][1] is shard_main[0][0]
+
+    dist_opt = object.__new__(DistributedOptimizer)
+    dist_opt.ddp_config = SimpleNamespace(
+        use_megatron_fsdp=False,
+        fp8_param_gather=False,
+        fp4_param_gather=False,
+    )
+    dist_opt.is_stub_optimizer = False
+    dist_opt.config = OptimizerConfig(bf16=True)
+    dist_opt.config.use_precision_aware_optimizer_no_fp8_or_ds_fp8 = False
+    dist_opt.optimizer = SimpleNamespace(
+        param_groups=[{"params": [shard_main[0][0], shard_fp32[0][0]]}],
+        state={},
+    )
+    dist_opt.model_chunks = []
+    dist_opt.model_float16_groups = [[bf16_param]]
+    dist_opt.model_fp32_groups = [[fp32_param]]
+    dist_opt.shard_float16_groups = [[shard_f16[0][0]]]
+    dist_opt.shard_fp32_groups = [[shard_fp32[0][0]]]
+    dist_opt.shard_fp32_from_float16_groups = [[shard_main[0][0]]]
+    dist_opt.model_param_gbuf_map = param_gbuf_map
+    dist_opt.gbuf_ranges = gbuf_ranges
+    dist_opt.buffers = [
+        SimpleNamespace(
+            buckets=[SimpleNamespace(param_data=torch.zeros(4, dtype=torch.float32))],
+            params=[bf16_param, fp32_param],
+        )
+    ]
+    dist_opt.data_parallel_group = "dp"
+
+    bf16_param.main_grad = torch.tensor([7.0, 8.0], dtype=torch.bfloat16)
+    fp32_param.main_grad = torch.tensor([9.0, 10.0, 11.0], dtype=torch.float32)
+    dist_opt._copy_model_grads_to_main_grads()
+    assert torch.equal(shard_main[0][0].grad, torch.tensor([7.0, 8.0]))
+    assert torch.equal(shard_fp32[0][0].grad, torch.tensor([10.0, 11.0]))
+    collected_grads = dist_opt._collect_main_grad_data_for_unscaling()
+    assert torch.equal(collected_grads[0], shard_main[0][0].grad.data)
+    assert torch.equal(collected_grads[1], shard_fp32[0][0].grad.data)
+    model_data, main_data = dist_opt._get_model_and_main_params_data_float16()
+    assert model_data[0].data_ptr() == shard_f16[0][0].data_ptr()
+    assert main_data[0].data_ptr() == shard_main[0][0].data_ptr()
+
+    shard_main[0][0].data.copy_(torch.tensor([21.0, 22.0]))
+    shard_fp32[0][0].data.copy_(torch.tensor([23.0, 24.0]))
+    dist_opt._copy_main_params_to_model_params()
+    assert torch.equal(
+        dist_opt.buffers[0].buckets[0].param_data,
+        torch.tensor([21.0, 22.0, 23.0, 24.0]),
+    )
+    dist_opt.buffers[0].buckets[0].param_data.zero_()
+    dist_opt._copy_main_params_to_param_buffer()
+    assert torch.equal(
+        dist_opt.buffers[0].buckets[0].param_data[:2],
+        torch.tensor([21.0, 22.0]),
+    )
+
+    bf16_param.grad = torch.ones_like(bf16_param)
+    fp32_param.grad = torch.ones_like(fp32_param)
+    shard_main[0][0].grad = torch.ones_like(shard_main[0][0])
+    dist_opt.zero_grad(set_to_none=False)
+    assert torch.equal(bf16_param.grad, torch.zeros_like(bf16_param))
+    assert torch.equal(fp32_param.grad, torch.zeros_like(fp32_param))
+    assert torch.equal(shard_main[0][0].grad, torch.zeros_like(shard_main[0][0]))
+    dist_opt.zero_grad(set_to_none=True)
+    assert bf16_param.grad is None
+    assert fp32_param.grad is None
+
+    class _Chunk:
+        def __init__(self):
+            self.param = torch.nn.Parameter(torch.tensor([31.0, 32.0]))
+
+        def named_parameters(self):
+            return [("module.layer.weight", self.param)]
+
+    chunk = _Chunk()
+    dist_opt.model_chunks = [chunk]
+    state_param_map = dist_opt._build_model_param_to_state_dict_param_map(
+        {"model0": {"decoder.module.layer.weight": torch.tensor([41.0, 42.0])}}
+    )
+    assert torch.equal(state_param_map[chunk.param], torch.tensor([41.0, 42.0]))
+    with pytest.raises(AssertionError, match="matches"):
+        dist_opt._build_model_param_to_state_dict_param_map(
+            {"model0": {"a.layer.weight": torch.ones(2), "b.layer.weight": torch.ones(2)}}
+        )
 
 
 def test_clip_grads_decoupled_cpu_paths_and_dynamic_grad_scaler(monkeypatch):
