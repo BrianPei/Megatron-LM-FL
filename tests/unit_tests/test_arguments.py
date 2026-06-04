@@ -753,7 +753,7 @@ def test_validate_args_accepts_pipeline_layout_and_warning_mutation_paths(monkey
     arguments.validate_args(args)
 
     assert args.virtual_pipeline_model_parallel_size is None
-    assert args.no_load_optim is False
+    assert not args.no_load_optim
     assert args.async_save is False
     assert args.replication_jump is None
     assert args.attention_softmax_in_fp32 is True
