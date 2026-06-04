@@ -2295,6 +2295,115 @@ def test_dynamic_engine_request_failure_suspend_resume_and_context_manager_paths
         loop.close()
 
 
+def test_dynamic_engine_reset_and_cuda_graph_creation_cpu_paths(monkeypatch):
+    calls = []
+
+    class _FakeEvent:
+        def __init__(self, *args, **kwargs):
+            self.args = args
+            self.kwargs = kwargs
+
+    reset_engine = object.__new__(dynamic_engine.DynamicInferenceEngine)
+    reset_engine.context = SimpleNamespace(reset=lambda: calls.append("context-reset"))
+    monkeypatch.setattr(dynamic_engine.torch.distributed, "get_rank", lambda: 3)
+    monkeypatch.setattr(dynamic_engine.torch.cuda, "Event", _FakeEvent)
+    monkeypatch.setattr(dynamic_engine, "get_asyncio_loop", lambda existing=None: "loop")
+
+    dynamic_engine.DynamicInferenceEngine.reset(reset_engine)
+
+    assert calls == ["context-reset"]
+    assert reset_engine.rank == 3
+    assert reset_engine.state == dynamic_engine.EngineState.RUNNING
+    assert reset_engine._state_events[dynamic_engine.EngineState.RUNNING].is_set()
+    assert reset_engine.requests == {}
+    assert list(reset_engine.waiting_request_ids) == []
+    assert reset_engine._prefix_cache_hits == 0
+    assert reset_engine.use_coordinator is False
+
+    graph_engine = object.__new__(dynamic_engine.DynamicInferenceEngine)
+    graph_engine.cuda_graph_impl = "none"
+    graph_engine.cuda_graph_scope = []
+    assert dynamic_engine.DynamicInferenceEngine.create_cuda_graphs(graph_engine) is None
+
+    model_config = SimpleNamespace(
+        transformer_impl="inference_optimized",
+        expert_model_parallel_size=2,
+        moe_enable_routing_replay=True,
+    )
+    model = SimpleNamespace(config=model_config)
+
+    class _Controller:
+        inference_wrapped_model = SimpleNamespace(model=model)
+
+        def _dynamic_step_context_init(self, construct_graph_dimensions=None):
+            calls.append(("init-graph", construct_graph_dimensions))
+            return "input-ids", "position-ids"
+
+        def _dynamic_step_forward_logits(self, input_ids, position_ids):
+            calls.append(("forward-logits", input_ids, position_ids))
+            return torch.ones(1)
+
+    graph_context = SimpleNamespace(
+        cuda_graph_batch_dimensions_list=["graph-a", "graph-b"],
+        reset=lambda: calls.append("graph-context-reset"),
+    )
+    graph_engine.cuda_graph_impl = "local"
+    graph_engine.cuda_graph_scope = [dynamic_engine.CudaGraphScope.full_iteration]
+    graph_engine.context = graph_context
+    graph_engine.controller = _Controller()
+    graph_engine.capture_stats = None
+
+    memory_stats = iter(
+        [
+            {
+                "allocated_bytes.all.current": 1024,
+                "reserved_bytes.all.current": 2048,
+            },
+            {
+                "allocated_bytes.all.current": 3 * 1024,
+                "reserved_bytes.all.current": 6 * 1024,
+            },
+        ]
+    )
+    time_values = iter([10.0, 12.5])
+    monkeypatch.setattr(dynamic_engine, "HAVE_TQDM", False)
+    monkeypatch.setattr(dynamic_engine.time, "time", lambda: next(time_values))
+    monkeypatch.setattr(dynamic_engine.torch.cuda, "memory_stats", lambda: next(memory_stats))
+    monkeypatch.setattr(
+        dynamic_engine,
+        "set_inference_cuda_graphed_iteration_for_ep_inference",
+        lambda unwrapped_model: calls.append(("set-ep-graph", unwrapped_model)),
+    )
+    monkeypatch.setattr(
+        dynamic_engine,
+        "unset_inference_cuda_graphed_iteration_for_ep_inference",
+        lambda unwrapped_model: calls.append(("unset-ep-graph", unwrapped_model)),
+    )
+    monkeypatch.setattr(
+        dynamic_engine.RouterReplay,
+        "set_global_router_replay_action",
+        lambda action: calls.append(("router-action", action)),
+    )
+
+    with pytest.warns(UserWarning, match="full_iteration"):
+        dynamic_engine.DynamicInferenceEngine.create_cuda_graphs(graph_engine)
+
+    assert ("set-ep-graph", model) in calls
+    assert ("unset-ep-graph", model) in calls
+    assert ("init-graph", "graph-a") in calls
+    assert ("init-graph", "graph-b") in calls
+    assert calls.count("graph-context-reset") == 2
+    assert (
+        "router-action",
+        dynamic_engine.RouterReplayAction.RECORD,
+    ) in calls
+    assert graph_engine.capture_stats == {
+        "time": 2.5,
+        "allocated_bytes": 2 * 1024,
+        "reserved_bytes": 4 * 1024,
+    }
+
+
 def test_text_generation_server_generate_endpoint_validation_and_success(monkeypatch):
     from megatron.core.inference.text_generation_server import (
         text_generation_server as generation_server,
