@@ -1263,6 +1263,234 @@ def test_text_generation_controller_lightweight_tokenization_detokenization_and_
     assert [len(prompt_top_n[idx]) for idx in (0, 1)] == [2, 2]
 
 
+def test_text_generation_controller_dynamic_internal_paths(monkeypatch):
+    calls = []
+    context = SimpleNamespace(
+        paused_request_count=0,
+        total_request_count=3,
+        active_token_count=8,
+        request_in_prefill_status_tensor=torch.tensor([0, 0, 1], dtype=torch.int32),
+        request_query_lengths=torch.tensor([3, 3, 2], dtype=torch.int32),
+        request_kv_length_offsets=torch.tensor([4, 4, 0], dtype=torch.int32),
+        request_last_kv_block_offset=torch.tensor([0, 1, 2], dtype=torch.int32),
+        request_kv_block_counts=torch.tensor([2, 2, 1], dtype=torch.int32),
+        request_last_kv_block_id=torch.tensor([5, 6, 7], dtype=torch.int32),
+        request_to_kv_block_ids=torch.tensor(
+            [[4, 5, -1], [3, 6, -1], [7, -1, -1]], dtype=torch.int32
+        ),
+        request_ids=torch.tensor([101, 102, 103], dtype=torch.int32),
+        token_to_input_ids=torch.tensor([1, 2, 3, 4, 5, 6, 7, 8], dtype=torch.long),
+        request_metadata_types=[
+            ("temperature", torch.float32, False),
+            ("top_k", torch.int32, False),
+            ("top_p", torch.float32, False),
+            ("return_log_probs", torch.bool, False),
+            ("top_n_logprobs", torch.int32, False),
+        ],
+        request_metadata={
+            "temperature": torch.tensor([1.0, 1.0, 0.5]),
+            "top_k": torch.tensor([1, 1, 2], dtype=torch.int32),
+            "top_p": torch.tensor([0.0, 0.0, 0.0]),
+            "return_log_probs": torch.tensor([False, True, False]),
+            "top_n_logprobs": torch.tensor([0, 2, 0], dtype=torch.int32),
+        },
+        block_size_tokens=4,
+        is_hybrid_model=False,
+        mamba_metadata=None,
+        mamba_conv_states=None,
+        mamba_ssm_states=None,
+        mamba_intermediate_conv_states=None,
+        mamba_intermediate_ssm_states=None,
+        kv_block_allocator=SimpleNamespace(
+            release_memory_blocks=lambda blocks: calls.append(("release", blocks.clone()))
+        ),
+        config=SimpleNamespace(materialize_only_last_token_logits=False),
+    )
+    context.initialize_attention_state = lambda **kwargs: calls.append(("init-attn", kwargs))
+    context.using_cuda_graph_this_step = lambda: True
+    context.is_decode_only = lambda: False
+    context.current_input_and_position_ids = lambda **kwargs: (
+        torch.tensor([[1, 2, 3]]),
+        torch.tensor([[0, 1, 2]]),
+    )
+    context.last_token_logits = lambda logits: logits.squeeze(0)[torch.tensor([2, 5, 7])]
+
+    class _Model:
+        def __init__(self):
+            self.config = SimpleNamespace(
+                symmetric_ar_type="sym",
+                nccl_all_reduce_for_prefill=True,
+                moe_pad_experts_for_cuda_graph_inference=True,
+                transformer_impl="transformer_engine",
+                num_moe_experts=4,
+                moe_router_topk=2,
+                params_dtype=torch.float32,
+                sequence_parallel=False,
+                mtp_num_layers=2,
+                moe_enable_routing_replay=True,
+            )
+            self.vocab_size = 5
+            self.symmetric_calls = []
+
+        def set_symmetric_ar(self, value):
+            self.symmetric_calls.append(value)
+
+    model = _Model()
+    wrapper = SimpleNamespace(
+        inference_context=context,
+        model=model,
+        tp_group="tp",
+        run_one_forward_step=lambda batch: calls.append(("forward", batch))
+        or torch.ones(1, batch["tokens"].shape[1], 5),
+    )
+    controller = object.__new__(TextGenerationController)
+    controller.inference_wrapped_model = wrapper
+    controller.model_config = model.config
+    controller.model_is_pipeline_parallel = True
+    controller.pp_group = "pp"
+    controller.vocab_size = 5
+    controller.num_speculative_tokens = 2
+    controller.num_mtp_heads = 2
+    controller._sampling_backend = "torch"
+    controller._sampled_tokens_cuda = torch.zeros(3, dtype=torch.long)
+    controller._sampled_mtp_tokens_cuda = torch.zeros(2, 3, dtype=torch.long)
+    controller._accepted_tokens_per_request = torch.full((3, 2), -1, dtype=torch.long)
+    controller._accepted_token_counts_per_request = torch.tensor([1, 0, 0], dtype=torch.long)
+    controller._request_metadata = {
+        key: value.clone() for key, value in context.request_metadata.items()
+    }
+    controller._torch_sampling_buckets = []
+    controller._torch_sampling_func = (
+        lambda logits, temp, top_k, top_p, vocab_size=None: torch.argmax(logits, dim=-1)
+    )
+
+    monkeypatch.setattr(
+        "megatron.core.inference.text_generation_controllers.text_generation_controller.unwrap_model",
+        lambda value: value,
+    )
+    monkeypatch.setattr(
+        "megatron.core.inference.text_generation_controllers.text_generation_controller.get_model_config",
+        lambda value: value.config,
+    )
+    monkeypatch.setattr(
+        "megatron.core.inference.text_generation_controllers.text_generation_controller.set_decode_expert_padding",
+        lambda model, set_to, capacity_factor=None: calls.append(
+            ("padding", set_to, capacity_factor)
+        ),
+    )
+    monkeypatch.setattr(
+        "megatron.core.inference.text_generation_controllers.text_generation_controller.is_pipeline_last_stage",
+        lambda group: True,
+    )
+    monkeypatch.setattr(
+        "megatron.core.inference.text_generation_controllers.text_generation_controller.broadcast_from_last_pipeline_stage",
+        lambda shape, dtype, tensor, pp_group: calls.append(("broadcast", shape, dtype, pp_group))
+        or tensor,
+    )
+    monkeypatch.setattr(
+        "megatron.core.inference.text_generation_controllers.text_generation_controller.get_pg_size",
+        lambda group: 1,
+    )
+
+    dims = batch_dimensions_utils.InferenceBatchDimensions(
+        token_count=3, prefill_req_count=1, decode_req_count=1
+    )
+    input_ids, position_ids = controller._dynamic_step_context_init(
+        construct_graph_dimensions=dims
+    )
+    assert torch.equal(input_ids, torch.tensor([[1, 2, 3]]))
+    assert torch.equal(position_ids, torch.tensor([[0, 1, 2]]))
+    assert ("padding", True, 2.0) in calls
+    assert model.symmetric_calls[-1] is None
+
+    context.using_cuda_graph_this_step = lambda: False
+    context.is_decode_only = lambda: True
+    controller._dynamic_step_context_init()
+    assert ("padding", False, None) in calls
+    assert model.symmetric_calls[-1] == "sym"
+
+    logits = controller._dynamic_step_forward_logits(
+        torch.tensor([[1, 2, 3]]), torch.tensor([[0, 1, 2]])
+    )
+    assert logits.shape == (1, 3, 5)
+    assert any(item[0] == "broadcast" for item in calls if isinstance(item, tuple))
+
+    controller._dynamic_step_sample_bookkeeping()
+    assert controller._torch_sampling_buckets == [([0, 1], 1.0, 1, 0.0), ([2], 0.5, 2, 0.0)]
+    return_log_probs, top_n_log_probs = controller._dynamic_step_log_probs_bookkeeping()
+    assert return_log_probs.item() is True
+    assert top_n_log_probs.item() is True
+
+    required_indices = controller._get_required_logit_indices(
+        context.request_in_prefill_status_tensor,
+        context.request_query_lengths,
+        num_decode_requests=2,
+        num_prefill_requests=1,
+        device=torch.device("cpu"),
+    )
+    assert torch.equal(required_indices, torch.tensor([0, 1, 2, 3, 4, 5, 7]))
+    with pytest.raises(AssertionError, match="Expected length"):
+        controller._get_required_logit_indices(
+            context.request_in_prefill_status_tensor,
+            context.request_query_lengths,
+            num_decode_requests=1,
+            num_prefill_requests=2,
+            device=torch.device("cpu"),
+        )
+
+    required_logits = torch.eye(7, 7)
+    sampled_tokens, repeats = controller._sample_speculative_logits(
+        required_logits, context.request_in_prefill_status_tensor
+    )
+    assert sampled_tokens.shape == (7,)
+    assert torch.equal(repeats, torch.tensor([3, 3, 1]))
+
+    last_indices, accepted_mask, flattened_inputs = controller._verify_speculative_tokens(
+        output_tokens=torch.tensor([9, 0, 3, 8, 9, 1, 7]),
+        input_tokens_required=torch.tensor([[1, 9, 2, 4, 8, 0, 7]]),
+        request_in_prefill_status_tensor=context.request_in_prefill_status_tensor,
+        repeats=repeats,
+        num_decode_requests=2,
+        num_prefill_requests=1,
+        active_request_count=3,
+    )
+    assert torch.equal(last_indices, torch.tensor([1, 4, 6]))
+    assert accepted_mask.tolist() == [True, True, False, True, True, False, True]
+    assert flattened_inputs.ndim == 1
+
+    logits_for_sample = torch.zeros(1, 8, 10)
+    for index in range(8):
+        logits_for_sample[0, index, (index + 1) % 10] = 10.0
+    controller._dynamic_step_sample_logits_and_verify_tokens(
+        logits_for_sample,
+        torch.tensor([[1, 2, 3, 4, 5, 6, 7, 8]]),
+    )
+    assert controller._sampled_tokens_cuda[:3].shape == (3,)
+    assert controller._accepted_tokens_per_request[:2].shape == (2, 2)
+    assert controller._last_accepted_seq_indices.numel() == 3
+
+    controller._accepted_token_counts_per_request = torch.tensor([1, 0, 0], dtype=torch.long)
+    controller._rewind_kv_cache()
+    assert calls[-1][0] == "release"
+    assert torch.equal(calls[-1][1], torch.tensor([5, 6], dtype=torch.int32))
+    assert torch.equal(context.request_last_kv_block_id[:2], torch.tensor([4, 3], dtype=torch.int32))
+    assert torch.equal(context.request_to_kv_block_ids[:2, 1], torch.tensor([-1, -1], dtype=torch.int32))
+
+    controller._torch_sampling_buckets = [([0, 1, 2], 1.0, 1, 0.0)]
+    controller._sampled_tokens_cuda.zero_()
+    controller._dynamic_step_sample_logits(torch.arange(1 * 8 * 5, dtype=torch.float32).reshape(1, 8, 5))
+    assert torch.equal(controller._sampled_tokens_cuda[:3], torch.tensor([4, 4, 4]))
+
+    context.moe_routing_metadata = SimpleNamespace(
+        get_routing_indices=lambda: torch.arange(8 * 2 * 1).reshape(8, 2, 1)
+    )
+    routing = controller._router_record_bookkeeping()
+    assert set(routing) == {101, 102, 103}
+    assert routing[101].shape == (3, 2, 1)
+    model.config.moe_enable_routing_replay = False
+    assert controller._router_record_bookkeeping() is None
+
+
 def test_dynamic_context_errors_factory_and_memory_size_strings():
     base_error = dynamic_context.ContextOverflowError(7, "full")
     assert str(base_error) == "request 7 | full"
