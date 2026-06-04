@@ -1314,6 +1314,373 @@ def test_dynamic_context_errors_factory_and_memory_size_strings():
     assert dynamic_context.get_mem_size_str(1024**4) == "1 TB"
 
 
+def test_dynamic_context_cpu_state_management_prefix_and_cache_paths(monkeypatch):
+    monkeypatch.setattr(dynamic_context.torch.cuda, "current_device", lambda: "cpu")
+    monkeypatch.setattr(dynamic_context.DynamicInferenceContext, "TOKEN_ROUNDER", 4)
+    monkeypatch.setattr(dynamic_context.DynamicInferenceContext, "REQUEST_ROUNDER", 2)
+    monkeypatch.setattr(dynamic_context.parallel_state, "is_initialized", lambda: False)
+
+    class _FakeAllocator:
+        def __init__(self):
+            self.total_count = 8
+            self.active_count = 7
+            self.paused_count = 0
+            self.dummy_block_idx = 7
+            self.total_avail = 6
+            self.kv_hash_to_block_id = {111: 1, 222: 2}
+            self.hash_to_block_id = {111: 1, 222: 2}
+            self.block_ref_counts = torch.zeros(8, dtype=torch.int32)
+            self.released = []
+            self.registered = []
+            self.timestamps = []
+            self.reset_count = 0
+            self.on_blocks_deregistered = None
+
+        def reset(self):
+            self.reset_count += 1
+
+        def is_memory_available(self, count):
+            return count <= self.total_avail
+
+        def get_active_avail(self):
+            return self.total_avail
+
+        def allocate_memory_blocks(self, count):
+            return torch.arange(3, 3 + count, dtype=torch.int32)
+
+        def release_memory_blocks(self, blocks):
+            self.released.append(blocks.clone())
+
+        def update_timestamps(self, blocks):
+            self.timestamps.append(blocks.clone())
+
+        def register_kv_block_hashes(self, block_ids, block_hashes):
+            self.registered.append((list(block_ids), list(block_hashes)))
+
+    class _FakeMhaMetadata:
+        def __init__(self):
+            self.reset_count = 0
+            self.update_kwargs = None
+            self.state_data = {
+                "block_table": torch.full((4, 4), -1, dtype=torch.int32),
+                "cu_query_seq_lengths": torch.tensor([0, 3, 5], dtype=torch.int32),
+                "cu_kv_seq_lengths": torch.tensor([0, 3, 5], dtype=torch.int32),
+                "kv_seq_lengths": torch.tensor([3, 2], dtype=torch.int32),
+                "max_seqlen_q": 3,
+                "max_seqlen_k": 5,
+            }
+
+        def reset(self):
+            self.reset_count += 1
+
+        def update(self, **kwargs):
+            self.update_kwargs = kwargs
+            self.state_data["block_table"] = kwargs["request_to_kv_block_ids"][
+                : kwargs["padded_batch_dimensions"].req_count
+            ]
+            self.state_data["cu_query_seq_lengths"] = torch.cat(
+                [
+                    torch.tensor([0], dtype=torch.int32),
+                    torch.cumsum(kwargs["request_query_lengths"].to(torch.int32), dim=0),
+                ]
+            )
+            self.state_data["cu_kv_seq_lengths"] = torch.cat(
+                [
+                    torch.tensor([0], dtype=torch.int32),
+                    torch.cumsum(
+                        (
+                            kwargs["request_query_lengths"]
+                            + kwargs["request_kv_length_offsets"]
+                        ).to(torch.int32),
+                        dim=0,
+                    ),
+                ]
+            )
+            self.state_data["kv_seq_lengths"] = (
+                kwargs["request_query_lengths"] + kwargs["request_kv_length_offsets"]
+            )
+            self.state_data["max_seqlen_q"] = int(kwargs["request_query_lengths"].max().item())
+            self.state_data["max_seqlen_k"] = int(self.state_data["kv_seq_lengths"].max().item())
+
+    def _new_context(enable_prefix_caching=False):
+        ctx = object.__new__(dynamic_context.DynamicInferenceContext)
+        ctx.config = SimpleNamespace(enable_prefix_caching=enable_prefix_caching)
+        ctx.enable_prefix_caching = enable_prefix_caching
+        ctx.prefix_caching_eviction_policy = dynamic_context.PrefixCachingEvictionPolicy.LRU
+        ctx.prefix_cache_hits = 0
+        ctx.prefix_cache_blocks_matched = 0
+        ctx.prefix_cache_lru_clock = 0
+        ctx.step_count = 0
+        ctx.cache_mla_latent = False
+        ctx.num_attention_layers = 1
+        ctx.num_attention_heads_per_partition = 1
+        ctx.hidden_size_per_attention_head = 2
+        ctx.layer_map = {0: 0}
+        ctx.params_dtype = torch.float32
+        ctx.block_size_tokens = 4
+        ctx.max_sequence_length = 16
+        ctx.max_kv_block_count = 4
+        ctx.max_requests = 4
+        ctx.max_tokens = 16
+        ctx.num_speculative_tokens = 0
+        ctx.is_hybrid_model = False
+        ctx.mamba_slot_allocator = None
+        ctx.mamba_metadata = None
+        ctx.moe_enable_routing_replay = False
+        ctx.use_cuda_graphs_for_non_decode_steps = True
+        ctx.smallest_non_decode_cuda_graph_size = 1
+        ctx.cuda_graph_batch_dimensions_list = []
+        ctx.cuda_graph_token_counts = []
+        ctx.expert_model_parallel_group = None
+        ctx.pipeline_parallel_group = None
+        ctx.kv_cache_management_mode = dynamic_context.KVCacheManagementMode.PERSIST
+        ctx.static_kv_memory_pointers = False
+        ctx.unified_memory_level = 0
+        ctx._uses_torch_memory_saver = False
+        ctx._offloadable_tensor_names = set()
+        ctx._offloadable_cpu_backups = {}
+        ctx._offloadable_storage_sizes = {}
+        ctx.kv_block_allocator = _FakeAllocator()
+        ctx.request_metadata_types = DynamicInferenceRequest.get_metadata_types()
+        ctx.request_ids = torch.full((4,), -1, dtype=torch.int32)
+        ctx.request_query_lengths = torch.zeros(4, dtype=torch.int32)
+        ctx.request_in_prefill_status_tensor = torch.zeros(4, dtype=torch.int32)
+        ctx.request_output_lengths = torch.zeros(4, dtype=torch.int32)
+        ctx.request_kv_length_offsets = torch.zeros(4, dtype=torch.int32)
+        ctx.request_kv_block_counts = torch.zeros(4, dtype=torch.int32)
+        ctx.request_last_kv_block_id = torch.full((4,), -1, dtype=torch.int32)
+        ctx.request_last_kv_block_offset = torch.zeros(4, dtype=torch.int32)
+        ctx.request_to_kv_block_ids = torch.full((4, 4), -1, dtype=torch.int32)
+        ctx.request_metadata = {
+            label: torch.zeros(4, dtype=dtype) for label, dtype, _ in ctx.request_metadata_types
+        }
+        ctx.token_to_input_ids = torch.zeros(16, dtype=torch.long)
+        ctx.token_to_pos_ids = torch.zeros(16, dtype=torch.long)
+        ctx.token_to_request_idx = torch.full((16,), -1, dtype=torch.long)
+        ctx.token_to_block_idx = torch.full((16,), -1, dtype=torch.long)
+        ctx.token_to_position_in_request = torch.zeros(16, dtype=torch.long)
+        ctx.token_to_local_position_within_kv_block = torch.zeros(16, dtype=torch.long)
+        ctx.memory_buffer = torch.zeros(2, 1, 8, 4, 1, 2)
+        ctx.graph_attn_metadata = {"mha_metadata": _FakeMhaMetadata()}
+        ctx.non_graph_attn_metadata = {"mha_metadata": _FakeMhaMetadata()}
+        ctx.active_attn_metadata = None
+        ctx.is_tensor_state_allocated = True
+        ctx.total_request_count = 0
+        ctx.active_token_count = 0
+        ctx.lifetime_prefill_token_count = 0
+        ctx.paused_request_count = 0
+        ctx.num_prefill_requests = 0
+        ctx.chunked_prefill_request_id = -1
+        ctx.paused_tokens = None
+        ctx.paused_speculative_tokens = None
+        ctx._using_cuda_graph_this_step = False
+        ctx.is_creating_cuda_graphs = False
+        ctx.batch_dimensions = batch_dimensions_utils.InferenceBatchDimensions(
+            token_count=0, prefill_req_count=0, decode_req_count=0
+        )
+        ctx.padded_batch_dimensions = batch_dimensions_utils.InferenceBatchDimensions(
+            token_count=0, prefill_req_count=0, decode_req_count=0
+        )
+        ctx.padded_active_token_count = 0
+        ctx.padded_active_request_count = 0
+        ctx.padding_slice = slice(0, 0)
+        return ctx
+
+    ctx = _new_context()
+    assert dynamic_context.DynamicInferenceContext.round_up_tokens(5) == 8
+    assert dynamic_context.DynamicInferenceContext.round_up_requests(3) == 4
+    assert ctx.is_static_batching() is False
+    assert ctx.has_unfinished_requests() is False
+
+    requests = [
+        DynamicInferenceRequest(
+            request_id=10,
+            prompt_tokens=torch.tensor([1, 2, 3], dtype=torch.long),
+            sampling_params=SamplingParams(num_tokens_to_generate=2, termination_id=99),
+        ),
+        DynamicInferenceRequest(
+            request_id=11,
+            prompt_tokens=torch.tensor([4, 5], dtype=torch.long),
+            sampling_params=SamplingParams(num_tokens_to_generate=1, termination_id=99),
+        ),
+    ]
+    ctx.add_dummy_requests_parallel(requests)
+    assert ctx.total_request_count == 2
+    assert ctx.active_token_count == 5
+    assert ctx.num_prefill_requests == 2
+    assert torch.equal(ctx.token_to_input_ids[:5], torch.tensor([1, 2, 3, 4, 5]))
+    assert torch.equal(ctx.token_to_request_idx[:5], torch.tensor([0, 0, 0, 1, 1]))
+    assert ctx.has_unfinished_requests() is True
+    with pytest.raises(dynamic_context.RequestOverflowError):
+        ctx.add_dummy_requests_parallel(requests + requests + requests)
+
+    monkeypatch.setattr(
+        dynamic_context.CUDAGraphBatchDimensionBuilder,
+        "match_graph_config",
+        lambda *args, **kwargs: None,
+    )
+    ctx.initialize_attention_state()
+    assert ctx.using_cuda_graph_this_step() is False
+    assert ctx.active_attn_metadata is ctx.non_graph_attn_metadata
+    assert ctx.padded_active_token_count == 8
+    assert ctx.cu_query_lengths()[1] == 3
+    assert ctx.cu_kv_lengths()[2] == 3
+    assert torch.equal(ctx.get_active_sequence_lengths(), torch.tensor([3, 2], dtype=torch.int32))
+    assert torch.equal(ctx.get_max_sequence_lengths(), torch.tensor([5, 3], dtype=torch.int32))
+    input_ids, pos_ids = ctx.current_input_and_position_ids()
+    assert input_ids.shape == (1, 8)
+    assert pos_ids.shape == (1, 8)
+    logits = torch.arange(1 * 8 * 3, dtype=torch.float32).reshape(1, 8, 3)
+    assert torch.equal(ctx.last_token_logits(logits), logits[0, torch.tensor([2, 4])])
+
+    key = torch.arange(8 * 1 * 1 * 2, dtype=torch.float32).reshape(8, 1, 1, 2)
+    value = key + 100
+    ctx.append_key_value_cache(1, key, value)
+    cached_key, cached_value, block_table = ctx.key_value_cache(1)
+    assert cached_key.shape == (8, 4, 1, 2)
+    assert cached_value.shape == (8, 4, 1, 2)
+    assert block_table.shape[0] >= 2
+
+    query = torch.arange(8 * 1 * 1 * 2, dtype=torch.float32).reshape(8, 1, 1, 2)
+    emb = torch.ones(16, 1, 1, 2)
+    monkeypatch.setattr(
+        dynamic_context,
+        "apply_rotary_pos_emb",
+        lambda t, freqs, config, **kwargs: t + freqs[: t.shape[0]],
+    )
+    rotated_query = ctx.apply_rotary_emb_query(
+        query.clone(),
+        emb,
+        SimpleNamespace(rotary_interleaved=False),
+        torch.tensor([0, 3, 5], dtype=torch.int32),
+        None,
+    )
+    assert torch.equal(rotated_query[:8], query + 1)
+    ctx.num_prefill_requests = 0
+    rotated_key = ctx.apply_rotary_emb_key(
+        query.clone(),
+        emb,
+        SimpleNamespace(rotary_interleaved=False),
+        None,
+    )
+    assert torch.equal(rotated_key, query + 1)
+    with pytest.raises(AssertionError, match="key.shape"):
+        ctx.apply_rotary_emb_key(query[:7].clone(), emb, SimpleNamespace(), None)
+
+    next_tokens = torch.arange(4)
+    new_speculative_tokens = torch.arange(8).reshape(2, 4)
+    ctx._move_book_keeping_tensors(
+        torch.tensor([0]),
+        torch.tensor([2]),
+        next_tokens,
+        new_speculative_tokens,
+    )
+    assert ctx.request_ids[2] == ctx.request_ids[0]
+    before_swap = ctx.request_ids.clone()
+    ctx._swap_book_keeping_tensors(torch.tensor([0]), torch.tensor([1]), next_tokens)
+    assert ctx.request_ids[0] == before_swap[1]
+    assert ctx.request_ids[1] == before_swap[0]
+    ctx.chunked_prefill_request_id = int(ctx.request_ids[1])
+    assert ctx.get_index_of_chunked_prefill_request() == 1
+    ctx.chunked_prefill_request_id = 123456
+    assert ctx.get_index_of_chunked_prefill_request(safe=False) == -1
+    assert ctx.is_chunked_prefill_enabled() is False
+
+    ctx.release_memory_blocks_from_request_indexes(torch.tensor([0, 1]))
+    assert len(ctx.kv_block_allocator.released) == 1
+    assert torch.all(ctx.request_to_kv_block_ids[torch.tensor([0, 1])] == -1)
+    ctx.reset()
+    assert ctx.total_request_count == 0
+    assert ctx.active_token_count == 0
+    assert ctx.kv_block_allocator.reset_count >= 1
+
+    prefix_ctx = _new_context(enable_prefix_caching=True)
+    prefix_req = DynamicInferenceRequest(
+        request_id=12,
+        prompt_tokens=torch.tensor([9, 8, 7, 6, 5], dtype=torch.long),
+        sampling_params=SamplingParams(num_tokens_to_generate=2, termination_id=99),
+        block_size_tokens=4,
+        enable_prefix_caching=True,
+    )
+    prefix_req.precomputed_block_hashes = [111, 222, 333]
+    prefix_ctx.kv_block_allocator.kv_hash_to_block_id = {111: 1}
+    matched, parent_hash = prefix_ctx._find_kv_match_count(prefix_req, 0, 3)
+    assert matched == [1]
+    assert parent_hash == 111
+    prefix_ctx.kv_block_allocator.kv_hash_to_block_id = {}
+    prefix_ctx.kv_block_allocator.total_avail = 0
+    can_add, tokens_fit, blocks_fit = prefix_ctx.check_availability(prefix_req)
+    assert can_add is True
+    assert tokens_fit is True
+    assert blocks_fit is False
+    prefix_ctx.kv_block_allocator.kv_hash_to_block_id = {111: 1}
+    prefix_ctx.kv_block_allocator.total_avail = 6
+    prefix_ctx.add_request(prefix_req, prefill_chunk_length=5)
+    assert prefix_ctx.prefix_cache_hits == 1
+    assert prefix_ctx.prefix_cache_blocks_matched == 1
+    assert prefix_ctx.total_request_count == 1
+    assert prefix_ctx.lifetime_prefill_token_count == 1
+    assert prefix_ctx.kv_block_allocator.timestamps
+
+    register_ctx = _new_context(enable_prefix_caching=True)
+    register_req = DynamicInferenceRequest(
+        request_id=13,
+        prompt_tokens=torch.tensor([1, 1, 1, 1], dtype=torch.long),
+        sampling_params=SamplingParams(num_tokens_to_generate=1, termination_id=99),
+        block_size_tokens=4,
+        enable_prefix_caching=True,
+    )
+    register_req.precomputed_block_hashes = [333]
+    register_ctx.add_request(register_req, prefill_chunk_length=4)
+    assert register_ctx.kv_block_allocator.registered
+
+    offload_ctx = object.__new__(dynamic_context.DynamicInferenceContext)
+    offload_ctx.is_tensor_state_allocated = True
+    offload_ctx.kv_cache_management_mode = dynamic_context.KVCacheManagementMode.OFFLOAD
+    offload_ctx.unified_memory_level = 0
+    offload_ctx._uses_torch_memory_saver = False
+    offload_ctx.memory_buffer = torch.tensor([1.0, 2.0])
+    offload_ctx._offloadable_tensor_names = {"memory_buffer"}
+    offload_ctx._offloadable_cpu_backups = {"memory_buffer": torch.empty(2)}
+    offload_ctx._offloadable_storage_sizes = {}
+    offload_ctx.deallocate_inference_state_buffers()
+    assert offload_ctx.is_tensor_state_allocated is False
+    offload_ctx.reinitialize_inference_state_buffers()
+    assert offload_ctx.is_tensor_state_allocated is True
+    assert torch.equal(offload_ctx.memory_buffer, torch.tensor([1.0, 2.0]))
+
+    recompute_ctx = object.__new__(dynamic_context.DynamicInferenceContext)
+    recompute_ctx.is_tensor_state_allocated = True
+    recompute_ctx.kv_cache_management_mode = dynamic_context.KVCacheManagementMode.RECOMPUTE
+    recompute_ctx.unified_memory_level = 0
+    recompute_ctx._uses_torch_memory_saver = False
+    recompute_ctx.memory_buffer = torch.tensor([3.0])
+    recompute_calls = []
+    recompute_ctx.initialize_all_tensors = lambda: recompute_calls.append("init")
+    recompute_ctx.deallocate_inference_state_buffers()
+    assert not hasattr(recompute_ctx, "memory_buffer")
+    recompute_ctx.reinitialize_inference_state_buffers()
+    assert recompute_calls == ["init"]
+
+    mamba_ctx = object.__new__(dynamic_context.DynamicInferenceContext)
+    mamba_ctx.mamba_conv_states_shape = (2,)
+    mamba_ctx.mamba_ssm_states_shape = (2,)
+    mamba_ctx.mamba_conv_states_dtype = torch.float32
+    mamba_ctx.mamba_ssm_states_dtype = torch.float32
+    mamba_ctx.num_mamba_layers = 2
+    mamba_ctx.kv_block_allocator = SimpleNamespace(on_blocks_deregistered=None)
+    mamba_allocations = []
+    monkeypatch.setattr(
+        dynamic_context,
+        "MambaSlotAllocator",
+        lambda **kwargs: mamba_allocations.append(kwargs)
+        or SimpleNamespace(on_kv_blocks_deregistered=lambda blocks: blocks),
+    )
+    mamba_ctx._allocate_mamba_cache(0.000001)
+    assert mamba_allocations
+    assert mamba_ctx.kv_block_allocator.on_blocks_deregistered is not None
+
+
 def test_text_generation_server_generate_endpoint_validation_and_success(monkeypatch):
     from megatron.core.inference.text_generation_server import (
         text_generation_server as generation_server,
