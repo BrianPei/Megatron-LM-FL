@@ -1426,7 +1426,7 @@ def test_text_generation_completions_endpoint_detokenize_and_post(monkeypatch):
     monkeypatch.setattr(
         completions_endpoint,
         "run_mcore_engine",
-        lambda *args, **kwargs: calls.append(("run", args[1:], kwargs))
+        lambda *args, **kwargs: calls.append(("run", args, kwargs))
         or {
             "text": ["prompttok1tok2STOP"],
             "segments": [[["prompt", "tok1", "tok2", "STOP"]]],
@@ -1477,6 +1477,9 @@ def test_text_generation_completions_endpoint_detokenize_and_post(monkeypatch):
     run_call = next(item for item in calls if isinstance(item, tuple) and item[0] == "run")
     assert run_call[2]["random_seed"] == 123
     assert run_call[1][1] == ["prompt"]
+    assert run_call[1][2] == 0.0
+    assert run_call[1][3] == 1
+    assert run_call[1][4] == 0
 
 
 def test_masked_wordpiece_dataset_config_cache_and_masking_paths(monkeypatch, tmp_path):
