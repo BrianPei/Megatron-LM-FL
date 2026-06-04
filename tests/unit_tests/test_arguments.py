@@ -708,20 +708,13 @@ def test_validate_args_accepts_pipeline_layout_and_warning_mutation_paths(monkey
     monkeypatch.setattr(arguments, "print_rank_0", lambda message, *args: messages.append(message))
     monkeypatch.setenv("NCCL_ALGO", "Tree")
     monkeypatch.setattr(torch, "use_deterministic_algorithms", lambda enabled: messages.append(("det", enabled)))
-    args = _parse_minimal_training_args(
-        monkeypatch,
-        [
-            "--pipeline-model-parallel-size",
-            "2",
-            "--num-layers-per-virtual-pipeline-stage",
-            "1",
-            "--overlap-p2p-comm",
-            "--ckpt-format",
-            "torch_dist",
-        ],
-    )
+    args = _parse_minimal_training_args(monkeypatch)
     args.world_size = 2
     args.rank = 0
+    args.pipeline_model_parallel_size = 2
+    args.num_layers_per_virtual_pipeline_stage = 1
+    args.overlap_p2p_comm = True
+    args.ckpt_format = "torch_dist"
     args.overlap_param_gather = True
     args.overlap_grad_reduce = True
     args.use_distributed_optimizer = True
