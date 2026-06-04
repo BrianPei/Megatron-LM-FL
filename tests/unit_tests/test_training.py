@@ -746,6 +746,128 @@ def test_checkpointing_check_args_metadata_and_state_dict_generation(monkeypatch
     assert "opt_param_scheduler" not in no_optim
 
 
+def test_load_args_from_checkpoint_fills_legacy_and_modern_argument_paths(monkeypatch):
+    messages = []
+    monkeypatch.setattr(checkpointing, "print_rank_0", lambda message: messages.append(message))
+    no_load_args = SimpleNamespace(load=None)
+    assert checkpointing.load_args_from_checkpoint(no_load_args) is no_load_args
+
+    legacy_checkpoint_args = SimpleNamespace(
+        checkpoint_version_marker="legacy",
+        disable_bias_linear=True,
+        hybrid_override_pattern="mamba-attn",
+        num_layers=12,
+        hidden_size=64,
+        ffn_hidden_size=128,
+        seq_length=256,
+        num_attention_heads=4,
+        num_query_groups=2,
+        group_query_attention=True,
+        kv_channels=16,
+        max_position_embeddings=512,
+        position_embedding_type="rope",
+        add_position_embedding=False,
+        use_rotary_position_embeddings=True,
+        rotary_base=10000,
+        rotary_percent=0.5,
+        rotary_interleaved=True,
+        add_qkv_bias=True,
+        squared_relu=True,
+        swiglu=True,
+        untie_embeddings_and_output_weights=True,
+        apply_layernorm_1p=True,
+        normalization="RMSNorm",
+        apply_query_key_layer_scaling=True,
+        attention_dropout=0.11,
+        hidden_dropout=0.22,
+        mtp_hybrid_override_pattern="mtp",
+        mtp_num_layers=2,
+        mtp_use_repeated_layer=True,
+        spec="spec.yaml",
+        num_experts=4,
+        moe_ffn_hidden_size=1024,
+        moe_layer_freq=2,
+        moe_router_topk=2,
+        moe_token_dispatcher_type="alltoall",
+        moe_router_pre_softmax=True,
+        moe_grouped_gemm=True,
+        moe_shared_expert_intermediate_size=32,
+        moe_router_score_function="sigmoid",
+        moe_router_enable_expert_bias=True,
+        moe_router_topk_scaling_factor=1.25,
+        mamba_state_dim=16,
+        mamba_head_dim=8,
+        mamba_num_groups=2,
+        mamba_num_heads=4,
+        heterogeneous_layers_config_path="hetero.json",
+        heterogeneous_layers_config_encoded_json="{}",
+        moe_latent_size=7,
+        tokenizer_model="tok.model",
+        tokenizer_type="SentencePieceTokenizer",
+        tiktoken_pattern="pat",
+        padded_vocab_size=32000,
+        ckpt_format="torch",
+        model_parallel_size=8,
+    )
+    modern_checkpoint_args = SimpleNamespace(
+        num_experts=None,
+        tensor_model_parallel_size=2,
+        pipeline_model_parallel_size=3,
+        virtual_pipeline_model_parallel_size=4,
+        num_layers_per_virtual_pipeline_stage=5,
+        expert_model_parallel_size=6,
+    )
+    states = [
+        (
+            {"args": legacy_checkpoint_args, "checkpoint_version": 2.5, "iteration": 23},
+            "legacy.pt",
+            False,
+            checkpointing.CheckpointType.LEGACY,
+        ),
+        (
+            {"args": modern_checkpoint_args, "checkpoint_version": 3.0, "iteration": 24},
+            "modern.pt",
+            False,
+            checkpointing.CheckpointType.LEGACY,
+        ),
+    ]
+    monkeypatch.setattr(checkpointing, "_load_base_checkpoint", lambda *args, **kwargs: states.pop(0))
+
+    args = SimpleNamespace(
+        load="ckpt",
+        use_tokenizer_model_from_checkpoint_args=True,
+        use_mp_args_from_checkpoint_args=True,
+        moe_token_dispatcher_type="existing-dispatcher",
+    )
+    returned_args, returned_checkpoint_args = checkpointing.load_args_from_checkpoint(args)
+    assert returned_args is args
+    assert returned_checkpoint_args is legacy_checkpoint_args
+    assert args.iteration == 23
+    assert args.hidden_size == 64
+    assert args.add_bias_linear is False
+    assert args.hybrid_layer_pattern == "mamba-attn"
+    assert legacy_checkpoint_args.num_layers is None
+    assert args.moe_ffn_hidden_size == 1024
+    assert args.moe_token_dispatcher_type == "existing-dispatcher"
+    assert args.tokenizer_model == "tok.model"
+    assert args.tensor_model_parallel_size == 8
+
+    modern_args = SimpleNamespace(
+        load="ckpt",
+        use_tokenizer_model_from_checkpoint_args=False,
+        use_mp_args_from_checkpoint_args=True,
+    )
+    checkpointing.load_args_from_checkpoint(modern_args)
+    assert modern_args.iteration == 24
+    assert modern_args.moe_ffn_hidden_size is None
+    assert modern_args.tensor_model_parallel_size == 2
+    assert modern_args.pipeline_model_parallel_size == 3
+    assert modern_args.virtual_pipeline_model_parallel_size == 4
+    assert modern_args.num_layers_per_virtual_pipeline_stage == 5
+    assert modern_args.expert_model_parallel_size == 6
+    assert any("No load directory specified" in message for message in messages)
+
+
 def test_checkpointing_dataloader_state_cleanup_and_delete_paths(monkeypatch, tmp_path):
     calls = []
     monkeypatch.setattr(checkpointing.torch.distributed, "is_initialized", lambda: False)
