@@ -2255,7 +2255,19 @@ def test_blended_megatron_dataset_builder_mock_blend_and_per_split_paths(monkeyp
     monkeypatch.setattr(builder_module.torch.distributed, "is_initialized", lambda: False)
     monkeypatch.setattr(builder_module, "is_built_on_zero_rank", lambda: True)
     monkeypatch.setattr(builder_module.cur_platform, "device_count", lambda: 4)
-    monkeypatch.setattr(builder_module, "BlendedDataset", lambda *args: ("blended", args))
+
+    class _FakeBlendedDataset:
+        def __init__(self, datasets, weights, size, config):
+            self.datasets = datasets
+            self.weights = weights
+            self.size = size
+            self.config = config
+            self.args = (datasets, weights, size, config)
+
+        def __len__(self):
+            return sum(len(dataset) for dataset in self.datasets) if self.size is None else self.size
+
+    monkeypatch.setattr(builder_module, "BlendedDataset", _FakeBlendedDataset)
 
     config = SimpleNamespace(
         mock=True,
@@ -2310,7 +2322,7 @@ def test_blended_megatron_dataset_builder_mock_blend_and_per_split_paths(monkeyp
     def fake_generic(cls, is_built_on_rank, synchronize_ranks, *args):
         generic_calls.append((cls, synchronize_ranks, args))
         if cls is builder_module.BlendedDataset:
-            return SimpleNamespace(size=args[2], args=args)
+            return cls(*args)
         return cls(*args)
 
     weighted_config = SimpleNamespace(
