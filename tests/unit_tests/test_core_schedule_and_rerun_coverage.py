@@ -3915,6 +3915,225 @@ def test_dynamic_completions_endpoint_prompt_sampling_logprobs_and_errors(monkey
     assert "engine boom" in engine_error[0]
 
 
+def test_dynamic_text_generation_server_backend_worker_and_process_lifecycle(monkeypatch):
+    from megatron.core.inference.text_generation_server.dynamic_text_gen_server import (
+        text_generation_server as dyn_server,
+    )
+
+    unit_logger = logging.getLogger("unit-dynamic-text-server")
+    unit_logger.setLevel(logging.WARNING)
+    with dyn_server.temp_log_level(logging.ERROR, unit_logger):
+        assert unit_logger.level == logging.ERROR
+    assert unit_logger.level == logging.WARNING
+
+    monkeypatch.setattr(dyn_server, "HAS_BACKEND", False)
+    with pytest.raises(RuntimeError, match="Quart"):
+        asyncio.run(dyn_server._run_text_gen_server("coord", "tok", 0, 9090))
+
+    calls = []
+
+    class _Client:
+        def __init__(self, coordinator_addr, deserialize):
+            calls.append(("client-init", coordinator_addr, deserialize))
+
+        def start(self):
+            calls.append("client-start")
+
+        def stop(self):
+            calls.append("client-stop")
+
+    class _App:
+        def __init__(self, name):
+            self.name = name
+            self.config = {}
+            self.blueprints = []
+
+        def register_blueprint(self, endpoint):
+            self.blueprints.append(endpoint)
+
+    class _Config:
+        pass
+
+    async def _serve(app, config):
+        calls.append(
+            (
+                "serve",
+                app.config["MAX_CONTENT_LENGTH"],
+                app.config["client"],
+                app.config["tokenizer"],
+                app.config["parsers"],
+                app.config["verbose"],
+                list(app.blueprints),
+                config.bind,
+                config.keep_alive_timeout,
+                config.backlog,
+                config.h2_max_concurrent_streams,
+            )
+        )
+
+    def _raise_hostname():
+        raise RuntimeError("hostname unavailable")
+
+    endpoint_a = object()
+    endpoint_b = object()
+    monkeypatch.setattr(dyn_server, "HAS_BACKEND", True)
+    monkeypatch.setattr(dyn_server, "InferenceClient", _Client)
+    monkeypatch.setattr(dyn_server, "Quart", _App, raising=False)
+    monkeypatch.setattr(dyn_server, "Config", _Config, raising=False)
+    monkeypatch.setattr(dyn_server, "serve", _serve, raising=False)
+    monkeypatch.setattr(dyn_server.endpoints, "__all__", [endpoint_a, endpoint_b], raising=False)
+    monkeypatch.setattr(dyn_server.socket, "gethostname", _raise_hostname)
+
+    asyncio.run(
+        dyn_server._run_text_gen_server(
+            "coord",
+            tokenizer="tok",
+            rank=3,
+            server_port=9090,
+            parsers=["parser"],
+            verbose=True,
+            fd=77,
+            hostname=None,
+        )
+    )
+    assert calls[:2] == [("client-init", "coord", False), "client-start"]
+    serve_call = next(item for item in calls if isinstance(item, tuple) and item[0] == "serve")
+    assert serve_call[1] == 2**30
+    assert serve_call[3] == "tok"
+    assert serve_call[4] == ["parser"]
+    assert serve_call[5] is True
+    assert serve_call[6] == [endpoint_a, endpoint_b]
+    assert serve_call[7] == ["fd://77"]
+    assert serve_call[8:11] == (30.0, 2**14, 2**14)
+    assert calls[-1] == "client-stop"
+
+    worker_calls = []
+
+    async def _fake_run_text_gen_server(*args):
+        worker_calls.append(args)
+
+    monkeypatch.setattr(dyn_server, "_run_text_gen_server", _fake_run_text_gen_server)
+    dyn_server._server_process_worker(
+        "coord",
+        "tok",
+        4,
+        8080,
+        parsers=["p"],
+        verbose=True,
+        fd=11,
+        hostname="host",
+    )
+    assert worker_calls == [("coord", "tok", 4, 8080, ["p"], True, 11, "host")]
+
+    class _InterruptLoop:
+        closed = False
+
+        def run_until_complete(self, coro):
+            if hasattr(coro, "close"):
+                coro.close()
+            raise KeyboardInterrupt()
+
+        def close(self):
+            self.closed = True
+
+    interrupt_loop = _InterruptLoop()
+    monkeypatch.setattr(dyn_server.asyncio, "new_event_loop", lambda: interrupt_loop)
+    monkeypatch.setattr(dyn_server.asyncio, "set_event_loop", lambda loop: calls.append(("set-loop", loop)))
+    monkeypatch.setattr(dyn_server.asyncio, "all_tasks", lambda loop: [])
+    dyn_server._server_process_worker("coord", "tok", 5, 7070)
+    assert interrupt_loop.closed is True
+
+    process_calls = []
+
+    class _Socket:
+        def __init__(self):
+            self.closed = False
+
+        def setsockopt(self, level, option, value):
+            process_calls.append(("setsockopt", level, option, value))
+            if option == getattr(dyn_server.socket, "SO_REUSEPORT", object()):
+                raise OSError("reuse port unavailable")
+
+        def bind(self, address):
+            process_calls.append(("bind", address))
+
+        def setblocking(self, value):
+            process_calls.append(("blocking", value))
+
+        def set_inheritable(self, value):
+            process_calls.append(("inheritable", value))
+
+        def fileno(self):
+            process_calls.append("fileno")
+            return 123
+
+        def close(self):
+            self.closed = True
+            process_calls.append("socket-close")
+
+    fake_socket = _Socket()
+
+    class _Process:
+        created = []
+
+        def __init__(self, target, args, daemon):
+            self.target = target
+            self.args = args
+            self.daemon = daemon
+            self.pid = None
+            self.alive = True
+            self.stubborn = len(self.created) == 0
+            self.created.append(self)
+
+        def start(self):
+            self.pid = 9000 + len(self.created)
+            process_calls.append(("start", self.pid, self.daemon, self.args[-2:]))
+
+        def is_alive(self):
+            return self.alive
+
+        def terminate(self):
+            process_calls.append(("terminate", self.pid))
+
+        def join(self, timeout=None):
+            process_calls.append(("join", self.pid, timeout))
+            if timeout is not None and not self.stubborn:
+                self.alive = False
+
+        def kill(self):
+            process_calls.append(("kill", self.pid))
+            self.alive = False
+
+    monkeypatch.setattr(dyn_server.socket, "socket", lambda *args: fake_socket)
+    monkeypatch.setattr(dyn_server.mp, "Process", _Process)
+    monkeypatch.setattr(dyn_server, "_SERVER_PROCESSES", [])
+    monkeypatch.setattr(dyn_server, "_SHARED_SOCKET", None)
+
+    dyn_server.start_text_gen_server(
+        "coord",
+        tokenizer="tok",
+        rank=6,
+        server_port=6060,
+        parsers=["p"],
+        verbose=True,
+        num_replicas=2,
+        hostname="127.0.0.1",
+    )
+    assert len(dyn_server._SERVER_PROCESSES) == 2
+    assert ("bind", ("127.0.0.1", 6060)) in process_calls
+    assert all(process.args[-2:] == (123, "127.0.0.1") for process in _Process.created)
+
+    dyn_server.start_text_gen_server("coord", "tok", 6, 6060)
+    assert len(dyn_server._SERVER_PROCESSES) == 2
+
+    dyn_server.stop_text_gen_server()
+    assert ("kill", _Process.created[0].pid) in process_calls
+    assert fake_socket.closed is True
+    assert dyn_server._SERVER_PROCESSES == []
+    assert dyn_server._SHARED_SOCKET is None
+    dyn_server.stop_text_gen_server()
+
+
 def test_masked_wordpiece_dataset_config_cache_and_masking_paths(monkeypatch, tmp_path):
     from megatron.core.datasets import masked_dataset
 
