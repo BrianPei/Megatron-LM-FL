@@ -4038,8 +4038,9 @@ def test_dynamic_text_generation_server_backend_worker_and_process_lifecycle(mon
     assert unit_logger.level == logging.WARNING
 
     monkeypatch.setattr(dyn_server, "HAS_BACKEND", False)
-    with pytest.raises(RuntimeError, match="Quart"):
+    with pytest.raises(SystemExit) as no_backend_exit:
         asyncio.run(dyn_server._run_text_gen_server("coord", "tok", 0, 9090))
+    assert no_backend_exit.value.code == 1
 
     calls = []
 
