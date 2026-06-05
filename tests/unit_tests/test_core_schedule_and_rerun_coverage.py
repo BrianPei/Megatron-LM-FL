@@ -5590,7 +5590,7 @@ def test_pipeline_p2p_communicator_cpu_ops_wrappers_and_warmup_paths(monkeypatch
 
     monkeypatch.setattr(p2p_communication.dist, "P2POp", _P2POp)
     monkeypatch.setattr(p2p_communication.dist, "batch_isend_irecv", _batch_isend_irecv)
-    monkeypatch.setattr(p2p_communication.dist, "ring_exchange", _ring_exchange)
+    monkeypatch.setattr(p2p_communication.dist, "ring_exchange", _ring_exchange, raising=False)
     monkeypatch.setattr(p2p_communication.dist, "group", SimpleNamespace(WORLD=_Group(name="world")))
     monkeypatch.setattr(p2p_communication, "is_pp_first_stage", lambda group: group.rank() == 0)
     monkeypatch.setattr(p2p_communication, "is_pp_last_stage", lambda group: group.rank() == group.size() - 1)
