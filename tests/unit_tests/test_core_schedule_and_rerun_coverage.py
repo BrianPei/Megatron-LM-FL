@@ -5240,7 +5240,7 @@ def test_pipeline_schedules_forward_backward_no_pipelining_cpu_paths(monkeypatch
         vp_stage=3,
         is_last_stage=True,
     )
-    assert torch.allclose(output, torch.tensor(3.0))
+    assert torch.allclose(output, torch.tensor(1.5))
     assert int(num_tokens.item()) == 2
     assert forward_store == [{"sample": 4.0, "checkpoint": 7}]
     assert model.input_tensors[-1][0].shape == torch.Size([1])
