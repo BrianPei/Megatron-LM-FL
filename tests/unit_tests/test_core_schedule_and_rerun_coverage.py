@@ -5344,6 +5344,151 @@ def test_pipeline_p2p_communicator_cpu_ops_wrappers_and_warmup_paths(monkeypatch
     assert hetero.send_backward_recv_forward(torch.ones(1), [1], False) == "sbrf"
 
 
+def test_fsdp_mixed_precision_and_utils_cpu_helper_paths(monkeypatch):
+    from packaging.version import Version as PkgVersion
+
+    from megatron.core.distributed.fsdp.src.megatron_fsdp import mixed_precision
+    from megatron.core.distributed.fsdp.src.megatron_fsdp import utils as fsdp_utils
+
+    monkeypatch.setattr(mixed_precision, "TE_VERSION", PkgVersion("2.1.0"))
+    assert mixed_precision.is_te_min_version("2.0") is True
+    assert mixed_precision.is_te_min_version("2.1.0", check_equality=False) is False
+    monkeypatch.setattr(mixed_precision, "TE_VERSION", None)
+    assert mixed_precision.is_te_min_version("1.0") is False
+
+    class _FakeFP8:
+        def __init__(self):
+            self._rowwise_data = torch.ones(2, dtype=torch.float32)
+            self._columnwise_data = torch.ones(2, dtype=torch.float32) * 2
+            self._transpose_invalid = False
+            self._transpose = torch.ones(1)
+            self.updated_usage = None
+            self.created = []
+
+        def update_usage(self, **kwargs):
+            self.updated_usage = kwargs
+
+        def _create_transpose(self):
+            self.created.append("transpose")
+
+        def _create_columnwise(self):
+            self.created.append("columnwise")
+
+        def dequantize(self):
+            return torch.tensor([9.0])
+
+    class _FakeBlockwise(_FakeFP8):
+        pass
+
+    class _FakeMXFP8(_FakeFP8):
+        pass
+
+    fake = _FakeFP8()
+    monkeypatch.setattr(mixed_precision, "HAVE_TE", True)
+    monkeypatch.setattr(mixed_precision, "FP8_TENSOR_CLASS", _FakeFP8)
+    monkeypatch.setattr(mixed_precision, "HAVE_TE_FP8_TENSOR_CLASS", True)
+    monkeypatch.setattr(mixed_precision, "HAVE_TE_BLOCKWISE_FP8TENSOR", True)
+    monkeypatch.setattr(mixed_precision, "Float8BlockwiseQTensor", _FakeBlockwise, raising=False)
+    monkeypatch.setattr(mixed_precision, "HAVE_TE_MXFP8TENSOR", True)
+    monkeypatch.setattr(mixed_precision, "MXFP8Tensor", _FakeMXFP8, raising=False)
+    monkeypatch.setattr(mixed_precision, "TE_VERSION", PkgVersion("2.1.0"))
+    assert mixed_precision.is_float8tensor(fake) is True
+    assert mixed_precision.is_blockwise_float8tensor(_FakeBlockwise()) is True
+    assert mixed_precision.fp8_need_transpose_data(_FakeMXFP8()) is True
+    assert mixed_precision.fp8_need_transpose_data_for_meta_device_init(
+        SimpleNamespace(fp8_meta={"recipe": SimpleNamespace(mxfp8=lambda: True)})
+    ) is True
+
+    mixed_precision.fp8_discard_transpose_cache(fake)
+    assert fake._transpose_invalid is True
+    assert fake._transpose is None
+    no_transpose_attr = _FakeFP8()
+    delattr(no_transpose_attr, "_transpose_invalid")
+    monkeypatch.setattr(mixed_precision, "HAVE_TE_MXFP8TENSOR", False)
+    mixed_precision.fp8_discard_transpose_cache(no_transpose_attr)
+    assert no_transpose_attr.updated_usage == {"rowwise_usage": True, "columnwise_usage": False}
+
+    monkeypatch.setattr(mixed_precision, "HAVE_TE_POST_ALL_GATHER_PROCESSING", False)
+    mixed_precision.fp8_create_transpose_cache(fake)
+    assert fake.created == ["transpose"]
+
+    class _ColumnwiseOnlyFP8:
+        def __init__(self):
+            self._rowwise_data = torch.ones(2, dtype=torch.float32)
+            self.created = []
+
+        def _create_columnwise(self):
+            self.created.append("columnwise")
+
+    columnwise_only = _ColumnwiseOnlyFP8()
+    monkeypatch.setattr(mixed_precision, "FP8_TENSOR_CLASS", (_FakeFP8, _ColumnwiseOnlyFP8))
+    mixed_precision._fp8_create_transpose_cache_fallback(columnwise_only)
+    assert columnwise_only.created == ["columnwise"]
+    with pytest.raises(AssertionError, match="FP8 tensor"):
+        mixed_precision.fp8_get_raw_data(torch.ones(1))
+
+    new_rowwise = torch.zeros(2, dtype=torch.float32)
+    mixed_precision.fp8_set_raw_data(fake, new_rowwise)
+    assert fake._rowwise_data is new_rowwise
+    monkeypatch.setattr(mixed_precision, "HAVE_TE_MXFP8TENSOR", True)
+    new_colwise = torch.ones(2, dtype=torch.float32) * 3
+    mixed_precision.fp8_set_raw_data(_FakeMXFP8(), new_colwise, set_transpose=True)
+    assert torch.equal(mixed_precision.fp8_get_raw_data(fake), new_rowwise)
+    assert torch.equal(mixed_precision.fp8_get_raw_data(_FakeMXFP8(), get_transpose=True), torch.ones(2) * 2)
+    with pytest.raises(AssertionError, match="data types"):
+        mixed_precision.fp8_set_raw_data(fake, torch.zeros(2, dtype=torch.float64))
+    with pytest.raises(AssertionError, match="Shape"):
+        mixed_precision.fp8_set_raw_data(fake, torch.zeros(3, dtype=torch.float32))
+    assert torch.equal(mixed_precision.fp8_dequantize(fake), torch.tensor([9.0]))
+    monkeypatch.setattr(mixed_precision, "TE_VERSION", PkgVersion("1.9.0"))
+    with pytest.raises(AssertionError, match="Transformer Engine"):
+        mixed_precision.fp8_dequantize(fake)
+
+    cast_calls = []
+    monkeypatch.setattr(mixed_precision, "HAVE_TE_CAST_MASTER_WEIGHTS_TO_FP8", True)
+    monkeypatch.setattr(mixed_precision, "HAVE_TE_POST_ALL_GATHER_PROCESSING", True)
+    monkeypatch.setattr(
+        mixed_precision,
+        "cast_master_weights_to_fp8",
+        lambda *args, **kwargs: cast_calls.append((args, kwargs)),
+        raising=False,
+    )
+    mixed_precision.fp8_quantize([fake], [torch.ones(2)], [0], "dp", [(fake, None)])
+    assert cast_calls and cast_calls[0][1]["manual_post_all_gather_processing"] is True
+    mixed_precision.fp8_quantize([], [], [], "dp", [])
+    monkeypatch.setattr(mixed_precision, "QUANTIZED_MODEL_INIT_CLASS", nullcontext)
+    assert mixed_precision.get_quantized_model_init_context_cls() is nullcontext
+    policy = mixed_precision.MixedPrecisionPolicy()
+    assert policy.main_params_dtype is torch.float32
+    assert policy.grad_comm_dtype is None
+
+    monkeypatch.setattr(fsdp_utils, "HAVE_TE", False)
+    assert fsdp_utils.get_te_version() is None
+    assert fsdp_utils.is_te_min_version("1.0") is False
+    child = torch.nn.Linear(2, 2)
+    parent = torch.nn.Sequential(child)
+    assert fsdp_utils.is_submodule(child, parent) is True
+    assert fsdp_utils.is_submodule(parent, parent) is False
+    assert fsdp_utils.is_submodule(parent, parent, strict=False) is True
+
+    class _RootMesh:
+        _flatten_mapping = {"dp_cp": object(), "tp_pp": object()}
+
+    class _Mesh:
+        mesh_dim_names = ("dp", "cp")
+
+        def _get_root_mesh(self):
+            return _RootMesh()
+
+    mesh = _Mesh()
+    assert fsdp_utils.get_mesh_names(None) == []
+    assert fsdp_utils.get_mesh_names(mesh) == ["dp", "cp", "dp_cp", "tp_pp"]
+    assert fsdp_utils.get_mesh_names(mesh, only_submesh_dims=True) == ["dp", "cp"]
+    assert fsdp_utils.contains_submesh(None, "dp") is False
+    assert fsdp_utils.contains_submesh(mesh, ("dp", "cp")) is True
+    assert fsdp_utils.contains_submesh(mesh, "missing") is False
+
+
 def test_blended_dataset_indices_cache_defer_and_getitem(monkeypatch, tmp_path):
     import numpy
 
