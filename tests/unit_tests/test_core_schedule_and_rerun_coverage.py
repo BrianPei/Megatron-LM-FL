@@ -5489,6 +5489,227 @@ def test_fsdp_mixed_precision_and_utils_cpu_helper_paths(monkeypatch):
     assert fsdp_utils.contains_submesh(mesh, "missing") is False
 
 
+def test_fsdp_param_grad_buffer_index_allocators_and_data_buffer_paths(monkeypatch):
+    from megatron.core.distributed.distributed_data_parallel_config import (
+        DistributedDataParallelConfig,
+    )
+    from megatron.core.distributed.fsdp.src.megatron_fsdp import (
+        param_and_grad_buffer as pgb,
+    )
+
+    monkeypatch.setattr(pgb, "is_float8tensor", lambda tensor: False)
+    monkeypatch.setattr(pgb, "to_local_if_dtensor", lambda tensor: tensor)
+    monkeypatch.setattr(pgb, "_alloc_storage", lambda tensor, size: None)
+    monkeypatch.setattr(pgb, "_free_storage", lambda tensor: tensor.zero_())
+    monkeypatch.setattr(pgb.torch.distributed, "get_rank", lambda group=None: 1)
+    monkeypatch.setattr(pgb.torch.distributed, "get_world_size", lambda group=None: 2)
+    monkeypatch.setattr(
+        pgb,
+        "cur_platform",
+        SimpleNamespace(synchronize=lambda: None),
+    )
+
+    no_shard_config = DistributedDataParallelConfig(data_parallel_sharding_strategy="no_shard")
+    shard_config = DistributedDataParallelConfig(data_parallel_sharding_strategy="optim_grads_params")
+    assert pgb._pad(5, 4) == 8
+    item_map, bucket_index, shard_index = pgb.build_data_parallel_buffer_index(
+        [torch.Size([3]), torch.Size([5]), torch.Size([1])],
+        data_parallel_rank=1,
+        data_parallel_world_size=2,
+        is_data_distributed=True,
+        ddp_config=shard_config,
+        bucket_id=7,
+        chunk_size_factor=4,
+    )
+    assert bucket_index.bucket_id == 7
+    assert bucket_index.size % 8 == 0
+    assert shard_index.local_data_index == 0
+    assert set(item_map) == {0, 1, 2}
+    _, unsharded_bucket, unsharded_shard = pgb.build_data_parallel_buffer_index(
+        [torch.Size([2, 2]), torch.Size([1])],
+        data_parallel_rank=1,
+        data_parallel_world_size=2,
+        is_data_distributed=False,
+        ddp_config=no_shard_config,
+    )
+    assert unsharded_shard.local_data_index == unsharded_shard.global_data_index
+    assert unsharded_bucket.size == 5
+
+    base_allocator = pgb.TemporaryBucketAllocator()
+    base_bucket = base_allocator.allocate(0, 4, torch.float32, torch.device("cpu"))
+    assert base_bucket.data.shape == torch.Size([4])
+    assert base_allocator.allocate(0, 8, torch.float32, torch.device("cpu")) is base_bucket
+    base_allocator.free(0)
+    assert 0 not in base_allocator.buckets
+
+    resize_allocator = pgb.StorageResizeBasedBucketAllocator()
+    resize_bucket = resize_allocator.allocate(1, 3, torch.float32, torch.device("cpu"))
+    resize_allocator.free(1)
+    assert 1 in resize_allocator.buckets
+    assert torch.equal(resize_bucket.data, torch.zeros(3))
+
+    global_buffer_calls = []
+
+    class _GlobalBuffer:
+        def get_tensor(self, shape, dtype, name, mem_alloc_context=None):
+            global_buffer_calls.append((tuple(shape), dtype, name, mem_alloc_context))
+            return torch.full(tuple(shape), len(global_buffer_calls), dtype=dtype)
+
+    monkeypatch.setattr(pgb, "get_global_memory_buffer", lambda: _GlobalBuffer())
+    rotary = pgb.RotaryBucketAllocator("rotary")
+    r0 = rotary.allocate(2, 5, torch.float32, torch.device("cpu"))
+    r0_again = rotary.allocate(2, 5, torch.float32, torch.device("cpu"))
+    assert torch.equal(r0.data, r0_again.data)
+    assert rotary._get_gbuf_name(0) == "rotary_0"
+    rotary.free(2)
+    assert rotary.idle_buffer == [0]
+
+    pg0 = pgb.ParameterGroup(
+        [torch.nn.Parameter(torch.ones(2, dtype=torch.float32))],
+        dtype=torch.float32,
+        fsdp_unit_id=0,
+    )
+    pg1 = pgb.ParameterGroup(
+        [torch.nn.Parameter(torch.ones(2, dtype=torch.float32))],
+        dtype=torch.float32,
+        fsdp_unit_id=1,
+    )
+    pg2 = pgb.ParameterGroup(
+        [torch.nn.Parameter(torch.ones(3, dtype=torch.float32))],
+        dtype=torch.float32,
+        fsdp_unit_id=2,
+    )
+    fixed = pgb.FixedPoolAllocator("fixed", [pg0, pg1, pg2], size=2)
+    assert fixed._is_two_bucket_group_equal([0], [1]) is True
+    assert fixed._is_two_bucket_group_equal([0], [2]) is False
+    fixed_bucket = fixed.allocate(0, 2, torch.float32, torch.device("cpu"), mem_alloc_context=nullcontext)
+    assert fixed_bucket.data.numel() == 2
+    assert 0 in fixed.using_buffer
+    fixed.free(0)
+    assert 0 not in fixed.using_buffer
+    backup_bucket = fixed.allocate(2, 3, torch.float32, torch.device("cpu"))
+    assert backup_bucket.data.numel() == 3
+    fixed.free(2)
+    persistent_fixed = pgb.FixedPoolAllocator(
+        "fixed_persist",
+        [pg0, pg1, pg2],
+        size=1,
+        fallback_to_persistent_buffer=True,
+    )
+    persistent_bucket = persistent_fixed.allocate(2, 3, torch.float32, torch.device("cpu"))
+    assert persistent_bucket.data.numel() == 3
+
+    params = [
+        torch.nn.Parameter(torch.arange(4, dtype=torch.float32).reshape(2, 2)),
+        torch.nn.Parameter(torch.arange(4, 7, dtype=torch.float32)),
+    ]
+    dp_buffer = pgb.DataParallelBuffer(
+        ddp_config=no_shard_config,
+        params=params,
+        is_data_distributed=False,
+        bucket_id=0,
+        dtype=torch.float32,
+        device=torch.device("cpu"),
+        data_parallel_group="dp",
+        temporary_bucket_allocator=pgb.TemporaryBucketAllocator(),
+    )
+    dp_buffer.init_data(torch.zeros(dp_buffer.data_size, dtype=torch.float32))
+    dp_buffer.set_item(0, torch.tensor([[1.0, 2.0], [3.0, 4.0]]))
+    dp_buffer.set_item(1, torch.tensor([5.0, 6.0, 7.0]))
+    assert torch.equal(dp_buffer.get_item(0), torch.tensor([1.0, 2.0, 3.0, 4.0]))
+    assert torch.equal(dp_buffer.get_item(1), torch.tensor([5.0, 6.0, 7.0]))
+    local_bucket = dp_buffer.fetch_bucket(set_param_data=True)
+    assert local_bucket.data.data_ptr() == dp_buffer.data.data_ptr()
+    assert torch.equal(params[0].data.flatten(), torch.tensor([1.0, 2.0, 3.0, 4.0]))
+    allocated_bucket = dp_buffer.allocate_bucket_storage(
+        dtype=torch.float64,
+        device=torch.device("cpu"),
+        init_values=torch.arange(dp_buffer.bucket_index.size, dtype=torch.float64),
+    )
+    assert allocated_bucket.data.dtype == torch.float64
+    assert torch.equal(
+        dp_buffer.get_item_from_bucket(allocated_bucket, 1),
+        torch.arange(dp_buffer.bucket_index.size, dtype=torch.float64)[4:7],
+    )
+    assert dp_buffer.get_shard_from_bucket(allocated_bucket).numel() == dp_buffer.shard_bucket_index.size
+    assert dp_buffer.get_shard_from_local_buffer().numel() == dp_buffer.shard_bucket_index.size
+    params[0].main_grad = torch.ones_like(params[0])
+    dp_buffer.reset_param_main_grad()
+    assert params[0].main_grad is None
+    dp_buffer.free_bucket_storage()
+
+    shard_params = [torch.nn.Parameter(torch.arange(8, dtype=torch.float32))]
+    item_map, bucket_index, shard_index = pgb.build_data_parallel_buffer_index(
+        [torch.Size([8])],
+        data_parallel_rank=1,
+        data_parallel_world_size=2,
+        is_data_distributed=True,
+        ddp_config=shard_config,
+    )
+    shard_buffer = pgb.DataParallelBuffer(
+        ddp_config=shard_config,
+        params=shard_params,
+        is_data_distributed=True,
+        bucket_id=0,
+        dtype=torch.float32,
+        device=torch.device("cpu"),
+        data_parallel_group="dp",
+        temporary_bucket_allocator=pgb.TemporaryBucketAllocator(),
+        item_index_map=item_map,
+        bucket_index=bucket_index,
+        shard_bucket_index=shard_index,
+    )
+    shard_buffer.init_data(torch.zeros(shard_buffer.data_size, dtype=torch.float32))
+    shard_buffer.set_item(0, torch.arange(8, dtype=torch.float32))
+    assert torch.equal(shard_buffer.get_item(0), torch.arange(4, 8, dtype=torch.float32))
+    assert torch.equal(shard_buffer.get_item(0, only_shard=True), torch.arange(4, 8, dtype=torch.float32))
+    assert shard_buffer.locate_item_in_global_item(0) == (4, 8)
+    assert shard_buffer._get_item_slice_in_shard(0) == (4, 8)
+    shard_buffer.item_index_map[1] = pgb.TensorItemIndex(
+        global_data_index=20,
+        size=2,
+        item_id=1,
+        bucket_id=0,
+        shape=torch.Size([2]),
+    )
+    assert shard_buffer._get_item_slice_in_shard(1) == (0, 0)
+    assert shard_buffer.locate_item_in_global_item(1) == (0, 0)
+
+    class _Unit(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.linear = torch.nn.Linear(2, 2, bias=False)
+
+    class _Root(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.unit = _Unit()
+            self.experts = torch.nn.Module()
+            self.experts.weight = torch.nn.Parameter(torch.ones(2, 2))
+            self.shared = torch.nn.Parameter(torch.ones(1))
+            self.shared.shared_embedding = True
+            self.frozen = torch.nn.Parameter(torch.ones(1), requires_grad=False)
+
+    root = _Root()
+    policy = pgb.BucketingPolicy(
+        suggested_bucket_size=2,
+        fsdp_unit_modules=[_Unit],
+        data_parallel_sharding_strategy="optim_grads_params",
+    )
+    groups, param_to_group, bucket_to_group = pgb._get_parameter_groups(
+        root,
+        policy,
+        meta_device_init_fp8_params={},
+        bucket_group_by_fsdp_unit=True,
+    )
+    assert groups
+    assert len(param_to_group) == len(list(root.parameters()))
+    assert all(bucket_id in grouped for bucket_id, grouped in bucket_to_group.items())
+    assert any(group.fsdp_unit_id == 0 for group in groups)
+    assert any(group.is_expert_param for group in groups)
+    assert any(group.requires_grad is False for group in groups)
+
+
 def test_blended_dataset_indices_cache_defer_and_getitem(monkeypatch, tmp_path):
     import numpy
 
