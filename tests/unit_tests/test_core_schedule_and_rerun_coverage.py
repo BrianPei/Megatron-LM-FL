@@ -6152,8 +6152,9 @@ def test_fsdp_param_grad_buffer_index_allocators_and_data_buffer_paths(monkeypat
         def __init__(self):
             super().__init__()
             self.unit = _Unit()
-            self.experts = torch.nn.Module()
-            self.experts.weight = torch.nn.Parameter(torch.ones(2, 2))
+            self.block = torch.nn.Module()
+            self.block.experts = torch.nn.Module()
+            self.block.experts.weight = torch.nn.Parameter(torch.ones(2, 2))
             self.shared = torch.nn.Parameter(torch.ones(1))
             self.shared.shared_embedding = True
             self.frozen = torch.nn.Parameter(torch.ones(1), requires_grad=False)
