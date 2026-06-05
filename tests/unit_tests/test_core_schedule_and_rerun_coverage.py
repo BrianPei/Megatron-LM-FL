@@ -6012,11 +6012,18 @@ def test_fsdp_param_grad_buffer_index_allocators_and_data_buffer_paths(monkeypat
     global_buffer_calls = []
 
     class _GlobalBuffer:
+        def __init__(self):
+            self._cache = {}
+
         def get_tensor(self, shape, dtype, name, mem_alloc_context=None):
             global_buffer_calls.append((tuple(shape), dtype, name, mem_alloc_context))
-            return torch.full(tuple(shape), len(global_buffer_calls), dtype=dtype)
+            key = (tuple(shape), dtype, name)
+            if key not in self._cache:
+                self._cache[key] = torch.full(tuple(shape), len(self._cache) + 1, dtype=dtype)
+            return self._cache[key]
 
-    monkeypatch.setattr(pgb, "get_global_memory_buffer", lambda: _GlobalBuffer())
+    global_buffer = _GlobalBuffer()
+    monkeypatch.setattr(pgb, "get_global_memory_buffer", lambda: global_buffer)
     rotary = pgb.RotaryBucketAllocator("rotary")
     r0 = rotary.allocate(2, 5, torch.float32, torch.device("cpu"))
     r0_again = rotary.allocate(2, 5, torch.float32, torch.device("cpu"))
