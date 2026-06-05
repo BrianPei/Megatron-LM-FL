@@ -2598,6 +2598,8 @@ def test_dynamic_engine_request_failure_suspend_resume_and_context_manager_paths
 
 
 def test_dynamic_engine_reset_and_cuda_graph_creation_cpu_paths(monkeypatch):
+    from itertools import chain, repeat
+
     calls = []
 
     class _FakeEvent:
@@ -2655,19 +2657,16 @@ def test_dynamic_engine_reset_and_cuda_graph_creation_cpu_paths(monkeypatch):
     graph_engine.controller = _Controller()
     graph_engine.capture_stats = None
 
-    memory_stats = iter(
-        [
-            {
-                "allocated_bytes.all.current": 1024,
-                "reserved_bytes.all.current": 2048,
-            },
-            {
-                "allocated_bytes.all.current": 3 * 1024,
-                "reserved_bytes.all.current": 6 * 1024,
-            },
-        ]
-    )
-    time_values = iter([10.0, 12.5])
+    initial_memory_stats = {
+        "allocated_bytes.all.current": 1024,
+        "reserved_bytes.all.current": 2048,
+    }
+    final_memory_stats = {
+        "allocated_bytes.all.current": 3 * 1024,
+        "reserved_bytes.all.current": 6 * 1024,
+    }
+    memory_stats = chain([initial_memory_stats, final_memory_stats], repeat(final_memory_stats))
+    time_values = chain([10.0, 12.5], repeat(12.5))
     monkeypatch.setattr(dynamic_engine, "HAVE_TQDM", False)
     monkeypatch.setattr(dynamic_engine.time, "time", lambda: next(time_values))
     monkeypatch.setattr(dynamic_engine.torch.cuda, "memory_stats", lambda: next(memory_stats))
