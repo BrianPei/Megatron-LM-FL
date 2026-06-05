@@ -2371,7 +2371,7 @@ def test_kv_block_allocator_cpu_prefix_and_lru_eviction_paths(monkeypatch):
     blocks = allocator.allocate_memory_blocks(2)
     assert torch.equal(blocks, torch.tensor([5, 6], dtype=torch.int32))
     assert allocator.get_total_used() == 2
-    assert allocator.is_memory_available(allocator.total_avail) is True
+    assert bool(allocator.is_memory_available(allocator.total_avail)) is True
     assert allocator.allocate_memory_blocks(allocator.total_avail + 1) is None
     allocator.release_memory_blocks(torch.empty(0, dtype=torch.int32))
     allocator.release_memory_blocks(blocks)
@@ -2397,7 +2397,7 @@ def test_kv_block_allocator_cpu_prefix_and_lru_eviction_paths(monkeypatch):
     )
     assert rz_allocator.get_paused_used() == 2
     assert rz_allocator.get_active_used() == 3
-    assert rz_allocator.is_memory_available(100) is False
+    assert bool(rz_allocator.is_memory_available(100)) is False
     rz_allocator.register_kv_block_hashes([], [])
     rz_blocks = rz_allocator.allocate_memory_blocks(2)
     assert torch.equal(rz_allocator.block_ref_counts[rz_blocks], torch.ones(2, dtype=torch.int32))
@@ -2446,10 +2446,10 @@ def test_kv_block_allocator_cpu_prefix_and_lru_eviction_paths(monkeypatch):
     lru_allocator.block_timestamps[cached_blocks] = torch.tensor([30, 10, 20])
     assert lru_allocator.get_evictable_block_count().item() == 3
     assert lru_allocator.evict_lru_blocks(4) is False
-    assert lru_allocator.is_memory_available(100) is False
+    assert bool(lru_allocator.is_memory_available(100)) is False
 
     lru_allocator.total_avail = 0
-    assert lru_allocator.is_memory_available(2) is True
+    assert bool(lru_allocator.is_memory_available(2)) is True
     recycled = lru_allocator.allocate_memory_blocks(2)
     assert recycled.numel() == 2
     assert 202 not in lru_allocator.kv_hash_to_block_id
