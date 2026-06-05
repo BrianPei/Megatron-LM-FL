@@ -4550,7 +4550,7 @@ def test_training_grad_finalization_clip_and_scheduler_cpu_paths(monkeypatch):
 
     from megatron.core.distributed import finalize_model_grads
     from megatron.core.inference import scheduler as inference_scheduler
-    from megatron.core.optimizer import clip_grads
+    clip_grads = importlib.import_module("megatron.core.optimizer.clip_grads")
 
     class _Group:
         def __init__(self, size=2, rank=0, name="group"):
