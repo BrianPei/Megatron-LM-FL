@@ -4387,6 +4387,163 @@ def test_masked_wordpiece_dataset_config_cache_and_masking_paths(monkeypatch, tm
     assert loaded.shape == saved_index.shape
 
 
+def test_hybrid_cp_data_loader_wrapper_cpu_collective_and_reroute_paths(monkeypatch):
+    from megatron.core.datasets import data_schedule
+
+    monkeypatch.setattr(torch.Tensor, "cuda", lambda self, *args, **kwargs: self, raising=False)
+    monkeypatch.setattr(
+        data_schedule,
+        "cur_platform",
+        SimpleNamespace(current_device=lambda: "cpu"),
+    )
+
+    class _Group:
+        def __init__(self, size, rank=0):
+            self._size = size
+            self._rank = rank
+
+        def size(self):
+            return self._size
+
+        def rank(self):
+            return self._rank
+
+    dp_cp_group = _Group(size=2, rank=0)
+    dp_group = _Group(size=2, rank=0)
+    tp_group = _Group(size=1, rank=0)
+    pg_collection = SimpleNamespace(dp_cp=dp_cp_group, dp=dp_group, tp=tp_group)
+    config = SimpleNamespace(max_seqlen_per_dp_cp_rank=8)
+    sample_id_groups = [[[0], [1]], [[2], []]]
+    expected_dp_cp_group = dp_cp_group
+
+    class _Scheduler:
+        def __init__(self, max_seq_len_per_rank, dp_cp_group):
+            assert max_seq_len_per_rank == 8
+            assert dp_cp_group is expected_dp_cp_group
+
+        def get_groups_and_subsamples(self, global_id_seqlens, config):
+            assert global_id_seqlens == [(0, 2), (1, 3), (2, 4)]
+            return ["group"], sample_id_groups
+
+    monkeypatch.setattr(data_schedule, "BalancedCPScheduler", _Scheduler)
+    monkeypatch.setattr(
+        data_schedule.parallel_state,
+        "get_data_parallel_group",
+        lambda with_context_parallel=False: dp_cp_group if with_context_parallel else dp_group,
+    )
+    monkeypatch.setattr(
+        data_schedule.parallel_state,
+        "get_tensor_model_parallel_group",
+        lambda: tp_group,
+    )
+
+    gather_calls = []
+
+    def _all_gather(output_tensors, input_tensor, group):
+        gather_calls.append((input_tensor.clone(), group))
+        if output_tensors[0].numel() == 1:
+            output_tensors[0].copy_(torch.tensor([2], dtype=torch.int32))
+            output_tensors[1].copy_(torch.tensor([1], dtype=torch.int32))
+        else:
+            output_tensors[0].copy_(torch.tensor([2, 3], dtype=torch.int32))
+            output_tensors[1].copy_(torch.tensor([4, 0], dtype=torch.int32))
+
+    all_to_all_calls = []
+
+    def _all_to_all_single(output, input, output_split_sizes, input_split_sizes, group):
+        all_to_all_calls.append(
+            (
+                input.clone(),
+                list(output_split_sizes),
+                list(input_split_sizes),
+                group,
+            )
+        )
+        output.copy_(torch.arange(output.numel(), dtype=output.dtype))
+
+    monkeypatch.setattr(data_schedule.torch.distributed, "all_gather", _all_gather)
+    monkeypatch.setattr(data_schedule.torch.distributed, "all_to_all_single", _all_to_all_single)
+    monkeypatch.setattr(
+        data_schedule.torch.distributed,
+        "get_process_group_ranks",
+        lambda group: [0, 1],
+    )
+    monkeypatch.setattr(
+        data_schedule.torch,
+        "bucketize",
+        lambda gid, boundaries: torch.tensor(1 if int(gid) > int(boundaries[0]) else 0),
+    )
+
+    wrapper = data_schedule.HybridCPDataLoaderWrapper(
+        iter(
+            [
+                [
+                    {
+                        "cu_seqlens": torch.tensor([0, 2, 5, 5], dtype=torch.int32),
+                        "batch_idx": torch.tensor([0]),
+                        "max_seqlen": torch.tensor([5]),
+                        "tokens": torch.tensor([10, 11, 12, 13, 14], dtype=torch.int64),
+                    }
+                ]
+            ]
+        ),
+        config,
+        pg_collection=pg_collection,
+    )
+    assert iter(wrapper) is wrapper
+
+    seqlens_gathered, offsets = wrapper.get_global_seqlens(
+        torch.tensor([2, 3], dtype=torch.int32)
+    )
+    assert seqlens_gathered == [2, 3, 4]
+    assert torch.equal(offsets, torch.tensor([0, 2], dtype=torch.int32))
+    global_id_seqlens, global_ids_this_rank = wrapper.get_global_id_seqlens(
+        2,
+        offsets,
+        seqlens_gathered,
+    )
+    assert global_id_seqlens == [(0, 2), (1, 3), (2, 4)]
+    assert torch.equal(global_ids_this_rank, torch.tensor([0, 1], dtype=torch.int32))
+    assert int(wrapper._gid_to_src_rank(2, offsets)) == 1
+
+    unpacked = wrapper.unpack_batch(
+        [
+            {
+                "cu_seqlens": torch.tensor([0, 2, 5, 5], dtype=torch.int32),
+                "tokens": torch.tensor([10, 11, 12, 13, 14], dtype=torch.int64),
+            }
+        ]
+    )
+    assert [sample["tokens"].tolist() for sample in unpacked] == [[10, 11], [12, 13, 14]]
+
+    samples, returned_groups = next(wrapper)
+    assert returned_groups == sample_id_groups
+    assert sorted(samples) == [0, 2]
+    assert samples[0]["tokens"].tolist() == [0, 1]
+    assert samples[2]["tokens"].tolist() == [2, 3, 4, 5]
+    assert all_to_all_calls[-1][1] == [2, 4]
+    assert all_to_all_calls[-1][2] == [2, 3]
+    assert gather_calls
+
+    none_wrapper = data_schedule.HybridCPDataLoaderWrapper(None, config, pg_collection=pg_collection)
+    assert next(none_wrapper) == (None, None)
+
+    implicit_group_wrapper = data_schedule.HybridCPDataLoaderWrapper(
+        iter(
+            [
+                [
+                    {
+                        "cu_seqlens": torch.tensor([0, 1], dtype=torch.int32),
+                        "tokens": torch.tensor([7], dtype=torch.int64),
+                    }
+                ]
+            ]
+        ),
+        config,
+    )
+    assert implicit_group_wrapper.dp_cp_group is dp_cp_group
+
+
 def test_blended_dataset_indices_cache_defer_and_getitem(monkeypatch, tmp_path):
     import numpy
 
