@@ -5555,7 +5555,8 @@ def test_pipeline_p2p_communicator_cpu_ops_wrappers_and_warmup_paths(monkeypatch
     )
 
     def _irecv(tensor, src, group=None):
-        tensor.fill_(7)
+        with torch.no_grad():
+            tensor.fill_(7)
         calls.append(("irecv", tuple(tensor.shape), src, group.name if hasattr(group, "name") else group))
         return _Req("recv")
 
@@ -5572,10 +5573,11 @@ def test_pipeline_p2p_communicator_cpu_ops_wrappers_and_warmup_paths(monkeypatch
         calls.append(("batch", len(ops)))
         for op in ops:
             if op.op is p2p_communication.dist.irecv:
-                if op.tensor.numel() == 3 and op.tensor.dtype == torch.int64:
-                    op.tensor.copy_(torch.tensor([2, 2, 1], dtype=torch.int64))
-                else:
-                    op.tensor.fill_(5)
+                with torch.no_grad():
+                    if op.tensor.numel() == 3 and op.tensor.dtype == torch.int64:
+                        op.tensor.copy_(torch.tensor([2, 2, 1], dtype=torch.int64))
+                    else:
+                        op.tensor.fill_(5)
         return [_Req(f"batch-{idx}") for idx, _ in enumerate(ops)]
 
     def _ring_exchange(**kwargs):
@@ -5583,10 +5585,11 @@ def test_pipeline_p2p_communicator_cpu_ops_wrappers_and_warmup_paths(monkeypatch
         for key in ("tensor_recv_prev", "tensor_recv_next"):
             tensor = kwargs.get(key)
             if tensor is not None:
-                if tensor.numel() == 3 and tensor.dtype == torch.int64:
-                    tensor.copy_(torch.tensor([1, 1, 1], dtype=torch.int64))
-                else:
-                    tensor.fill_(9)
+                with torch.no_grad():
+                    if tensor.numel() == 3 and tensor.dtype == torch.int64:
+                        tensor.copy_(torch.tensor([1, 1, 1], dtype=torch.int64))
+                    else:
+                        tensor.fill_(9)
 
     monkeypatch.setattr(p2p_communication.dist, "P2POp", _P2POp)
     monkeypatch.setattr(p2p_communication.dist, "batch_isend_irecv", _batch_isend_irecv)
