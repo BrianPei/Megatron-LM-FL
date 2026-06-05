@@ -556,6 +556,162 @@ def test_megatron_optimizer_base_decoupled_clip_count_offload_and_steps(monkeypa
     assert state == {"state": {0: {"step": 5}, 1: {"step": 5}}}
 
 
+def test_float16_and_fp32_optimizer_training_step_state_paths(monkeypatch):
+    identifier_defaults = {
+        "wd_mult": 1.0,
+        "lr_mult": 1.0,
+        "is_expert_parallel": False,
+        "is_decoupled_lr": False,
+        "is_vision_model_param": False,
+        "is_engram_parallel": False,
+    }
+
+    def _tag_param_groups(optimizer, **overrides):
+        for group in optimizer.param_groups:
+            group.update(identifier_defaults)
+            group.update(overrides)
+        return optimizer
+
+    monkeypatch.setattr(optimizer_module.cur_platform, "device_name", lambda: "cpu")
+    monkeypatch.setattr(optimizer_module.cur_platform, "current_device", lambda: "cpu")
+    monkeypatch.setattr(
+        optimizer_module.tensor_parallel,
+        "copy_tensor_model_parallel_attributes",
+        lambda dst, src: setattr(dst, "copied_tp_attrs", True),
+    )
+
+    bf16_param = torch.nn.Parameter(torch.tensor([1.0, 2.0], dtype=torch.bfloat16))
+    bf16_param.shared = True
+    fp32_param = torch.nn.Parameter(torch.tensor([3.0, 4.0], dtype=torch.float32))
+    base = _tag_param_groups(torch.optim.SGD([bf16_param, fp32_param], lr=0.1))
+    base.state[bf16_param] = {"momentum_buffer": torch.tensor([0.5, 0.5])}
+
+    init_calls = []
+    opt = optimizer_module.Float16OptimizerWithFloat16Params(
+        base,
+        OptimizerConfig(bf16=True),
+        grad_scaler=None,
+        init_state_fn=lambda optimizer, config: init_calls.append((optimizer, config.bf16)),
+    )
+    assert opt.float16_groups == [[bf16_param]]
+    assert opt.fp32_from_fp32_groups == [[fp32_param]]
+    main_param = opt.fp32_from_float16_groups[0][0]
+    assert main_param.dtype == torch.float32
+    assert main_param.shared is True
+    assert main_param.copied_tp_attrs is True
+    assert base.param_groups[0]["params"][0] is main_param
+    assert base.state[main_param]["momentum_buffer"].tolist() == [0.5, 0.5]
+
+    bf16_param.main_grad = torch.tensor([7.0, 8.0], dtype=torch.bfloat16)
+    fp32_param.main_grad = torch.tensor([9.0, 10.0])
+    opt._copy_model_grads_to_main_grads()
+    assert torch.equal(main_param.grad, torch.tensor([7.0, 8.0]))
+    assert bf16_param.grad is None
+    assert torch.equal(fp32_param.grad, torch.tensor([9.0, 10.0]))
+    assert opt._collect_main_grad_data_for_unscaling()[0].data_ptr() == main_param.grad.data_ptr()
+
+    main_param.data.copy_(torch.tensor([11.0, 12.0]))
+    opt._copy_main_params_to_model_params()
+    assert torch.equal(bf16_param.float(), torch.tensor([11.0, 12.0]))
+    bf16_param.data.copy_(torch.tensor([13.0, 14.0], dtype=torch.bfloat16))
+    opt._copy_model_params_to_main_params()
+    assert torch.equal(main_param, torch.tensor([13.0, 14.0]))
+    with pytest.raises(AssertionError, match="state dict"):
+        opt._copy_model_params_to_main_params(state_dict={})
+
+    state_dict = opt.state_dict(is_loading=True)
+    assert init_calls and init_calls[-1][1] is True
+    assert "fp32_from_fp16_params" in state_dict
+    saved_main = state_dict["fp32_from_fp16_params"][0][0].clone()
+    state_dict["fp32_from_fp16_params"][0][0] = torch.nn.Parameter(saved_main + 5.0)
+    state_dict["optimizer"]["param_groups"] = [
+        {**group, **identifier_defaults} for group in state_dict["optimizer"]["param_groups"]
+    ]
+    opt.load_state_dict(state_dict)
+    assert torch.equal(main_param, saved_main + 5.0)
+
+    bf16_param.grad = torch.ones_like(bf16_param)
+    main_param.grad = torch.ones_like(main_param)
+    fp32_param.grad = torch.ones_like(fp32_param)
+    opt.zero_grad(set_to_none=False)
+    assert torch.equal(main_param.grad, torch.zeros_like(main_param))
+    opt.zero_grad(set_to_none=True)
+    assert bf16_param.grad is None
+    assert main_param.grad is None
+    assert fp32_param.grad is None
+
+    fp32_step_param = torch.nn.Parameter(torch.tensor([2.0, 4.0]))
+    fp32_base = _tag_param_groups(torch.optim.SGD([fp32_step_param], lr=0.5))
+    config = OptimizerConfig(clip_grad=1.5, log_num_zeros_in_grad=True)
+    fp32_opt = optimizer_module.FP32Optimizer(fp32_base, config, init_state_fn=lambda *_: None)
+    fp32_step_param.main_grad = torch.tensor([1.0, 3.0])
+
+    clip_calls = []
+    zero_calls = []
+    monkeypatch.setattr(optimizer_module, "param_is_not_shared", lambda param: True)
+    monkeypatch.setattr(
+        optimizer_module.tensor_parallel,
+        "param_is_not_tensor_parallel_duplicate",
+        lambda param, tp_group=None: True,
+    )
+    monkeypatch.setattr(optimizer_module.parallel_state, "get_model_parallel_group", lambda: "mp")
+    monkeypatch.setattr(
+        optimizer_module,
+        "get_grad_norm_fp32",
+        lambda grads, grad_stats_parallel_group=None: 3.5,
+    )
+    monkeypatch.setattr(
+        optimizer_module,
+        "clip_grad_by_total_norm_fp32",
+        lambda params, clip_grad, grad_norm, use_decoupled_grad: clip_calls.append(
+            (list(params), clip_grad, grad_norm, use_decoupled_grad)
+        ),
+    )
+    monkeypatch.setattr(
+        optimizer_module,
+        "count_zeros_fp32",
+        lambda params, grad_stats_parallel_group=None, use_decoupled_grad=False, tp_group=None: (
+            zero_calls.append((list(params), grad_stats_parallel_group, use_decoupled_grad))
+            or 4
+        ),
+    )
+    success, grad_norm, num_zeros = fp32_opt.step()
+    assert success is True
+    assert grad_norm == 3.5
+    assert num_zeros == 4
+    assert torch.equal(fp32_step_param.grad, torch.tensor([1.0, 3.0]))
+    assert clip_calls[-1][1:] == (1.5, 3.5, False)
+    assert zero_calls[-1][1:] == ("mp", False)
+    assert torch.equal(fp32_step_param, torch.tensor([1.5, 2.5]))
+    assert fp32_opt.get_loss_scale().item() == 1.0
+
+    fp32_step_param.grad = torch.ones_like(fp32_step_param)
+    fp32_opt.zero_grad(set_to_none=False)
+    assert torch.equal(fp32_step_param.grad, torch.zeros_like(fp32_step_param))
+    fp32_opt.zero_grad(set_to_none=True)
+    assert fp32_step_param.grad is None
+
+    saved = fp32_opt.state_dict()
+    saved["state"]["common_step"] = torch.tensor(6.0)
+    fp32_opt.load_state_dict(saved)
+    reordered = optimizer_module.MegatronOptimizer._filter_and_reorder_param_groups(
+        [
+            {**identifier_defaults, "params": ["current-a"], "lr_mult": 2.0},
+            {**identifier_defaults, "params": ["current-b"], "lr_mult": 1.0},
+        ],
+        [
+            {**identifier_defaults, "params": ["saved-b"], "lr_mult": 1.0},
+            {**identifier_defaults, "params": ["saved-a"], "lr_mult": 2.0},
+        ],
+    )
+    assert [group["params"] for group in reordered] == [["saved-b"], ["saved-a"]]
+    with pytest.raises(ValueError, match="Could not find parameter group"):
+        optimizer_module.MegatronOptimizer._filter_and_reorder_param_groups(
+            [{**identifier_defaults, "params": [], "lr_mult": 9.0}],
+            [{**identifier_defaults, "params": []}],
+        )
+
+
 def test_distributed_optimizer_range_maps_and_cpu_copy_paths(monkeypatch):
     monkeypatch.setattr(distrib_optimizer_module.cur_platform, "device_name", lambda: "cpu")
     monkeypatch.setattr(distrib_optimizer_module.cur_platform, "current_device", lambda: "cpu")
