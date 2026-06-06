@@ -119,6 +119,8 @@ def reset_env_vars():
 def cleanup_gpu_memory():
     """Clean up GPU memory after each test to prevent OOM in CI."""
     yield
-    gc.collect()
+    # Metax can abort inside cyclic GC during multi-rank pytest teardown.
+    if os.getenv("MEGATRON_TEST_PLATFORM") != "metax":
+        gc.collect()
     if torch.cuda.is_available():
         torch.cuda.empty_cache()

@@ -160,6 +160,7 @@ jobs:
           # Set environment variables
           export PYTHONPATH=$GITHUB_WORKSPACE:${PYTHONPATH:-}
           export TORCHINDUCTOR_CACHE_DIR=/tmp/.torch_inductor_cache
+          export MEGATRON_TEST_PLATFORM=$PLATFORM
           mkdir -p $TORCHINDUCTOR_CACHE_DIR
 
           # Build ignore options from ignored_tests input
