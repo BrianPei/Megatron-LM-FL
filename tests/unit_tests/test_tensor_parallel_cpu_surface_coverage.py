@@ -195,6 +195,7 @@ def test_tensor_parallel_rng_tracker_cpu_state_paths(monkeypatch):
         states["forked"] = True
     assert states["forked"] is True
 
+    seeds.clear()
     rng.model_parallel_cuda_manual_seed(11, force_reset_rng=True)
     assert seeds[:1] == [11]
     assert rng.get_data_parallel_rng_tracker_name() in rng._CUDA_RNG_STATE_TRACKER.states_

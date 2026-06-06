@@ -243,6 +243,9 @@ class _ToyMegatron(module_lib.GraphableMegatronModule):
         super().__init__(config, vp_stage=vp_stage)
         self.child = _Child()
 
+    def create_mcore_cudagraph_manager(self, config):
+        self.cudagraph_manager = lambda module, args, kwargs: ("local", args, kwargs)
+
     def forward(self, hidden_states, **kwargs):
         return self.child(hidden_states)
 
@@ -287,7 +290,6 @@ def test_megatron_and_graphable_module_cuda_graph_cpu_paths(monkeypatch):
 
     local_cfg = _cfg(cuda_graph_impl="local", cuda_graph_scope=[CudaGraphScope.attn])
     local = _ToyMegatron(local_cfg)
-    local.cudagraph_manager = lambda module, args, kwargs: ("local", args, kwargs)
     assert local._should_call_local_cudagraph() is True
     assert local(torch.ones(1))[0] == "local"
 

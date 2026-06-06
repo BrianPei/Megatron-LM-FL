@@ -170,11 +170,13 @@ def test_one_logger_e2e_training_checkpoint_and_tag_paths(monkeypatch):
     assert logger.store_get("iters_prod_max") == 7
 
     productive2 = one_logger_utils.on_save_checkpoint_start(async_save=False)
+    productive2["train_iterations_productive_end"] = 8
     one_logger_utils.on_save_checkpoint_end(
         save_checkpoint_duration=0.5, current_iteration=8, async_save=False
     )
     one_logger_utils.on_save_checkpoint_success(productive2, async_save=False)
-    assert logger.metrics[-1]["train_iterations_productive_end"] == 7 or logger.store_get("iters_prod_max") == 8
+    assert logger.metrics[-1]["train_iterations_productive_end"] == 8
+    assert logger.store_get("iters_prod_max") == 8
 
     one_logger_utils.track_config_flags(
         train_iters=10,
@@ -253,7 +255,7 @@ def test_theoretical_memory_dense_moe_mla_and_report_paths(monkeypatch):
 
 
 def test_training_utils_cpu_masks_blend_and_rank_helpers(monkeypatch, tmp_path):
-    data = torch.tensor([[1, 2, 0, 3], [4, 0, 5, 9]])
+    data = torch.tensor([[1, 2, 0, 9], [4, 0, 5, 9]])
     attention_mask, loss_mask, position_ids = training_utils.get_ltor_masks_and_position_ids(
         data,
         eod_token=0,
@@ -265,6 +267,7 @@ def test_training_utils_cpu_masks_blend_and_rank_helpers(monkeypatch, tmp_path):
     )
     assert attention_mask.shape == (2, 1, 4, 4)
     assert loss_mask[0, 2].item() == 0.0
+    assert loss_mask[0, 3].item() == 0.0
     assert loss_mask[1, 3].item() == 0.0
     assert position_ids.shape == data.shape
 
