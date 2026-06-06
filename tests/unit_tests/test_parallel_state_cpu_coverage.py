@@ -194,8 +194,14 @@ def test_parallel_state_global_rank_size_getters_and_stage_helpers(monkeypatch):
     assert ps.get_pipeline_model_parallel_prev_rank() == 3
 
     monkeypatch.setattr(ps, "_VIRTUAL_PIPELINE_MODEL_PARALLEL_WORLD_SIZE", 2)
-    monkeypatch.setattr(ps, "_VIRTUAL_PIPELINE_MODEL_PARALLEL_RANK", 0)
-    assert ps.is_pipeline_first_stage(ignore_virtual=False) is False
-    assert ps.is_pipeline_last_stage(ignore_virtual=False) is False
+    monkeypatch.setattr(ps, "_MPU_PIPELINE_MODEL_PARALLEL_RANK", 0)
+    assert ps.is_pipeline_first_stage(ignore_virtual=False, vp_stage=0) is True
+    assert ps.is_pipeline_first_stage(ignore_virtual=False, vp_stage=1) is False
+
+    monkeypatch.setattr(ps, "_MPU_PIPELINE_MODEL_PARALLEL_RANK", 2)
+    assert ps.is_pipeline_last_stage(ignore_virtual=False, vp_stage=0) is False
+    assert ps.is_pipeline_last_stage(ignore_virtual=False, vp_stage=1) is True
     with pytest.raises(AssertionError, match="vp_stage"):
         ps.is_pipeline_first_stage(ignore_virtual=False, vp_stage=None)
+    with pytest.raises(AssertionError, match="vp_stage"):
+        ps.is_pipeline_last_stage(ignore_virtual=False, vp_stage=None)
