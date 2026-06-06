@@ -260,11 +260,16 @@ def test_fsdp_parameter_grouping_policy_shared_expert_and_bucket_maps(monkeypatc
             super().__init__()
             self.first = torch.nn.Linear(2, 2, bias=False)
             self.second = torch.nn.Linear(2, 2, bias=False)
-            self.experts = torch.nn.ModuleList([_Expert()])
+            self.moe = torch.nn.Module()
+            self.moe.experts = torch.nn.ModuleList([_Expert()])
             self.shared = torch.nn.Parameter(torch.ones(3))
             self.shared.shared_embedding = True
 
     model = _Model()
+    expert_params = {
+        param for name, param in model.named_parameters() if ".experts." in name
+    }
+    assert expert_params
     policy = fsdp_buffer.BucketingPolicy(
         suggested_bucket_size=4,
         fsdp_unit_modules=[torch.nn.Linear],
@@ -278,7 +283,9 @@ def test_fsdp_parameter_grouping_policy_shared_expert_and_bucket_maps(monkeypatc
     assert groups
     assert set(param_to_group) == set(model.parameters())
     assert all(bucket_id in group_ids for bucket_id, group_ids in bucket_to_group.items())
-    assert any(group.is_expert_param for group in groups)
+    assert {
+        param for group in groups if group.is_expert_param for param in group.params
+    } == expert_params
     assert any(group.fsdp_unit_id is not None for group in groups)
 
     no_aggregate = fsdp_buffer._get_parameter_groups(
