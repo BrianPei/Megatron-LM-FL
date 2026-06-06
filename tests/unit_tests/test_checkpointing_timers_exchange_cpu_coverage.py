@@ -22,8 +22,9 @@ def _patch_timer_dist(monkeypatch, rank=1, world_size=2, backend="cpu:gloo"):
     monkeypatch.setattr(torch.distributed, "barrier", lambda *args, **kwargs: None)
 
     def _fake_all_gather(output, input_tensor):
+        local_values = input_tensor.clone()
         output.zero_()
-        output[-input_tensor.numel() :] = input_tensor
+        output.view(world_size, -1)[rank].copy_(local_values)
 
     monkeypatch.setattr(timers_module, "dist_all_gather_func", _fake_all_gather)
 
