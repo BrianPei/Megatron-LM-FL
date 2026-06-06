@@ -75,6 +75,271 @@ class Net(nn.Module):
         return x
 
 
+def _identifier_group(params, **overrides):
+    group = {
+        "params": params,
+        "wd_mult": 1.0,
+        "lr_mult": 1.0,
+        "is_expert_parallel": False,
+        "is_decoupled_lr": False,
+        "is_vision_model_param": False,
+        "is_engram_parallel": False,
+    }
+    group.update(overrides)
+    return group
+
+
+def test_fp32_optimizer_cpu_state_and_step_paths(monkeypatch):
+    monkeypatch.setattr(
+        optimizer_module,
+        "cur_platform",
+        SimpleNamespace(
+            device_name=lambda: "cpu",
+            current_device=lambda: "cpu",
+            device=lambda: "cpu",
+            empty_cache=lambda: None,
+        ),
+    )
+    monkeypatch.setattr(optimizer_module.torch.distributed, "get_rank", lambda: 0)
+    monkeypatch.setattr(
+        optimizer_module.parallel_state,
+        "get_model_parallel_group",
+        lambda: "mp",
+    )
+    monkeypatch.setattr(
+        optimizer_module,
+        "get_grad_norm_fp32",
+        lambda grads, grad_stats_parallel_group=None: float(sum(g.float().abs().sum() for g in grads)),
+    )
+    clip_calls = []
+    monkeypatch.setattr(
+        optimizer_module,
+        "clip_grad_by_total_norm_fp32",
+        lambda params, clip_grad, grad_norm, use_decoupled_grad=False: clip_calls.append(
+            (len(params), clip_grad, grad_norm, use_decoupled_grad)
+        ),
+    )
+    monkeypatch.setattr(
+        optimizer_module,
+        "count_zeros_fp32",
+        lambda params, grad_stats_parallel_group=None, use_decoupled_grad=False, tp_group=None: 7,
+    )
+
+    param = torch.nn.Parameter(torch.tensor([1.0, -1.0]))
+    param.main_grad = torch.tensor([0.5, 0.0])
+    base_optimizer = torch.optim.SGD([_identifier_group([param])], lr=0.1)
+    config = OptimizerConfig(optimizer="sgd", lr=0.1, clip_grad=1.0, log_num_zeros_in_grad=True)
+    optimizer = optimizer_module.FP32Optimizer(base_optimizer, config, init_state_fn=lambda *_: None)
+
+    assert optimizer.get_parameters() == [param]
+    assert optimizer.get_grad_stats_parallel_group() == "mp"
+    optimizer.model_parallel_group = "legacy"
+    with pytest.warns(UserWarning, match="deprecated"):
+        assert optimizer.get_grad_stats_parallel_group() == "legacy"
+    assert optimizer.scale_loss(torch.tensor(3.0)).item() == 3.0
+
+    success, grad_norm, zeros = optimizer.step()
+    assert success is True
+    assert grad_norm == 0.5
+    assert zeros == 7
+    assert param.grad is param.main_grad
+    assert clip_calls == [(1, 1.0, 0.5, False)]
+
+    param.grad = torch.ones_like(param)
+    optimizer.zero_grad(set_to_none=False)
+    assert torch.equal(param.grad, torch.zeros_like(param))
+    optimizer.zero_grad(set_to_none=True)
+    assert param.grad is None
+
+    state_dict = base_optimizer.state_dict()
+    state_dict["state"] = {0: {}, 1: {}}
+    optimizer_module.FP32Optimizer._restore_common_per_param_step(state_dict, torch.tensor(4))
+    assert all(torch.equal(state["step"], torch.tensor(4)) for state in state_dict["state"].values())
+    assert torch.equal(
+        optimizer_module.FP32Optimizer._extract_common_per_param_step(state_dict), torch.tensor(4)
+    )
+    state_dict["state"][1]["step"] = torch.tensor(5)
+    with pytest.raises(ValueError, match="differs per parameter"):
+        optimizer_module.FP32Optimizer._extract_common_per_param_step(state_dict)
+
+    current = [
+        _identifier_group([0], wd_mult=0.0),
+        _identifier_group([1], lr_mult=2.0),
+    ]
+    loaded = [
+        _identifier_group(["b"], lr_mult=2.0),
+        _identifier_group(["a"], wd_mult=0.0),
+    ]
+    reordered = optimizer_module.FP32Optimizer._filter_and_reorder_param_groups(current, loaded)
+    assert [group["params"] for group in reordered] == [["b"], ["a"]]
+    with pytest.raises(ValueError, match="Could not find parameter group"):
+        optimizer_module.FP32Optimizer._filter_and_reorder_param_groups(
+            current,
+            [_identifier_group(["missing"], wd_mult=3.0)],
+        )
+
+
+def test_proxy_dict_and_chained_optimizer_cpu_paths(monkeypatch, tmp_path):
+    monkeypatch.setattr(
+        optimizer_module,
+        "cur_platform",
+        SimpleNamespace(current_device=lambda: "cpu", device=lambda: "cpu", empty_cache=lambda: None),
+    )
+    monkeypatch.setattr(
+        optimizer_module,
+        "get_grad_norm_fp32",
+        lambda grads, grad_stats_parallel_group=None: 9.0,
+    )
+    monkeypatch.setattr(
+        optimizer_module,
+        "count_zeros_fp32",
+        lambda params, grad_stats_parallel_group=None, use_decoupled_grad=False: 5,
+    )
+    clip_calls = []
+    monkeypatch.setattr(
+        optimizer_module,
+        "clip_grad_by_total_norm_fp32",
+        lambda params, max_norm, total_norm, use_decoupled_grad=False: clip_calls.append(
+            (len(params), max_norm, total_norm, use_decoupled_grad)
+        ),
+    )
+
+    proxy = optimizer_module.ProxyDict([{"a": 1}, {"b": 2}])
+    assert proxy[(0, "a")] == 1
+    proxy[(1, "c")] = 3
+    assert len(proxy) == 3
+    assert sorted(proxy) == [(0, "a"), (1, "b"), (1, "c")]
+    assert dict(proxy.items())[(1, "c")] == 3
+
+    class _Inner:
+        def __init__(self, step):
+            self.param_groups = [{"params": [torch.nn.Parameter(torch.ones(1))], "step": step}]
+
+    class _FakeOptimizer:
+        def __init__(self, name, group, grad_norm, zero_count, step_result=True):
+            self.name = name
+            self.config = SimpleNamespace(
+                clip_grad=2.0,
+                log_num_zeros_in_grad=True,
+                use_precision_aware_optimizer_no_fp8_or_ds_fp8=False,
+                overlap_param_gather_with_optimizer_step=True,
+            )
+            self.optimizer = _Inner(step=3)
+            self.param_groups = self.optimizer.param_groups
+            self.state = {"state": name}
+            self.model_chunks = [SimpleNamespace(start_param_sync=lambda force_dispatch=False: None)]
+            self._group = group
+            self._grad_norm = grad_norm
+            self._zero_count = zero_count
+            self._step_result = step_result
+            self.calls = []
+
+        def get_parameters(self):
+            return self.param_groups[0]["params"]
+
+        def zero_grad(self, set_to_none=True):
+            self.calls.append(("zero", set_to_none))
+
+        def get_loss_scale(self):
+            return torch.tensor([2.0])
+
+        def prepare_grads(self):
+            self.calls.append("prepare")
+            return False
+
+        def step_with_ready_grads(self):
+            self.calls.append("step_ready")
+            return self._step_result
+
+        def get_grad_stats_parallel_group(self):
+            return self._group
+
+        def get_main_grads_for_grad_norm(self):
+            return [torch.ones(1)]
+
+        def get_grad_norm(self):
+            return self._grad_norm
+
+        def count_zeros(self):
+            return self._zero_count
+
+        def reload_model_params(self, state_dict=None):
+            self.calls.append(("reload", state_dict))
+
+        def state_dict(self):
+            return {"optimizer": self.name}
+
+        def load_state_dict(self, state):
+            self.calls.append(("load", state))
+
+        def sharded_state_dict(self, *args, **kwargs):
+            return {"param_state": {0: self.name}, "optimizer": {}, "param_state_sharding_type": {}}
+
+        def offload_to_cpu(self):
+            self.calls.append("offload")
+
+        def restore_from_cpu(self):
+            self.calls.append("restore")
+
+    opt_a = _FakeOptimizer("a", "shared", 3.0, 1)
+    opt_b = _FakeOptimizer("b", "shared", 4.0, 2)
+    chained = optimizer_module.ChainedOptimizer([opt_a, opt_b])
+    assert chained.get_parameters() == opt_a.get_parameters() + opt_b.get_parameters()
+    assert chained.get_loss_scale().item() == 2.0
+    assert chained.grads_states_parallel_group_is_shared() is True
+    assert chained.get_grad_stats_parallel_group() == "shared"
+    assert chained.get_grad_norm() == 9.0
+    assert chained.count_zeros() == 5
+
+    success, grad_norm, zeros = chained.step()
+    assert (success, grad_norm, zeros) == (True, 9.0, 5)
+    assert clip_calls == [(1, 2.0, 9.0, False), (1, 2.0, 9.0, False)]
+    assert chained.state[(0, "state")] == "a"
+    chained.zero_grad(set_to_none=False)
+    assert ("zero", False) in opt_a.calls and ("zero", False) in opt_b.calls
+    assert chained.state_dict() == [{"optimizer": "a"}, {"optimizer": "b"}]
+
+    split = chained._split_state_dict({"model0": "m0", "model1": "m1"})
+    assert split == [{"model0": "m0"}, {"model0": "m1"}]
+    chained.reload_model_params({"model0": "m0", "model1": "m1"})
+    assert ("reload", {"model0": "m0"}) in opt_a.calls
+    assert ("reload", {"model0": "m1"}) in opt_b.calls
+    chained.load_state_dict({1: {"b": 2}, 0: {"a": 1}})
+    assert ("load", {"a": 1}) in opt_a.calls
+    assert ("load", {"b": 2}) in opt_b.calls
+
+    save_path = tmp_path / "params.pt"
+    opt_a.data_parallel_group = SimpleNamespace(rank=lambda: 0)
+    opt_b.data_parallel_group = SimpleNamespace(rank=lambda: 1)
+    opt_a.get_parameter_state_dp_zero = lambda: {"state": "a"}
+    opt_b.get_parameter_state_dp_zero = lambda: None
+    chained.save_parameter_state(str(save_path))
+    assert save_path.exists()
+    loaded_states = []
+    opt_a.load_parameter_state_from_dp_zero = lambda state, update_legacy_format=False: loaded_states.append(
+        ("a", state, update_legacy_format)
+    )
+    opt_b.load_parameter_state_from_dp_zero = lambda state, update_legacy_format=False: loaded_states.append(
+        ("b", state, update_legacy_format)
+    )
+    chained.load_parameter_state(str(save_path), update_legacy_format=True)
+    assert loaded_states[0] == ("a", {"state": "a"}, True)
+    assert loaded_states[1] == ("b", None, True)
+    chained.offload_to_cpu()
+    chained.restore_from_cpu()
+    assert "offload" in opt_a.calls and "restore" in opt_b.calls
+
+    opt_c = _FakeOptimizer("c", "other", 6.0, 3)
+    unshared = optimizer_module.ChainedOptimizer([opt_a, opt_c])
+    assert unshared.grads_states_parallel_group_is_shared() is False
+    assert unshared.get_grad_norm() == 5.0
+    assert unshared.count_zeros() == 4
+    with pytest.raises(AssertionError, match="not shared"):
+        unshared.get_grad_stats_parallel_group()
+    with pytest.raises(RuntimeError, match="Expected 2 entries"):
+        chained.load_state_dict([{"only": 1}])
+
+
 @patch('torch.distributed.get_world_size', return_value=1)
 @patch(
     'torch.distributed.all_gather_object', lambda output_list, obj: output_list.__setitem__(0, obj)
