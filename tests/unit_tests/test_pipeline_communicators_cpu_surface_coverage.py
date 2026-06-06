@@ -134,7 +134,8 @@ def test_multimodule_shape_adapters_and_stage_math_paths():
     )
     with pytest.raises(ValueError, match="cycles"):
         MultiModulePipelineCommunicator.compute_total_pipeline_stages(
-            {"a": ["b"], "b": ["a"]}, {"a": grids["a"], "b": grids["b"]}
+            {"a": ["b"], "b": ["a", "c"], "c": []},
+            {"a": grids["a"], "b": grids["b"], "c": grids["c"]},
         )
     with pytest.raises(ValueError, match="terminal"):
         MultiModulePipelineCommunicator.compute_total_pipeline_stages({"a": ["a"]}, {"a": grids["a"]})
