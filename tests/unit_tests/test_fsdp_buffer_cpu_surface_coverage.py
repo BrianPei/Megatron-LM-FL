@@ -239,8 +239,12 @@ def test_fsdp_data_parallel_buffer_sharded_slices_and_empty_intersections(monkey
     assert only_shard.numel() <= params[1].numel()
     full_bucket = buffer.allocate_bucket_storage(shard=False)
     assert full_bucket.data.numel() == buffer.bucket_index.size
+    assert buffer.get_shard_from_bucket(full_bucket).numel() == buffer.shard_bucket_index.size
+    buffer.free_bucket_storage()
+
     shard_bucket = buffer.allocate_bucket_storage(shard=True)
     assert shard_bucket.data.numel() == buffer.shard_bucket_index.size
+    buffer.free_bucket_storage()
 
 
 def test_fsdp_parameter_grouping_policy_shared_expert_and_bucket_maps(monkeypatch):
