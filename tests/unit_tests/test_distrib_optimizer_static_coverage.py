@@ -241,14 +241,15 @@ def test_distributed_optimizer_lightweight_instance_state_helpers(monkeypatch):
     tensors = opt._get_main_param_and_optimizer_states(model_param)
     assert set(tensors) == {"param", "exp_avg", "exp_avg_sq"}
     assert tensors["param"] is main_param
-    opt._set_main_param_and_optimizer_states(
-        model_param,
-        {
-            "param": torch.ones_like(main_param) * 7,
-            "exp_avg": torch.ones(2) * 8,
-            "exp_avg_sq": torch.ones(2) * 9,
-        },
-    )
+    with torch.no_grad():
+        opt._set_main_param_and_optimizer_states(
+            model_param,
+            {
+                "param": torch.ones_like(main_param) * 7,
+                "exp_avg": torch.ones(2) * 8,
+                "exp_avg_sq": torch.ones(2) * 9,
+            },
+        )
     assert torch.equal(main_param, torch.ones(2) * 7)
     assert torch.equal(opt.optimizer.state[main_param]["exp_avg"], torch.ones(2) * 8)
 
@@ -277,9 +278,10 @@ def test_distributed_optimizer_lightweight_instance_state_helpers(monkeypatch):
     tensors = opt._get_main_param_and_optimizer_states(model_param)
     assert set(tensors) == {"param", "exp_avg"}
     assert torch.equal(tensors["param"], torch.ones(2) + 1)
-    opt._set_main_param_and_optimizer_states(
-        model_param, {"param": torch.ones(2) * 3, "exp_avg": torch.ones(2) * 4}
-    )
+    with torch.no_grad():
+        opt._set_main_param_and_optimizer_states(
+            model_param, {"param": torch.ones(2) * 3, "exp_avg": torch.ones(2) * 4}
+        )
     assert (sharded_model_param, "master_param") in opt.optimizer.scaled
     assert (sharded_model_param, "exp_avg") in opt.optimizer.scaled
 
