@@ -194,7 +194,7 @@ def test_optimizer_factory_wrapper_selection_cpu_paths(monkeypatch):
 
     param_groups = optimizer_pkg._get_param_groups([model], OptimizerConfig(lr=0.1), {})
     opt = optimizer_pkg._get_megatron_optimizer_based_on_param_groups(
-        OptimizerConfig(optimizer="adam", lr=0.1, use_precision_aware_optimizer=True),
+        OptimizerConfig(optimizer="adam", lr=0.1),
         [model],
         param_groups,
         model_parallel_group="mp",
