@@ -100,8 +100,9 @@ def test_tensor_parallel_mapping_autograd_wrappers_cpu_paths(monkeypatch):
     x = torch.arange(8, dtype=torch.float32).reshape(2, 4).requires_grad_(True)
     copied = mappings.copy_to_tensor_model_parallel_region(x, group)
     assert copied is not x or torch.equal(copied, x)
+    reduced_expected = x.detach().clone() + 2
     reduced = mappings.reduce_from_tensor_model_parallel_region(x, group)
-    assert torch.allclose(reduced.detach(), x.detach() + 2)
+    assert torch.allclose(reduced.detach(), reduced_expected)
     scattered = mappings.scatter_to_tensor_model_parallel_region(x, group)
     assert scattered.shape == (2, 2)
     gathered = mappings.gather_from_tensor_model_parallel_region(scattered, group)
