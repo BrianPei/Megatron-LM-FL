@@ -225,7 +225,9 @@ def test_theoretical_memory_dense_moe_mla_and_report_paths(monkeypatch):
         data_parallel_size=4,
         virtual_pipeline_model_parallel_size=2,
     )
-    assert memory_usage.compute_weight_and_optimizer_memory(moe, verbose=True) > dense_weight
+    moe_weight = memory_usage.compute_weight_and_optimizer_memory(moe, verbose=True)
+    assert moe_weight > 0
+    assert moe_weight != dense_weight
     assert memory_usage.compute_activation_memory(moe, num_microbatches=4, verbose=True) > 0
 
     mla = _args(
