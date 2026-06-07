@@ -134,8 +134,11 @@ def test_tensor_parallel_mapping_autograd_wrappers_cpu_paths(monkeypatch):
     )
     assert uneven.shape == (3, 2)
 
-    assert mappings.all_to_all_sp2hp(x.detach(), group=group).shape == x.shape
-    assert mappings.all_to_all_hp2sp(x.detach(), group=group).shape == x.shape
+    sp2hp = mappings.all_to_all_sp2hp(x.detach(), group=group)
+    hp2sp = mappings.all_to_all_hp2sp(x.detach(), group=group)
+    assert sp2hp.shape == (4, 2)
+    assert hp2sp.shape == (1, 8)
+    assert sp2hp.numel() == hp2sp.numel() == x.numel()
 
 
 def test_tensor_parallel_rng_tracker_cpu_state_paths(monkeypatch):
