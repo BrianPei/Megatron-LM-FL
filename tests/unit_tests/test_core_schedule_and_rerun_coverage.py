@@ -2218,10 +2218,15 @@ def test_dynamic_context_cpu_state_management_prefix_and_cache_paths(monkeypatch
         "apply_rotary_pos_emb",
         lambda t, freqs, config, **kwargs: t + freqs[: t.shape[0]],
     )
+    rotary_config = SimpleNamespace(
+        apply_rope_fusion=False,
+        rotary_interleaved=False,
+        multi_latent_attention=False,
+    )
     rotated_query = ctx.apply_rotary_emb_query(
         query.clone(),
         emb,
-        SimpleNamespace(rotary_interleaved=False),
+        rotary_config,
         torch.tensor([0, 3, 5], dtype=torch.int32),
         None,
     )
@@ -2230,12 +2235,12 @@ def test_dynamic_context_cpu_state_management_prefix_and_cache_paths(monkeypatch
     rotated_key = ctx.apply_rotary_emb_key(
         query.clone(),
         emb,
-        SimpleNamespace(rotary_interleaved=False),
+        rotary_config,
         None,
     )
     assert torch.equal(rotated_key, query + 1)
     with pytest.raises(AssertionError, match="key.shape"):
-        ctx.apply_rotary_emb_key(query[:7].clone(), emb, SimpleNamespace(), None)
+        ctx.apply_rotary_emb_key(query[:7].clone(), emb, rotary_config, None)
 
     next_tokens = torch.arange(4)
     new_speculative_tokens = torch.arange(8).reshape(2, 4)
