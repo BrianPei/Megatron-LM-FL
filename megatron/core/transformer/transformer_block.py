@@ -2,9 +2,10 @@
 import logging
 from contextlib import nullcontext
 from dataclasses import dataclass
-from typing import List, Optional, Set, Union, cast
+from typing import List, Optional, Set, Tuple, Union, cast
 
 import torch
+import torch.nn as nn
 from torch import Tensor
 
 from megatron.core import parallel_state, tensor_parallel
@@ -19,7 +20,12 @@ from megatron.core.inference.contexts import BaseInferenceContext
 from megatron.core.packed_seq_params import PackedSeqParams
 from megatron.core.pipeline_parallel.utils import is_vp_first_stage, is_vp_last_stage
 from megatron.core.process_groups_config import ProcessGroupCollection
+from megatron.core.tensor_parallel.random import CheckpointManager
 from megatron.core.transformer.enums import CudaGraphScope, LayerType
+from megatron.core.transformer.hyper_connection import (
+    HyperConnectionModule,
+    learned_output_contract,
+)
 from megatron.core.transformer.module import GraphableMegatronModule, MegatronModule
 from megatron.core.transformer.spec_utils import ModuleSpec, build_module
 from megatron.core.transformer.torch_norm import LayerNormBuilder
@@ -28,7 +34,11 @@ from megatron.core.transformer.transformer_layer import (
     BaseTransformerLayer,
     get_transformer_layer_offset,
 )
-from megatron.core.transformer.utils import sharded_state_dict_default
+from megatron.core.transformer.utils import (
+    ensure_metadata_has_dp_cp_group,
+    make_sharded_tensors_for_checkpoint,
+    sharded_state_dict_default,
+)
 from megatron.core.typed_torch import apply_module, not_none
 from megatron.core.utils import (
     WrappedTensor,
@@ -69,10 +79,8 @@ logger = logging.getLogger(__name__)
 
 
 def get_num_layers_to_build(
-    config: TransformerConfig,
-    vp_stage: Optional[int] = None,
-    pp_rank: Optional[int] = None,
-    is_dualpipev_first_chunk: Optional[bool] = False,
+    config: TransformerConfig, vp_stage: Optional[int] = None, pp_rank: Optional[int] = None,
+    dualpipev_stage: Optional[int] = None # FlagScale Add
 ) -> int:
     """
     Determine the number of transformer layers to build for the current pipeline stage.
@@ -87,6 +95,7 @@ def get_num_layers_to_build(
     # If we have a custom PP layout, straightforwardly
     # return the number of decoders in the layout array.
     if config.pipeline_model_parallel_layout is not None:
+        assert dualpipev_stage is None
         return config.pipeline_model_parallel_layout.get_num_layers_to_build(
             layer_type=LayerType.decoder, vp_stage=vp_stage
         )
@@ -178,6 +187,25 @@ def get_num_layers_to_build(
 
         num_layers_to_build = num_layers_per_virtual_stage
 
+    elif config.use_dualpipev and config.pipeline_model_parallel_size > 1:
+        # dualpipev pipeline parallelism:
+        # With 8 layers, 2 stages, and use_dualpipev, we want an assignment of
+        # layers to stages like (each list is a model chunk):
+        # stage 0: [0, 1], [6, 7]
+        # stage 1: [2, 3], [4, 5]
+        # With 8 layers, 4 stages, and 2 use_dualpipev, we want an assignment of
+        # layers to stages like (each list is a model chunk):
+        # stage 0: [0], [7]
+        # stage 1: [1], [6]
+        # stage 2: [2], [5]
+        # stage 3: [3], [4]
+        assert (
+            num_layers_per_pipeline_rank % 2 == 0
+        ), f"num_layers_per_pipeline_rank {num_layers_per_pipeline_rank} \
+            should be divisible by dualpipev 2"
+        num_layers_per_dualpipev_stage = num_layers_per_pipeline_rank // 2
+
+        num_layers_to_build = num_layers_per_dualpipev_stage
     else:
         # Non-interleaved pipeline parallelism:
         # Each stage gets a contiguous set of layers.
@@ -192,11 +220,19 @@ def get_num_layers_to_build(
             assert (
                 num_layers_to_build >= 0
             ), f"Not enough layers in the first virtual pipeline stage"
+        elif dualpipev_stage == 0 and is_first_pp_stage:
+            num_layers_to_build -= 1
+            assert (
+                num_layers_to_build >= 0
+            ), f"Not enough layers in the first dualpipev pipeline stage"
 
     if config.account_for_loss_in_pipeline_split:
         if is_vp_last_stage(vp_stage, vp_size) and is_last_pp_stage:
             num_layers_to_build -= 1
             assert num_layers_to_build >= 0, f"Not enough layers in the last virtual pipeline stage"
+        elif dualpipev_stage == 1 and is_first_pp_stage:
+            num_layers_to_build -= 1
+            assert num_layers_to_build >= 0, f"Not enough layers in the last dualpipev pipeline stage"
 
     return num_layers_to_build
 
@@ -226,6 +262,7 @@ def _get_block_submodules(
     spec: Union[TransformerBlockSubmodules, ModuleSpec],
     vp_stage: Optional[int] = None,
     pp_rank: Optional[int] = None,
+    dualpipev_stage: Optional[int] = None,
 ) -> TransformerBlockSubmodules:
     """
     Retrieve or construct TransformerBlockSubmodules based on the provided specification.
@@ -252,7 +289,7 @@ def _get_block_submodules(
         if issubclass(spec.module, TransformerBlock):
             return spec.submodules
         elif issubclass(spec.module, BaseTransformerLayer):
-            num_layers = get_num_layers_to_build(config, vp_stage, pp_rank)
+            num_layers = get_num_layers_to_build(config, vp_stage, pp_rank, dualpipev_stage)
             return TransformerBlockSubmodules(
                 layer_specs=[spec] * num_layers, layer_norm=LayerNormImpl
             )
@@ -274,6 +311,7 @@ class TransformerBlock(GraphableMegatronModule, MegatronModule):
         post_process: bool = True,
         pg_collection: Optional[ProcessGroupCollection] = None,
         vp_stage: Optional[int] = None,
+        dualpipev_stage: Optional[int] = None,
     ):
         super().__init__(config=config)
 
@@ -290,6 +328,7 @@ class TransformerBlock(GraphableMegatronModule, MegatronModule):
         self.pre_process = pre_process
         self.post_process = post_process
         self.vp_stage = vp_stage
+        self.dualpipev_stage = dualpipev_stage
 
         # required for pipeline parallel schedules
         self.input_tensor = None
@@ -334,7 +373,7 @@ class TransformerBlock(GraphableMegatronModule, MegatronModule):
         #     self.norm_factor *= coeff
         def build_layer(layer_spec, layer_number):
             global_layer_number = layer_number + get_transformer_layer_offset(
-                self.config, self.vp_stage, get_pg_rank(self.pg_collection.pp)
+                self.config, self.vp_stage, get_pg_rank(self.pg_collection.pp), self.dualpipev_stage,
             )  # 1-based index
             if self.config.heterogeneous_block_specs:
                 layer_config = self.config.get_config_for_layer(global_layer_number)
@@ -360,6 +399,7 @@ class TransformerBlock(GraphableMegatronModule, MegatronModule):
                     layer_number=layer_number,
                     pg_collection=self.pg_collection,
                     vp_stage=self.vp_stage,
+                    dualpipev_stage=self.dualpipev_stage
                 )
             return module
 
@@ -380,6 +420,17 @@ class TransformerBlock(GraphableMegatronModule, MegatronModule):
                 hidden_size=self.config.hidden_size,
                 eps=self.config.layernorm_epsilon,
             )
+            if self.config.enable_hyper_connections:
+                hc_mult = self.config.num_residual_streams
+                hc_dim = self.config.hidden_size * hc_mult
+                self.hc_head_fn = nn.Parameter(torch.randn(hc_mult, hc_dim))
+                self.hc_head_base = nn.Parameter(torch.zeros(hc_mult))
+                self.hc_head_scale = nn.Parameter(torch.ones(1))
+                nn.init.xavier_uniform_(self.hc_head_fn)
+                if self.config.sequence_parallel:
+                    setattr(self.hc_head_fn, 'sequence_parallel', True)
+                    setattr(self.hc_head_base, 'sequence_parallel', True)
+                    setattr(self.hc_head_scale, 'sequence_parallel', True)
         else:
             self.final_layernorm = None  # Either this or nn.Identity
 
@@ -455,6 +506,7 @@ class TransformerBlock(GraphableMegatronModule, MegatronModule):
         padding_mask: Optional[Tensor] = None,
         extract_layer_indices: Optional[Set[int]] = None,
         layer_offset: int = 0,
+        input_ids: Optional[Tensor] = None,
     ):
         """Forward method with activation checkpointing.
 
@@ -513,6 +565,7 @@ class TransformerBlock(GraphableMegatronModule, MegatronModule):
                             inference_context=None,
                             packed_seq_params=packed_seq_params,
                             padding_mask=padding_mask,
+                            input_ids=input_ids,
                         )
                 return hidden_states, context
 
@@ -645,6 +698,46 @@ class TransformerBlock(GraphableMegatronModule, MegatronModule):
             return super().__call__(*args, **kwargs)[0]
         return super().__call__(*args, **kwargs)
 
+    def _build_mhc_recompute_layer_plan(
+        self, use_mhc_recompute: bool
+    ) -> Tuple[List[Optional[CheckpointManager]], List[bool]]:
+        """Pre-build per-layer MHC recompute managers and block-end markers."""
+        num_layers = len(self.layers)
+        layer_managers: List[Optional[CheckpointManager]] = [None] * num_layers
+        is_recompute_block_end: List[bool] = [False] * num_layers
+
+        if not use_mhc_recompute or num_layers == 0:
+            return layer_managers, is_recompute_block_end
+
+        mhc_recompute_layer_num = self.config.mhc_recompute_layer_num
+        mhc_manager = CheckpointManager()
+
+        for l_no in range(num_layers):
+            is_last_in_transformer_block = l_no == num_layers - 1
+            is_last_in_recompute_block = is_last_in_transformer_block
+            if mhc_recompute_layer_num is not None:
+                is_last_in_recompute_block = is_last_in_transformer_block or (
+                    (l_no + 1) % mhc_recompute_layer_num == 0
+                )
+
+            layer_managers[l_no] = mhc_manager
+            is_recompute_block_end[l_no] = is_last_in_recompute_block
+
+            if is_last_in_recompute_block and not is_last_in_transformer_block:
+                mhc_manager = CheckpointManager()
+
+        return layer_managers, is_recompute_block_end
+    
+    @staticmethod
+    def _finalize_mhc_recompute_layer(
+        mhc_manager: Optional[CheckpointManager],
+        hidden_states: Tensor,
+        is_last_in_recompute_block: bool,
+    ) -> None:
+        """Finalize MHC recompute state for the current layer when block ends."""
+        if mhc_manager is not None and is_last_in_recompute_block:
+            mhc_manager.discard_all_outputs_and_register_unified_recompute(hidden_states)
+
     def forward(
         self,
         hidden_states: Union[Tensor, WrappedTensor],
@@ -661,9 +754,11 @@ class TransformerBlock(GraphableMegatronModule, MegatronModule):
         sequence_len_offset: Optional[Tensor] = None,
         padding_mask: Optional[Tensor] = None,
         extract_layer_indices: Optional[Set[int]] = None,
+        input_ids: Optional[Tensor] = None,
         *,
         inference_params: Optional[BaseInferenceContext] = None,
         dynamic_inference_decode_only: Optional[bool] = None,
+        **decoder_extra_block_kwargs
     ):
         """
         Perform the forward pass through the transformer block.
@@ -735,7 +830,7 @@ class TransformerBlock(GraphableMegatronModule, MegatronModule):
         # This is needed to convert local layer indices to global indices for feature extraction
         pp_group = self.pg_collection.pp if hasattr(self.pg_collection, 'pp') else None
         layer_offset = get_transformer_layer_offset(
-            self.config, self.vp_stage, get_pg_rank(pp_group)
+            self.config, self.vp_stage, get_pg_rank(pp_group), self.dualpipev_stage
         )
 
         # Delete the obsolete reference to the initial input tensor if necessary
@@ -762,6 +857,13 @@ class TransformerBlock(GraphableMegatronModule, MegatronModule):
         #   already creates viewless tensors. That said, make_viewless_tensor()
         #   is called here to be future-proof and corner-case-proof.
         hidden_states = make_viewless_tensor(inp=hidden_states, requires_grad=True, keep_graph=True)
+
+        # Expand hidden states for hyper connections at the start of the block
+        # Only expand at the first PP stage; subsequent stages receive n-stream from previous stage
+        if self.config.enable_hyper_connections and self.pre_process:
+            hidden_states = HyperConnectionModule.input_expand(
+                hidden_states, self.config.num_residual_streams
+            )  # [s, b, C] -> [s, b, n*C]
 
         if self.config.sequence_parallel:
             rng_context = tensor_parallel.get_cuda_rng_tracker().fork()
@@ -790,6 +892,18 @@ class TransformerBlock(GraphableMegatronModule, MegatronModule):
             use_inner_quantization_context = False
             outer_quantization_context = nullcontext()
 
+        # Determine if MHC recompute should be used
+        # Only enable when: training mode AND hyper connections AND 'mhc' in recompute_modules
+        use_mhc_recompute = (
+            self.training
+            and self.config.enable_hyper_connections
+            and self.config.recompute_granularity == 'selective'
+            and "mhc" in self.config.recompute_modules
+        )
+        mhc_layer_managers, mhc_is_last_in_recompute_block = self._build_mhc_recompute_layer_plan(
+            use_mhc_recompute
+        )
+
         with rng_context, outer_quantization_context:
             # Forward pass.
             if self.config.recompute_granularity == 'full' and self.training:
@@ -805,6 +919,7 @@ class TransformerBlock(GraphableMegatronModule, MegatronModule):
                     padding_mask=padding_mask,
                     extract_layer_indices=extract_layer_indices,
                     layer_offset=layer_offset,
+                    input_ids=input_ids,
                 )
                 # Handle return value from _checkpointed_forward
                 if len(extract_layer_indices) > 0:
@@ -830,7 +945,20 @@ class TransformerBlock(GraphableMegatronModule, MegatronModule):
                     else:
                         inner_quantization_context = nullcontext()
 
+                    mhc_manager = mhc_layer_managers[l_no]
+                    if mhc_manager is not None:
+                        mhc_manager.is_last_layer_in_recompute_block = (
+                            mhc_is_last_in_recompute_block[l_no]
+                        )
+                    
                     with self.offload_context, inner_quantization_context:
+                        #### FlagScale Begin #### 
+                        # Pre-compute embeddings for the next DeepSeekTransformerLayer if engram exists, to overlap with current layer's computation
+                        if l_no < len(self.layers) - 1:
+                            next_layer = self.layers[l_no + 1]
+                            if getattr(next_layer, "is_engram_layer", False):
+                                next_layer.pre_compute_embedding(decoder_extra_block_kwargs["engram_hash_input_ids"])
+                        #### FlagScale End ####
                         hidden_states, context = layer(
                             hidden_states=hidden_states,
                             attention_mask=attention_mask,
@@ -845,7 +973,14 @@ class TransformerBlock(GraphableMegatronModule, MegatronModule):
                             packed_seq_params=packed_seq_params,
                             sequence_len_offset=sequence_len_offset,
                             padding_mask=padding_mask,
+                            mhc_recompute_manager=mhc_manager,
+                            input_ids=input_ids,
                         )
+                    self._finalize_mhc_recompute_layer(
+                        mhc_manager=mhc_manager,
+                        hidden_states=hidden_states,
+                        is_last_in_recompute_block=mhc_is_last_in_recompute_block[l_no],
+                    )
 
                     if (
                         torch.is_grad_enabled()
@@ -857,6 +992,26 @@ class TransformerBlock(GraphableMegatronModule, MegatronModule):
                     # Extract intermediate embeddings using global layer index
                     if (l_no + layer_offset) in extract_layer_indices:
                         intermediate_hidden_states.append(hidden_states)
+
+        # Only contract if the final layer norm is in this stage
+        mhc_multistream = None
+        if self.config.enable_hyper_connections and self.has_final_layernorm_in_this_stage():
+            # When MTP is enabled, save pre-contraction multi-stream for MTP input.
+            if self.config.mtp_num_layers is not None:
+                assert (
+                    len(extract_layer_indices) == 0
+                ), "Feature extraction is not supported with mHC + MTP."
+                mhc_multistream = hidden_states
+            # DSv4 introduced the new output contraction for mHC.
+            # [s, b, n*C] -> [s, b, C]
+            hidden_states = learned_output_contract(
+                hidden_states,
+                self.hc_head_fn,
+                self.hc_head_base,
+                self.hc_head_scale,
+                self.config.num_residual_streams,
+                self.config.layernorm_epsilon,
+            )
 
         # Final layer norm.
         if self.final_layernorm is not None:
@@ -878,6 +1033,11 @@ class TransformerBlock(GraphableMegatronModule, MegatronModule):
 
         if len(extract_layer_indices) > 0:
             return hidden_states, intermediate_hidden_states
+
+        # When mHC + MTP, return both contracted [s,b,h] (for lm_head) and
+        # pre-contraction multi-stream [s,b,n*h] (for MTP input).
+        if mhc_multistream is not None:
+            return hidden_states, mhc_multistream
 
         return hidden_states
 
@@ -937,7 +1097,7 @@ class TransformerBlock(GraphableMegatronModule, MegatronModule):
         num_layers = self.config.num_layers
         for layer in self.layers:
             offset = get_transformer_layer_offset(
-                self.config, self.vp_stage, get_pg_rank(self.pg_collection.pp)
+                self.config, self.vp_stage, get_pg_rank(self.pg_collection.pp), self.dualpipev_stage
             )
 
             global_layer_offset = layer.layer_number - 1  # self.layer_number starts at 1
@@ -969,5 +1129,24 @@ class TransformerBlock(GraphableMegatronModule, MegatronModule):
                         tp_group=self.tp_group,
                     )
                 )
+
+        # Save bare parameters/buffers that are direct attributes of this block
+        # (e.g. hyper-connection learned weights: hc_head_fn, hc_head_base,
+        # hc_head_scale). The named_children loop above would silently drop
+        # these since they are not nn.Module children. Mirrors the handling in
+        # MegatronModule.sharded_state_dict.
+        local_state_dict: dict = {}
+        self._save_to_state_dict(local_state_dict, '', keep_vars=True)
+        if local_state_dict:
+            metadata = ensure_metadata_has_dp_cp_group(metadata)
+            sharded_state_dict.update(
+                make_sharded_tensors_for_checkpoint(
+                    local_state_dict,
+                    prefix,
+                    sharded_offsets=sharded_offsets,
+                    tp_group=self.tp_group,
+                    dp_cp_group=metadata['dp_cp_group'],
+                )
+            )
 
         return sharded_state_dict
