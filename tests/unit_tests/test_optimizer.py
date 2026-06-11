@@ -1608,6 +1608,14 @@ def test_clip_grads_decoupled_cpu_paths_and_dynamic_grad_scaler(monkeypatch):
 
 
 def test_chained_optimizer_state_split_load_step_and_parameter_state(monkeypatch, tmp_path):
+    # This is a synthetic CPU optimizer test; tensor-parallel ownership is
+    # exercised elsewhere and must not depend on process-group state left by prior tests.
+    monkeypatch.setattr(
+        optimizer_module.tensor_parallel,
+        "param_is_not_tensor_parallel_duplicate",
+        lambda param, tp_group=None: True,
+    )
+
     p1 = torch.nn.Parameter(torch.tensor([1.0]))
     p1.grad = torch.tensor([1.0])
     p2 = torch.nn.Parameter(torch.tensor([2.0]))
