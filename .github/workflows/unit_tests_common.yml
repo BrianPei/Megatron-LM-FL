@@ -207,23 +207,8 @@ jobs:
             > "$COVERAGE_DIR/.coveragerc"
           RUNNER_CMD="-m coverage run --rcfile=$COVERAGE_DIR/.coveragerc -m pytest"
           
-          exit_code=0
-          if [ "$TEST_GROUP" = "distributed" ]; then
-            MFSDP_TEST="tests/unit_tests/distributed/megatron_fsdp/test_mfsdp_fully_shard.py"
-
-            # Megatron-FSDP can leave NCCL communicators in a corrupted state. Run it in a
-            # fresh torchrun process without changing the fixed unit-test group structure.
-            torchrun --nproc_per_node=$NUM_GPUS $RUNNER_CMD -v $FINAL_TEST_PATH $IGNORE_OPTS \
-              --ignore="$MFSDP_TEST" "${MARKER_OPTS[@]}" -p no:randomly || exit_code=$?
-
-            if [ "$exit_code" -eq 0 ]; then
-              torchrun --nproc_per_node=$NUM_GPUS $RUNNER_CMD -v "$MFSDP_TEST" $IGNORE_OPTS \
-                "${MARKER_OPTS[@]}" -p no:randomly || exit_code=$?
-            fi
-          else
-            torchrun --nproc_per_node=$NUM_GPUS $RUNNER_CMD -v $FINAL_TEST_PATH $IGNORE_OPTS \
-              "${MARKER_OPTS[@]}" -p no:randomly || exit_code=$?
-          fi
+          torchrun --nproc_per_node=$NUM_GPUS $RUNNER_CMD -v $FINAL_TEST_PATH $IGNORE_OPTS "${MARKER_OPTS[@]}" -p no:randomly
+          exit_code=$?
 
           # Combine coverage fragments and generate JSON report
           coverage combine --rcfile="$COVERAGE_DIR/.coveragerc" "$COVERAGE_DIR" 2>/dev/null || true
