@@ -1396,8 +1396,9 @@ def test_distributed_optimizer_range_maps_and_cpu_copy_paths(monkeypatch):
 
     for optimizer_state in dist_opt.optimizer.state.values():
         optimizer_state.pop("step", None)
-    shard_main[0][0].zero_()
-    shard_fp32[0][0].zero_()
+    with torch.no_grad():
+        shard_main[0][0].zero_()
+        shard_fp32[0][0].zero_()
     loadable_reshardable = {
         "per_bucket_numel_unpadded": dist_opt.per_bucket_numel_unpadded,
         0: {
