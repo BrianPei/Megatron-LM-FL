@@ -24,10 +24,11 @@ runner_labels:
 #   - /home/flagscale_cicd/docker/docker_build/docker_data/Megatron-LM/datasets:/opt/data/datasets
 #   - /home/flagscale_cicd/docker/docker_build/docker_tokenizers/Megatron-LM/tokenizers:/opt/data/tokenizers
 
-# Container volumes for online env
+# The mx-4g-cicd-megatron runner publishes shared artifacts under
+# /mnt/airs-business. Using the legacy /mnt/op paths creates empty bind mounts.
 container_volumes:
-  - /mnt/op/cicd/baai_datasets:/home/gitlab-runner/data
-  - /mnt/op/cicd/baai_tokenizers:/home/gitlab-runner/tokenizers
+  - /mnt/airs-business/cicd/baai_datasets:/home/gitlab-runner/data
+  - /mnt/airs-business/cicd/baai_tokenizers:/home/gitlab-runner/tokenizers
 
 # Container options (hardware-specific settings)
 container_options: >-
