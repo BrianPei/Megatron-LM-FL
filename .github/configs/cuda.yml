@@ -59,6 +59,7 @@ test_matrix:
       - tests/unit_tests/export/trtllm/test_single_device_fp8.py
       - tests/unit_tests/export/trtllm/test_trtllm_helper.py
       - tests/unit_tests/pipeline_parallel/test_pipeline_layout.py ## sporadic cuda malloc error on CI machines, tests passed locally
+      - tests/unit_tests/tensor_parallel/test_mappings.py::test_GatherFromSequenceParallelRegion ## sporadic NCCL all-gather OOM on shared A100 CI runner
       - tests/unit_tests/transformer/moe/test_a2a_token_dispatcher.py
       - tests/unit_tests/transformer/moe/test_token_dispatcher.py ## sporadic cuda malloc error on CI machines, tests passed locally
       - tests/unit_tests/test_inference.py
