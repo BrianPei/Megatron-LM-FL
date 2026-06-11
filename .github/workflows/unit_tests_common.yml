@@ -50,7 +50,11 @@ jobs:
             description: "Model tests"
           - name: distributed
             path: "tests/unit_tests/distributed/"
+            extra_pytest_args: "--ignore=tests/unit_tests/distributed/megatron_fsdp/test_mfsdp_fully_shard.py"
             description: "Distributed tests"
+          - name: distributed_mfsdp
+            path: "tests/unit_tests/distributed/megatron_fsdp/test_mfsdp_fully_shard.py"
+            description: "Megatron FSDP tests isolated from the shared NCCL process"
           - name: dist_checkpointing
             path: "tests/unit_tests/dist_checkpointing/"
             description: "Distributed checkpointing tests"
@@ -149,6 +153,7 @@ jobs:
           DEVICE='${{ inputs.device }}'
           TEST_GROUP='${{ matrix.test_group.name }}'
           TEST_PATH='${{ matrix.test_group.path }}'
+          EXTRA_PYTEST_ARGS_RAW='${{ matrix.test_group.extra_pytest_args }}'
 
           echo "Running unit tests: $TEST_GROUP"
           echo "Test path: $TEST_PATH"
@@ -164,7 +169,11 @@ jobs:
           # Build ignore options from ignored_tests input
           IGNORED_TESTS='${{ inputs.ignored_tests }}'
           IGNORE_OPTS=""
+          EXTRA_PYTEST_ARGS=()
           FINAL_TEST_PATH="$TEST_PATH"
+          if [ -n "$EXTRA_PYTEST_ARGS_RAW" ] && [ "$EXTRA_PYTEST_ARGS_RAW" != "null" ]; then
+            read -r -a EXTRA_PYTEST_ARGS <<< "$EXTRA_PYTEST_ARGS_RAW"
+          fi
           if [ -n "$IGNORED_TESTS" ] && [ "$IGNORED_TESTS" != "[]" ]; then
             echo "Parsing ignored tests list..."
             if echo "$TEST_PATH" | grep -q '\*'; then
@@ -207,7 +216,8 @@ jobs:
             > "$COVERAGE_DIR/.coveragerc"
           RUNNER_CMD="-m coverage run --rcfile=$COVERAGE_DIR/.coveragerc -m pytest"
           
-          torchrun --nproc_per_node=$NUM_GPUS $RUNNER_CMD -v $FINAL_TEST_PATH $IGNORE_OPTS "${MARKER_OPTS[@]}" -p no:randomly
+          torchrun --nproc_per_node=$NUM_GPUS $RUNNER_CMD -v $FINAL_TEST_PATH $IGNORE_OPTS \
+            "${EXTRA_PYTEST_ARGS[@]}" "${MARKER_OPTS[@]}" -p no:randomly
           exit_code=$?
 
           # Combine coverage fragments and generate JSON report
