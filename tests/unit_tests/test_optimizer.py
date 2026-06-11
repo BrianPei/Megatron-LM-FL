@@ -441,7 +441,7 @@ def test_distributed_optimizer_static_range_and_param_group_helpers_cpu(monkeypa
     )
     assert model_float16_groups[1] == [p2]
     assert model_fp32_groups[0] == [p1]
-    assert torch.equal(shard_fp32_groups[0][0], p1.view(-1)[:4])
+    assert torch.equal(shard_fp32_groups[0][0], p1.view(-1)[2:4])
     assert shard_float16_groups[1][0].dtype == torch.float16
     assert shard_fp32_from_float16_groups[1][0].dtype == torch.float32
     assert p2.main_param_sharded is True and p2.main_param is shard_fp32_from_float16_groups[1][0]
