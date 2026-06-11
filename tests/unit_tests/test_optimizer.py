@@ -1544,6 +1544,7 @@ def test_clip_grads_decoupled_cpu_paths_and_dynamic_grad_scaler(monkeypatch):
 
     monkeypatch.setattr(clip_grads_module.torch, "zeros", cpu_zeros)
     monkeypatch.setattr(clip_grads_module.torch.distributed, "all_reduce", lambda *a, **k: None)
+    monkeypatch.setattr(clip_grads_module, "get_device_type_for_comm", lambda group: "cpu")
     monkeypatch.setattr(clip_grads_module, "param_is_not_shared", lambda p: True)
     monkeypatch.setattr(
         clip_grads_module,

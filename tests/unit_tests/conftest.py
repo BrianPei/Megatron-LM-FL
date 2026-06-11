@@ -11,6 +11,7 @@ import torch.distributed
 
 from megatron.core import config
 from megatron.core.utils import is_te_min_version
+from megatron.plugin.platform import get_platform
 from tests.test_utils.python_scripts.download_unit_tests_dataset import download_and_extract_asset
 from tests.unit_tests.dist_checkpointing import TempNamedDir
 from tests.unit_tests.test_utilities import Utils
@@ -38,6 +39,19 @@ def experimental(request):
 def pytest_sessionfinish(session, exitstatus):
     if exitstatus == 5:
         session.exitstatus = 0
+
+
+@pytest.fixture(scope="session", autouse=True)
+def bind_local_device():
+    """Bind each torchrun worker to its local device before any test allocates tensors."""
+    local_rank = os.getenv("LOCAL_RANK")
+    if local_rank is None:
+        return
+
+    platform = get_platform()
+    device_count = platform.device_count()
+    if device_count > 0:
+        platform.set_device(int(local_rank) % device_count)
 
 
 @pytest.fixture(scope="session", autouse=True)
