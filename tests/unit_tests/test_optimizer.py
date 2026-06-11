@@ -2001,6 +2001,11 @@ def test_optimizer_package_optimizer_factory_selection_paths(monkeypatch):
 def test_layer_wise_optimizer_shards_buckets_gathers_broadcasts_and_steps(monkeypatch):
     monkeypatch.setattr(layer_wise_optimizer_module, "get_pg_size", lambda group: {"dp": 2, "expt": 2}[group])
     monkeypatch.setattr(layer_wise_optimizer_module, "get_pg_rank", lambda group: 0)
+    monkeypatch.setattr(
+        optimizer_module.tensor_parallel,
+        "param_is_not_tensor_parallel_duplicate",
+        lambda param, tp_group=None: True,
+    )
 
     config = OptimizerConfig(clip_grad=0.5, log_num_zeros_in_grad=True)
     dense_a = torch.nn.Parameter(torch.tensor([1.0, 2.0]))
@@ -2024,14 +2029,14 @@ def test_layer_wise_optimizer_shards_buckets_gathers_broadcasts_and_steps(monkey
 
     assert layerwise.dp_cp_params_list is not None
     assert layerwise.expt_dp_params_list is not None
-    assert any(param is dense_a for param in layerwise.dp_cp_params_list[0])
-    assert any(param is dense_b for param in layerwise.dp_cp_params_list[1])
-    assert any(param is expert_a for param in layerwise.expt_dp_params_list[0])
-    assert any(param is expert_b for param in layerwise.expt_dp_params_list[1])
+    assert any(param is dense_b for param in layerwise.dp_cp_params_list[0])
+    assert any(param is dense_a for param in layerwise.dp_cp_params_list[1])
+    assert any(param is expert_b for param in layerwise.expt_dp_params_list[0])
+    assert any(param is expert_a for param in layerwise.expt_dp_params_list[1])
     assert len(opt1.optimizer.param_groups[0]["params"]) == 1
-    assert opt1.optimizer.param_groups[0]["params"][0] is dense_a
+    assert opt1.optimizer.param_groups[0]["params"][0] is dense_b
     assert len(opt1.optimizer.param_groups[1]["params"]) == 1
-    assert opt1.optimizer.param_groups[1]["params"][0] is expert_a
+    assert opt1.optimizer.param_groups[1]["params"][0] is expert_b
 
     bucket_calls = []
 
@@ -2048,8 +2053,8 @@ def test_layer_wise_optimizer_shards_buckets_gathers_broadcasts_and_steps(monkey
     )
     layerwise.set_bucket_layerwise_params_list([model_chunk])
     assert len(bucket_calls) == 2
-    assert any(param is dense_a for param in bucket_calls[0][0])
-    assert any(param is expert_a for param in bucket_calls[1][0])
+    assert any(param is dense_a for param in bucket_calls[0][1])
+    assert any(param is expert_a for param in bucket_calls[1][1])
 
     monkeypatch.setattr(
         layer_wise_optimizer_module.torch.distributed,
@@ -2061,8 +2066,8 @@ def test_layer_wise_optimizer_shards_buckets_gathers_broadcasts_and_steps(monkey
         ],
     )
     layerwise.allgather_params()
-    assert torch.equal(dense_b.data, torch.full_like(dense_b.data, 11.0))
-    assert torch.equal(expert_b.data, torch.full_like(expert_b.data, 11.0))
+    assert torch.equal(dense_a.data, torch.full_like(dense_a.data, 11.0))
+    assert torch.equal(expert_a.data, torch.full_like(expert_a.data, 11.0))
 
     broadcast_calls = []
     monkeypatch.setattr(
@@ -2098,7 +2103,7 @@ def test_layer_wise_optimizer_shards_buckets_gathers_broadcasts_and_steps(monkey
             (list(params), max_norm, total_norm, use_decoupled_grad)
         ),
     )
-    for param in [dense_a, expert_a]:
+    for param in [dense_b, expert_b]:
         param.grad = torch.ones_like(param.data)
     success, grad_norm, zeros = layerwise.step()
     assert success is True
