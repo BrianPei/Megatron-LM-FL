@@ -43,10 +43,18 @@ def pytest_sessionfinish(session, exitstatus):
 
 @pytest.fixture(scope="session", autouse=True)
 def bind_local_device():
-    """Bind each torchrun worker to its local device before any test allocates tensors."""
+    """Bind each torchrun worker to its device and isolate compiler caches."""
     local_rank = os.getenv("LOCAL_RANK")
     if local_rank is None:
         return
+
+    for cache_var, default_root in (
+        ("TORCHINDUCTOR_CACHE_DIR", "/tmp/.torch_inductor_cache"),
+        ("TRITON_CACHE_DIR", "/tmp/.triton_cache"),
+    ):
+        cache_dir = Path(os.getenv(cache_var, default_root)) / f"rank_{local_rank}"
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        os.environ[cache_var] = str(cache_dir)
 
     platform = get_platform()
     device_count = platform.device_count()
