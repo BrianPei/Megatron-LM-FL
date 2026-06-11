@@ -1054,7 +1054,7 @@ def test_float16_and_fp32_optimizer_training_step_state_paths(monkeypatch):
     assert init_calls and init_calls[-1][1] is True
     assert "fp32_from_fp16_params" in state_dict
     saved_main = state_dict["fp32_from_fp16_params"][0][0].clone()
-    state_dict["fp32_from_fp16_params"][0][0] = torch.nn.Parameter(saved_main + 5.0)
+    state_dict["fp32_from_fp16_params"] = [[torch.nn.Parameter(saved_main + 5.0)]]
     state_dict["optimizer"]["param_groups"] = [
         {**group, **identifier_defaults} for group in state_dict["optimizer"]["param_groups"]
     ]
