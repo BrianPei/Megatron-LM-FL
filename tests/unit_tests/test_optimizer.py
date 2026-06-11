@@ -471,6 +471,7 @@ def test_distributed_optimizer_static_range_and_param_group_helpers_cpu(monkeypa
     precision_config = OptimizerConfig(
         optimizer="adam",
         lr=0.1,
+        use_distributed_optimizer=True,
         use_precision_aware_optimizer=True,
         main_grads_dtype=torch.float32,
         main_params_dtype=torch.float32,
