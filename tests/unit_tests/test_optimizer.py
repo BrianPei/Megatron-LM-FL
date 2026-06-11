@@ -333,7 +333,7 @@ def test_proxy_dict_and_chained_optimizer_cpu_paths(monkeypatch, tmp_path):
     opt_c = _FakeOptimizer("c", "other", 6.0, 3)
     unshared = optimizer_module.ChainedOptimizer([opt_a, opt_c])
     assert unshared.grads_states_parallel_group_is_shared() is False
-    assert unshared.get_grad_norm() == 5.0
+    assert unshared.get_grad_norm() == pytest.approx((3.0**2 + 6.0**2) ** 0.5)
     assert unshared.count_zeros() == 4
     with pytest.raises(AssertionError, match="not shared"):
         unshared.get_grad_stats_parallel_group()
