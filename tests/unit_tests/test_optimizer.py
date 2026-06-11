@@ -1456,8 +1456,9 @@ def test_distributed_optimizer_range_maps_and_cpu_copy_paths(monkeypatch):
     with pytest.raises(AssertionError):
         DistributedOptimizer._update_legacy_world_tensors([torch.ones(2)], [3])
 
-    dist_opt.ddp_config.use_megatron_fsdp = True
-    dist_opt.model_chunks = [
+    fsdp_opt = object.__new__(DistributedOptimizer)
+    fsdp_opt.ddp_config = SimpleNamespace(use_megatron_fsdp=True)
+    fsdp_opt.model_chunks = [
         SimpleNamespace(
             config=SimpleNamespace(num_moe_experts=None),
             named_parameters=lambda: [
@@ -1466,34 +1467,35 @@ def test_distributed_optimizer_range_maps_and_cpu_copy_paths(monkeypatch):
             ],
         )
     ]
-    dist_opt.optimizer.param_groups = [
-        {"params": [bf16_param], "lr": 0.01, "wd_mult": 1.0},
-        {"params": [fp32_param], "lr": 0.02, "wd_mult": 0.5},
-    ]
-    dist_opt.optimizer.state = {
-        bf16_param: {"exp_avg": torch.tensor([0.1, 0.2])},
-        fp32_param: {"exp_avg": torch.tensor([0.3, 0.4, 0.5])},
-    }
-    fsdp_state = dist_opt.sharded_param_state_fsdp_dtensor(is_loading=False)
+    fsdp_opt.optimizer = SimpleNamespace(
+        param_groups=[
+            {"params": [bf16_param], "lr": 0.01, "wd_mult": 1.0},
+            {"params": [fp32_param], "lr": 0.02, "wd_mult": 0.5},
+        ],
+        state={
+            bf16_param: {"exp_avg": torch.tensor([0.1, 0.2])},
+            fp32_param: {"exp_avg": torch.tensor([0.3, 0.4, 0.5])},
+        },
+    )
+    fsdp_state = fsdp_opt.sharded_param_state_fsdp_dtensor(is_loading=False)
     assert set(fsdp_state["state"]) == {"decoder.layer.weight", "decoder.fp32.weight"}
     assert "decoder.layer.weight" in fsdp_state["param_to_group_meta"]
     assert fsdp_state["param_to_group_meta"]["decoder.fp32.weight"]["lr"] == 0.02
-    remapped_groups = dist_opt._param2group_meta_to_param_groups(
+    remapped_groups = fsdp_opt._param2group_meta_to_param_groups(
         fsdp_state["param_to_group_meta"],
-        dist_opt.optimizer.param_groups,
+        fsdp_opt.optimizer.param_groups,
     )
     assert remapped_groups[0]["params"] == ["decoder.layer.weight"]
     with pytest.raises(ValueError, match="not found"):
-        dist_opt._param2group_meta_to_param_groups({}, dist_opt.optimizer.param_groups)
+        fsdp_opt._param2group_meta_to_param_groups({}, fsdp_opt.optimizer.param_groups)
     with pytest.raises(ValueError, match="different metadata"):
-        dist_opt._param2group_meta_to_param_groups(
+        fsdp_opt._param2group_meta_to_param_groups(
             {
                 "decoder.layer.weight": {"lr": 0.01, "wd_mult": 1.0},
                 "decoder.fp32.weight": {"lr": 0.03, "wd_mult": 0.5},
             },
             [{"params": [bf16_param, fp32_param]}],
         )
-    dist_opt.ddp_config.use_megatron_fsdp = False
 
     bf16_param.grad = torch.ones_like(bf16_param)
     fp32_param.grad = torch.ones_like(fp32_param)
