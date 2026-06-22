@@ -3,12 +3,8 @@
 # See LICENSE for license information.
 
 import os
-import sys
 import unittest
 from unittest.mock import patch, MagicMock
-
-# Ensure megatron can be imported
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from megatron.plugin.platform.platform_base import PlatformBase
 from megatron.plugin.platform.platform_cpu import PlatformCPU

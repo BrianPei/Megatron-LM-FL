@@ -84,6 +84,22 @@ def test_get_blend_and_blend_per_split_from_data_args_file(monkeypatch, tmp_path
     assert blend_per_split is None
 
 
+def test_get_blend_and_blend_per_split_rejects_conflicting_global_data_args(tmp_path):
+    data_args = tmp_path / "data_args.txt"
+    data_args.write_text("train", encoding="utf-8")
+    args = SimpleNamespace(
+        data_path=["train"],
+        data_args_path=str(data_args),
+        train_data_path=None,
+        valid_data_path=None,
+        test_data_path=None,
+        per_split_data_args_path=None,
+    )
+
+    with pytest.raises(AssertionError):
+        utils.get_blend_and_blend_per_split(args)
+
+
 def test_get_blend_and_blend_per_split_from_per_split_json(monkeypatch, tmp_path):
     per_split = tmp_path / "per_split.json"
     per_split.write_text(
@@ -114,6 +130,49 @@ def test_get_blend_and_blend_per_split_from_per_split_json(monkeypatch, tmp_path
         ("valid-a",),
         ("test-a", "test-b"),
     ]
+
+
+def test_get_blend_and_blend_per_split_from_direct_split_paths(monkeypatch):
+    calls = []
+
+    def fake_blend(values):
+        calls.append(values)
+        return None if values is None else tuple(values)
+
+    monkeypatch.setattr(utils, "get_blend_from_list", fake_blend)
+    args = SimpleNamespace(
+        data_path=None,
+        data_args_path=None,
+        train_data_path=["train-a", "train-b"],
+        valid_data_path=None,
+        test_data_path=["test-a"],
+        per_split_data_args_path=None,
+    )
+
+    blend, blend_per_split = utils.get_blend_and_blend_per_split(args)
+
+    assert blend is None
+    assert blend_per_split == [("train-a", "train-b"), None, ("test-a",)]
+    assert calls == [["train-a", "train-b"], None, ["test-a"]]
+
+
+def test_get_blend_and_blend_per_split_prefers_global_data_path(monkeypatch):
+    calls = []
+    monkeypatch.setattr(utils, "get_blend_from_list", lambda values: calls.append(values) or tuple(values))
+    args = SimpleNamespace(
+        data_path=["global-train"],
+        data_args_path=None,
+        train_data_path=["ignored-train"],
+        valid_data_path=["ignored-valid"],
+        test_data_path=["ignored-test"],
+        per_split_data_args_path=None,
+    )
+
+    blend, blend_per_split = utils.get_blend_and_blend_per_split(args)
+
+    assert blend == ("global-train",)
+    assert blend_per_split is None
+    assert calls == [["global-train"]]
 
 
 def test_get_blend_and_blend_per_split_without_data():

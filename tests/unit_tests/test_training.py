@@ -10,6 +10,7 @@ import torch
 from megatron.core.tokenizers.utils.build_tokenizer import vocab_size_with_padding
 from megatron.training.checkpointing import save_grads
 from megatron.training.global_vars import set_args
+from megatron.training import checkpointing
 from megatron.training import training
 from megatron.training.training import (
     build_train_valid_test_data_loaders,
@@ -141,13 +142,82 @@ def test_num_floating_point_operations_moe_and_linear_attention_paths():
     assert num_floating_point_operations(linear, batch_size=1) > 0
 
 
+def test_num_floating_point_operations_mla_moe_frequency_and_hybrid_paths():
+    mla_without_q_lora = create_flop_args(
+        group_query_attention=False,
+        multi_latent_attention=True,
+        q_lora_rank=None,
+        kv_lora_rank=4,
+    )
+    mla_with_q_lora = create_flop_args(
+        group_query_attention=False,
+        multi_latent_attention=True,
+        q_lora_rank=4,
+        kv_lora_rank=4,
+    )
+    moe_frequency = create_flop_args(
+        num_experts=4,
+        moe_layer_freq=2,
+        moe_router_topk=2,
+        moe_ffn_hidden_size=24,
+        moe_shared_expert_intermediate_size=8,
+        mtp_num_layers=2,
+    )
+    matching_moe_pattern = create_flop_args(
+        num_experts=4,
+        moe_layer_freq=[1, 0, 1, 0],
+        moe_router_topk=2,
+        moe_ffn_hidden_size=24,
+        moe_shared_expert_intermediate_size=8,
+        mtp_num_layers=2,
+    )
+    hybrid = create_flop_args(
+        hybrid_layer_pattern="MG*-E/MM",
+        moe_ffn_hidden_size=24,
+        moe_shared_expert_intermediate_size=8,
+        moe_latent_size=6,
+        mtp_num_layers=2,
+        swiglu=True,
+    )
+
+    assert num_floating_point_operations(mla_without_q_lora, batch_size=1) > 0
+    assert num_floating_point_operations(mla_without_q_lora, batch_size=1) > num_floating_point_operations(
+        mla_with_q_lora, batch_size=1
+    )
+    assert num_floating_point_operations(moe_frequency, batch_size=1) == num_floating_point_operations(
+        matching_moe_pattern, batch_size=1
+    )
+    assert num_floating_point_operations(hybrid, batch_size=2) > 0
+
+
 def test_num_floating_point_operations_validates_attention_patterns():
     with pytest.raises(RuntimeError, match="moe-layer-freq"):
         num_floating_point_operations(create_flop_args(num_experts=2, moe_layer_freq="bad"), 1)
 
+    with pytest.raises(AssertionError, match="moe_layer_pattern"):
+        num_floating_point_operations(
+            create_flop_args(num_experts=2, moe_layer_freq=[1, 0]),
+            1,
+        )
+
+    with pytest.raises(AssertionError):
+        num_floating_point_operations(
+            create_flop_args(group_query_attention=True, multi_latent_attention=True),
+            1,
+        )
+
     with pytest.raises(ValueError, match="linear_attention_freq is None"):
         num_floating_point_operations(
             create_flop_args(experimental_attention_variant="gated_delta_net"),
+            1,
+        )
+
+    with pytest.raises(AssertionError, match="linear_attention_pattern"):
+        num_floating_point_operations(
+            create_flop_args(
+                experimental_attention_variant="gated_delta_net",
+                linear_attention_freq=[1, 0],
+            ),
             1,
         )
 
@@ -175,6 +245,19 @@ def test_startup_timestamp_and_datetime_helpers(monkeypatch):
     assert training._STARTUP_TIMESTAMPS["main_entry"] == 11.0
     assert "barrier" in calls
     assert any("fixed" in item[1] and "1970" in item[1] for item in calls if isinstance(item, tuple))
+
+
+def test_print_datetime_uses_current_time_when_no_override(monkeypatch):
+    calls = []
+    monkeypatch.setattr(training.torch.distributed, "barrier", lambda: calls.append("barrier"))
+    monkeypatch.setattr(training, "print_rank_0", lambda message: calls.append(("print", message)))
+
+    training.print_datetime("current")
+
+    assert calls[0] == "barrier"
+    assert len(calls) == 2
+    assert calls[1][0] == "print"
+    assert calls[1][1].startswith("[current] datetime: ")
 
 
 def test_destroy_global_state_delegates_to_subsystems(monkeypatch):
@@ -226,6 +309,39 @@ def test_get_start_time_from_progress_log_handles_async_and_world_size_reset(mon
 
     assert start_time.strftime("%Y-%m-%d %H:%M:%S") == "2026-05-25 10:02:00"
     assert start_flops == 1000.0
+
+
+def test_get_start_time_from_progress_log_handles_direct_async_commit_and_missing_match(
+    monkeypatch, tmp_path
+):
+    progress = tmp_path / "progress.txt"
+    progress.write_text(
+        "\n".join(
+            [
+                "2026-05-25 10:00:00\tJob ID: base\t# GPUs: 8\tStarting job",
+                "2026-05-25 10:01:00\tJob ID: base\t# GPUs: 8\tSaved checkpoint\t"
+                "Iteration: 1\tJob throughput: 1\tCumulative throughput: 1\t"
+                "Floating-point operations: 5.00e+03\tTokens: 1",
+                "2026-05-25 10:02:00\tJob ID: base\t# GPUs: 8\tSaved async checkpoint\t"
+                "Iteration: 2\tJob throughput: 1\tCumulative throughput: 1\t"
+                "Floating-point operations: 0.00e+00\tTokens: 1",
+                "2026-05-25 10:03:00\tJob ID: next\t# GPUs: 4\tStarting job",
+                "2026-05-25 10:04:00\tJob ID: next\t# GPUs: 8\tStarting job",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    args = SimpleNamespace(save=str(tmp_path), world_size=8)
+    monkeypatch.setattr(training, "get_args", lambda: args)
+    monkeypatch.setattr(training, "print_rank_0", lambda *args, **kwargs: None)
+
+    start_time, start_flops = get_start_time_from_progress_log()
+    assert start_time.strftime("%Y-%m-%d %H:%M:%S") == "2026-05-25 10:04:00"
+    assert start_flops == 5000.0
+
+    args.world_size = 16
+    with pytest.raises(AssertionError, match="Starting job"):
+        get_start_time_from_progress_log()
 
 
 def test_preprocess_common_state_dict_strips_rank_and_sorts_optimizer_groups():
@@ -311,6 +427,31 @@ def test_preprocess_common_state_dict_handles_chained_optimizers():
     ]
 
 
+def test_preprocess_common_state_dict_handles_optimizer_early_return_paths():
+    common_state = {
+        "args": SimpleNamespace(use_distributed_optimizer=True, rank=4, local_rank=0),
+        "optimizer": {
+            0: {
+                "param_state": {},
+            },
+            1: {
+                "param_state": {},
+                "optimizer": {
+                    "state": "kept",
+                },
+            },
+        },
+    }
+
+    processed = preprocess_common_state_dict(common_state)
+
+    assert "rank" not in processed["args"]
+    assert "local_rank" not in processed["args"]
+    assert processed["optimizer"][0] == {}
+    assert processed["optimizer"][1] == {"optimizer": {"state": "kept"}}
+    assert "param_state" in common_state["optimizer"][0]
+
+
 def test_get_train_valid_test_num_samples_iteration_sample_and_phase_paths(monkeypatch):
     args = SimpleNamespace(
         train_samples=None,
@@ -340,6 +481,457 @@ def test_get_train_valid_test_num_samples_iteration_sample_and_phase_paths(monke
     args.iteration = 4
     assert get_train_valid_test_num_samples()[0] == 12
 
+    args.iteration = 0
+    assert get_train_valid_test_num_samples()[0] == 12
+
+    args.phase_transition_iterations = None
+    args.train_samples = 1
+    args.train_iters = None
+    args.full_validation = False
+    args.skip_train = False
+    with pytest.raises(AssertionError):
+        get_train_valid_test_num_samples()
+
+
+def test_checkpointing_versions_paths_metadata_and_storage_branches(monkeypatch, tmp_path):
+    original_isfile = checkpointing.isfile
+    monkeypatch.setattr(checkpointing, "_CHECKPOINT_VERSION", None)
+    checkpointing.set_checkpoint_version(3.0)
+    assert checkpointing.get_checkpoint_version() == 3.0
+    checkpointing.set_checkpoint_version(3.0)
+    with pytest.raises(AssertionError, match="checkpoint versions"):
+        checkpointing.set_checkpoint_version(2.0)
+
+    checkpointing.set_loaded_iteration(17)
+    assert checkpointing.get_loaded_iteration() == 17
+
+    monkeypatch.setattr(checkpointing.mpu, "get_pipeline_model_parallel_world_size", lambda: 1)
+    monkeypatch.setattr(checkpointing.mpu, "get_tensor_model_parallel_rank", lambda: 2)
+    monkeypatch.setattr(checkpointing.mpu, "get_pipeline_model_parallel_rank", lambda: 0)
+    monkeypatch.setattr(checkpointing.mpu, "get_expert_model_parallel_world_size", lambda: 1)
+    monkeypatch.setattr(checkpointing.mpu, "get_expert_model_parallel_rank", lambda: 0)
+
+    base = str(tmp_path / "ckpts")
+    assert checkpointing.get_checkpoint_name(base, 5).endswith(
+        "iter_0000005/mp_rank_02/model_optim_rng.pt"
+    )
+    assert checkpointing.get_checkpoint_name(base, 0, release=True, return_base_dir=True).endswith(
+        "release"
+    )
+    assert checkpointing.get_checkpoint_name(
+        base,
+        7,
+        pipeline_parallel=True,
+        tensor_rank=3,
+        pipeline_rank=4,
+        expert_parallel=True,
+        expert_rank=5,
+        basename="custom.pt",
+    ).endswith("iter_0000007/mp_rank_03_004_005/custom.pt")
+    assert checkpointing.get_distributed_optimizer_checkpoint_name("/a/b/model.pt") == (
+        "/a/b/distrib_optim.pt"
+    )
+
+    checkpointing.ensure_directory_exists(str(tmp_path / "parent" / "file.pt"))
+    assert (tmp_path / "parent").is_dir()
+    checkpointing.ensure_directory_exists(str(tmp_path / "whole_dir"), check_parent=False)
+    assert (tmp_path / "whole_dir").is_dir()
+
+    tracker = tmp_path / "latest_checkpointed_iteration.txt"
+    assert checkpointing.checkpoint_exists(str(tmp_path)) is False
+    tracker.write_text("9", encoding="utf-8")
+    assert checkpointing.checkpoint_exists(str(tmp_path)) is True
+    monkeypatch.setattr(checkpointing.torch.distributed, "is_initialized", lambda: False)
+    assert checkpointing.read_metadata(str(tracker)) == (9, False)
+    tracker.write_text("release", encoding="utf-8")
+    assert checkpointing.read_metadata(str(tracker)) == (0, True)
+    tracker.write_text("not-valid", encoding="utf-8")
+    with pytest.raises(SystemExit):
+        checkpointing.read_metadata(str(tracker))
+
+    rank0_path = Path(
+        checkpointing.get_checkpoint_name(
+            base,
+            11,
+            pipeline_parallel=True,
+            tensor_rank=0,
+            pipeline_rank=0,
+            expert_parallel=True,
+            expert_rank=0,
+        )
+    )
+    rank0_path.parent.mkdir(parents=True, exist_ok=True)
+    rank0_path.write_text("checkpoint", encoding="utf-8")
+    assert checkpointing.find_checkpoint_rank_0(base, 11) == str(rank0_path)
+
+    monkeypatch.setattr(checkpointing, "isfile", lambda filename: False)
+    monkeypatch.setattr(
+        checkpointing.dist_checkpointing,
+        "check_is_distributed_checkpoint",
+        lambda filename: filename.endswith("iter_0000012"),
+    )
+    assert checkpointing.find_checkpoint_rank_0(base, 12).endswith("iter_0000012")
+
+    monkeypatch.setattr(
+        checkpointing,
+        "isfile",
+        lambda filename: filename.endswith("latest_checkpointed_iteration.txt"),
+    )
+    monkeypatch.setattr(checkpointing, "read_metadata", lambda filename: (4, False))
+    load_args = SimpleNamespace(load=base, ckpt_step=None)
+    assert checkpointing.get_load_checkpoint_path_by_args(load_args).endswith("iter_0000004")
+    load_args.ckpt_step = 6
+    assert checkpointing.get_load_checkpoint_path_by_args(load_args).endswith("iter_0000006")
+
+    msc_calls = []
+    fake_msc = SimpleNamespace(
+        os=SimpleNamespace(
+            path=SimpleNamespace(isfile=lambda filename: filename == "remote"),
+            makedirs=lambda dirname, exist_ok=True: msc_calls.append((dirname, exist_ok)),
+        )
+    )
+    monkeypatch.setattr(checkpointing, "isfile", original_isfile)
+    monkeypatch.setattr(checkpointing.MultiStorageClientFeature, "is_enabled", lambda: True)
+    monkeypatch.setattr(checkpointing.MultiStorageClientFeature, "import_package", lambda: fake_msc)
+    assert checkpointing.isfile("remote") is True
+    checkpointing.ensure_directory_exists("remote_dir/file.pt")
+    assert msc_calls == [("remote_dir", True)]
+
+
+def test_checkpointing_check_args_metadata_and_state_dict_generation(monkeypatch):
+    runtime_args = SimpleNamespace(
+        num_layers=2,
+        hidden_size=8,
+        num_attention_heads=2,
+        add_position_embedding=True,
+        vocab_file="vocab.json",
+        max_position_embeddings=16,
+        make_vocab_size_divisible_by=8,
+        padded_vocab_size=32,
+        tokenizer_type="GPT2BPETokenizer",
+        data_parallel_random_init=True,
+        phase_transition_iterations=[3],
+        global_batch_size=4,
+        tensor_model_parallel_size=1,
+        pipeline_model_parallel_size=1,
+        use_dist_ckpt=False,
+    )
+    checkpoint_args = SimpleNamespace(
+        num_layers=2,
+        hidden_size=8,
+        num_attention_heads=2,
+        max_position_embeddings=16,
+        make_vocab_size_divisible_by=8,
+        padded_vocab_size=32,
+        tokenizer_type="GPT2BPETokenizer",
+        data_parallel_random_init=True,
+        global_batch_size=4,
+        model_parallel_size=1,
+        tensor_model_parallel_size=1,
+        pipeline_model_parallel_size=1,
+    )
+    monkeypatch.setattr(checkpointing, "get_args", lambda: runtime_args)
+    monkeypatch.setattr(checkpointing, "_CHECKPOINT_VERSION", 2.0)
+    checkpointing.check_checkpoint_args(checkpoint_args)
+    monkeypatch.setattr(checkpointing, "_CHECKPOINT_VERSION", 3.0)
+    checkpointing.check_checkpoint_args(checkpoint_args)
+
+    checkpoint_args.hidden_size = 16
+    with pytest.raises(AssertionError, match="hidden_size"):
+        checkpointing.check_checkpoint_args(checkpoint_args)
+    checkpoint_args.hidden_size = 8
+
+    monkeypatch.setattr(checkpointing.mpu, "get_data_parallel_group", lambda **kwargs: "dp-cp")
+    metadata_args = SimpleNamespace(
+        use_distributed_optimizer=True,
+        ckpt_format="torch_dist",
+        dist_ckpt_optim_fully_reshardable=True,
+        distrib_optim_fully_reshardable_mem_efficient=False,
+    )
+    metadata = checkpointing._build_sharded_state_dict_metadata(metadata_args)
+    assert metadata["distrib_optim_sharding_type"] == "fully_reshardable"
+    assert metadata["dp_cp_group"] == "dp-cp"
+    metadata_args.dist_ckpt_optim_fully_reshardable = False
+    assert checkpointing._build_sharded_state_dict_metadata(metadata_args)[
+        "distrib_optim_sharding_type"
+    ] == "dp_reshardable"
+    metadata_args.ckpt_format = "fsdp_dtensor"
+    assert checkpointing._build_sharded_state_dict_metadata(metadata_args)[
+        "distrib_optim_sharding_type"
+    ] == "fsdp_dtensor"
+
+    class _Model:
+        def __init__(self, name):
+            self.name = name
+
+        def state_dict_for_save_checkpoint(self):
+            return {"plain": self.name}
+
+        def sharded_state_dict(self, **kwargs):
+            return {"sharded": self.name, "metadata": kwargs["metadata"]}
+
+    class _Optimizer:
+        is_stub_optimizer = False
+
+        def state_dict(self):
+            return {"optim": "plain"}
+
+        def sharded_state_dict(self, state_dict, **kwargs):
+            return {"optim": sorted(state_dict), "metadata": kwargs["metadata"]}
+
+    class _Scheduler:
+        def state_dict(self):
+            return {"lr": 0.1}
+
+    args = SimpleNamespace(
+        ckpt_format="torch",
+        no_save_optim=False,
+        no_save_rng=False,
+        use_distributed_optimizer=False,
+        dist_ckpt_optim_fully_reshardable=False,
+        distrib_optim_fully_reshardable_mem_efficient=False,
+    )
+    state = checkpointing.generate_state_dict(
+        args,
+        [_Model("a"), _Model("b")],
+        _Optimizer(),
+        _Scheduler(),
+        rng_state={"rng": True},
+        iteration=5,
+        rerun_state={"rerun": True},
+    )
+    assert state["model0"] == {"plain": "a"}
+    assert state["model1"] == {"plain": "b"}
+    assert state["optimizer"] == {"optim": "plain"}
+    assert state["opt_param_scheduler"] == {"lr": 0.1}
+    assert state["rng_state"] == {"rng": True}
+    assert state["rerun_state_machine"] == {"rerun": True}
+
+    args.ckpt_format = "torch_dist"
+    sharded = checkpointing.generate_state_dict(
+        args,
+        [_Model("a")],
+        _Optimizer(),
+        None,
+        rng_state=None,
+        optim_sd_kwargs={"metadata": {"passed": True}},
+        model_sd_kwargs={"metadata": {"model": True}},
+    )
+    assert sharded["model"]["metadata"] == {"model": True}
+    assert sharded["optimizer"]["metadata"] == {"passed": True}
+    assert "rng_state" not in sharded
+
+    args.ckpt_format = "fsdp_dtensor"
+    args.use_distributed_optimizer = True
+    args.no_save_optim = False
+    fsdp_state = checkpointing.generate_state_dict(
+        args,
+        [_Model("a")],
+        _Optimizer(),
+        None,
+        rng_state=None,
+        optim_sd_kwargs={"metadata": {}},
+    )
+    assert fsdp_state["optimizer"]["metadata"]["distrib_optim_sharding_type"] == "fsdp_dtensor"
+
+    args.no_save_optim = True
+    no_optim = checkpointing.generate_state_dict(
+        args,
+        [_Model("a")],
+        _Optimizer(),
+        _Scheduler(),
+        rng_state={"rng": True},
+    )
+    assert "optimizer" not in no_optim
+    assert "opt_param_scheduler" not in no_optim
+
+
+def test_load_args_from_checkpoint_fills_legacy_and_modern_argument_paths(monkeypatch):
+    messages = []
+    monkeypatch.setattr(checkpointing, "print_rank_0", lambda message: messages.append(message))
+    no_load_args = SimpleNamespace(load=None)
+    assert checkpointing.load_args_from_checkpoint(no_load_args) is no_load_args
+
+    legacy_checkpoint_args = SimpleNamespace(
+        checkpoint_version_marker="legacy",
+        disable_bias_linear=True,
+        hybrid_override_pattern="mamba-attn",
+        num_layers=12,
+        hidden_size=64,
+        ffn_hidden_size=128,
+        seq_length=256,
+        num_attention_heads=4,
+        num_query_groups=2,
+        group_query_attention=True,
+        kv_channels=16,
+        max_position_embeddings=512,
+        position_embedding_type="rope",
+        add_position_embedding=False,
+        use_rotary_position_embeddings=True,
+        rotary_base=10000,
+        rotary_percent=0.5,
+        rotary_interleaved=True,
+        add_qkv_bias=True,
+        squared_relu=True,
+        swiglu=True,
+        untie_embeddings_and_output_weights=True,
+        apply_layernorm_1p=True,
+        normalization="RMSNorm",
+        apply_query_key_layer_scaling=True,
+        attention_dropout=0.11,
+        hidden_dropout=0.22,
+        mtp_hybrid_override_pattern="mtp",
+        mtp_num_layers=2,
+        mtp_use_repeated_layer=True,
+        spec="spec.yaml",
+        num_experts=4,
+        moe_ffn_hidden_size=1024,
+        moe_layer_freq=2,
+        moe_router_topk=2,
+        moe_token_dispatcher_type="alltoall",
+        moe_router_pre_softmax=True,
+        moe_grouped_gemm=True,
+        moe_shared_expert_intermediate_size=32,
+        moe_router_score_function="sigmoid",
+        moe_router_enable_expert_bias=True,
+        moe_router_topk_scaling_factor=1.25,
+        mamba_state_dim=16,
+        mamba_head_dim=8,
+        mamba_num_groups=2,
+        mamba_num_heads=4,
+        heterogeneous_layers_config_path="hetero.json",
+        heterogeneous_layers_config_encoded_json="{}",
+        moe_latent_size=7,
+        tokenizer_model="tok.model",
+        tokenizer_type="SentencePieceTokenizer",
+        tiktoken_pattern="pat",
+        padded_vocab_size=32000,
+        ckpt_format="torch",
+        model_parallel_size=8,
+    )
+    modern_checkpoint_args = SimpleNamespace(
+        num_experts=None,
+        tensor_model_parallel_size=2,
+        pipeline_model_parallel_size=3,
+        virtual_pipeline_model_parallel_size=4,
+        num_layers_per_virtual_pipeline_stage=5,
+        expert_model_parallel_size=6,
+    )
+    states = [
+        (
+            {"args": legacy_checkpoint_args, "checkpoint_version": 2.5, "iteration": 23},
+            "legacy.pt",
+            False,
+            checkpointing.CheckpointType.LEGACY,
+        ),
+        (
+            {"args": modern_checkpoint_args, "checkpoint_version": 3.0, "iteration": 24},
+            "modern.pt",
+            False,
+            checkpointing.CheckpointType.LEGACY,
+        ),
+    ]
+    monkeypatch.setattr(checkpointing, "_load_base_checkpoint", lambda *args, **kwargs: states.pop(0))
+
+    args = SimpleNamespace(
+        load="ckpt",
+        use_tokenizer_model_from_checkpoint_args=True,
+        use_mp_args_from_checkpoint_args=True,
+        moe_token_dispatcher_type="existing-dispatcher",
+    )
+    returned_args, returned_checkpoint_args = checkpointing.load_args_from_checkpoint(args)
+    assert returned_args is args
+    assert returned_checkpoint_args is legacy_checkpoint_args
+    assert args.iteration == 23
+    assert args.hidden_size == 64
+    assert args.add_bias_linear is False
+    assert args.hybrid_layer_pattern == "mamba-attn"
+    assert legacy_checkpoint_args.num_layers is None
+    assert args.moe_ffn_hidden_size == 1024
+    assert args.moe_token_dispatcher_type == "existing-dispatcher"
+    assert args.tokenizer_model == "tok.model"
+    assert args.tensor_model_parallel_size == 8
+
+    modern_args = SimpleNamespace(
+        load="ckpt",
+        use_tokenizer_model_from_checkpoint_args=False,
+        use_mp_args_from_checkpoint_args=True,
+    )
+    checkpointing.load_args_from_checkpoint(modern_args)
+    assert modern_args.iteration == 24
+    assert modern_args.moe_ffn_hidden_size is None
+    assert modern_args.tensor_model_parallel_size == 2
+    assert modern_args.pipeline_model_parallel_size == 3
+    assert modern_args.virtual_pipeline_model_parallel_size == 4
+    assert modern_args.num_layers_per_virtual_pipeline_stage == 5
+    assert modern_args.expert_model_parallel_size == 6
+    assert any("No load directory specified" in message for message in messages)
+
+
+def test_checkpointing_dataloader_state_cleanup_and_delete_paths(monkeypatch, tmp_path):
+    calls = []
+    monkeypatch.setattr(checkpointing.torch.distributed, "is_initialized", lambda: False)
+    monkeypatch.setattr(checkpointing.torch.distributed, "barrier", lambda group=None: calls.append(("barrier", group)))
+    monkeypatch.setattr(checkpointing.mpu, "is_pipeline_first_stage", lambda ignore_virtual=True: True)
+    monkeypatch.setattr(checkpointing.mpu, "get_tensor_model_parallel_rank", lambda: 0)
+    monkeypatch.setattr(checkpointing.mpu, "get_data_parallel_rank", lambda: 1)
+    monkeypatch.setattr(checkpointing.mpu, "get_data_parallel_group", lambda: "dp-group")
+    monkeypatch.setattr(checkpointing.mpu, "get_pipeline_model_parallel_world_size", lambda: 1)
+    monkeypatch.setattr(checkpointing.mpu, "get_pipeline_model_parallel_rank", lambda: 0)
+    monkeypatch.setattr(checkpointing.mpu, "get_expert_model_parallel_world_size", lambda: 1)
+    monkeypatch.setattr(checkpointing.mpu, "get_expert_model_parallel_rank", lambda: 0)
+    monkeypatch.setattr(checkpointing.torch, "save", lambda obj, path: calls.append(("save", obj, path)))
+
+    checkpointing.maybe_save_dataloader_state(None, 1, str(tmp_path))
+    checkpointing.maybe_save_dataloader_state(object(), 1, None)
+    with pytest.raises(RuntimeError, match="save_state"):
+        checkpointing.maybe_save_dataloader_state(SimpleNamespace(iterable=object()), 1, str(tmp_path))
+
+    monkeypatch.setattr(checkpointing.mpu, "get_tensor_model_parallel_rank", lambda: 1)
+    iterator = SimpleNamespace(iterable=SimpleNamespace(save_state=lambda: {"state": 1}))
+    checkpointing.maybe_save_dataloader_state(iterator, 3, str(tmp_path))
+    assert calls == []
+
+    monkeypatch.setattr(checkpointing.mpu, "get_tensor_model_parallel_rank", lambda: 0)
+    checkpointing.maybe_save_dataloader_state(iterator, 3, str(tmp_path))
+    save_call = next(item for item in calls if item[0] == "save")
+    assert save_call[1] == {"dataloader_state_dict": {"state": 1}}
+    assert save_call[2].endswith("train_dataloader_dprank001.pt")
+    assert calls.count(("barrier", "dp-group")) == 2
+
+    for iteration in [1, 2, 3, 4]:
+        (tmp_path / f"iter_{iteration:07d}").mkdir()
+    monkeypatch.setattr(checkpointing, "print_rank_0", lambda message: calls.append(("print", message)))
+    checkpointing.cleanup_old_non_persistent_checkpoint(str(tmp_path), leave_ckpt_num=2, do_async=False)
+    assert not (tmp_path / "iter_0000001").exists()
+    assert not (tmp_path / "iter_0000002").exists()
+    assert (tmp_path / "iter_0000003").exists()
+    assert (tmp_path / "iter_0000004").exists()
+
+    delete_root = tmp_path / "delete-root"
+    checkpoint_to_delete = Path(
+        checkpointing.get_checkpoint_name(str(delete_root), 5, return_base_dir=True)
+    )
+    checkpoint_to_delete.mkdir(parents=True)
+    monkeypatch.setattr(checkpointing, "append_to_progress_log", lambda message, barrier=False: calls.append(("progress", message, barrier)))
+    checkpointing._async_delete_checkpoint_impl(str(delete_root), 5, log_progress=True)
+    assert not checkpoint_to_delete.exists()
+    assert ("progress", "Deleted checkpoint\tIteration: 5", False) in calls
+
+
+def test_build_train_valid_test_datasets_prints_targets_and_delegates(monkeypatch):
+    calls = []
+    monkeypatch.setattr(training, "print_rank_0", lambda message: calls.append(("print", message)))
+
+    result = training.build_train_valid_test_datasets(
+        lambda samples: calls.append(("provider", samples)) or ("train", "valid", "test"),
+        train_valid_test_num_samples=(10, None, 4),
+    )
+
+    assert result == ("train", "valid", "test")
+    assert ("provider", (10, None, 4)) in calls
+    assert ("print", "    validation: None") in calls
+
 
 def test_cyclic_iter_restarts_after_exhausting_iterable():
     iterator = training.cyclic_iter([1, 2])
@@ -348,6 +940,19 @@ def test_cyclic_iter_restarts_after_exhausting_iterable():
 
 
 def test_update_train_iters_constant_and_rampup(monkeypatch):
+    printed = []
+    monkeypatch.setattr(training, "print_rank_0", lambda message: printed.append(message))
+
+    already_iteration_based = SimpleNamespace(
+        train_iters=7,
+        rampup_batch_size=None,
+        train_samples=100,
+        global_batch_size=8,
+    )
+    update_train_iters(already_iteration_based)
+    assert already_iteration_based.train_iters == 7
+    assert printed == []
+
     constant = SimpleNamespace(
         train_iters=None,
         rampup_batch_size=None,
@@ -356,6 +961,7 @@ def test_update_train_iters_constant_and_rampup(monkeypatch):
     )
     update_train_iters(constant)
     assert constant.train_iters == 12
+    assert printed == ["setting training iterations to 12"]
 
     calls = []
     rampup = SimpleNamespace(
@@ -370,6 +976,7 @@ def test_update_train_iters_constant_and_rampup(monkeypatch):
 
     assert rampup.train_iters == 4
     assert calls == [0, 2, 4, 0]
+    assert printed[-1] == "setting training iterations to 4"
 
 
 def test_pretrain_skip_train_runs_validation_test_and_shutdown(monkeypatch):
@@ -469,6 +1076,81 @@ def test_pretrain_skip_train_runs_validation_test_and_shutdown(monkeypatch):
     assert "wandb-finish" in calls
     assert "ft-shutdown" in calls
     assert "one-finish" in calls
+
+
+def test_pretrain_rejects_rl_inference_weight_offload_without_separate_model(monkeypatch):
+    calls = []
+    real_tensor = torch.tensor
+    args = SimpleNamespace(
+        fine_grained_activation_offloading=False,
+        log_progress=False,
+        non_persistent_ckpt_type=None,
+        perform_rl_step=True,
+        rl_inference_tensor_model_parallel_size=None,
+        rl_inference_pipeline_model_parallel_size=None,
+        rl_inference_expert_model_parallel_size=None,
+        rl_inference_expert_tensor_model_parallel_size=None,
+        rl_offload_inference_model_weights_when_idle=True,
+        virtual_pipeline_model_parallel_size=None,
+    )
+
+    def cpu_tensor(*items, **kwargs):
+        kwargs.pop("device", None)
+        return real_tensor(*items, **kwargs)
+
+    class FakeTimer:
+        def start(self, barrier=False):
+            calls.append(("timer-start", barrier))
+
+        def stop(self):
+            calls.append("timer-stop")
+
+        def set_elapsed(self, value):
+            calls.append(("timer-set", value))
+
+    class FakeTimers:
+        def __call__(self, name, log_level=None):
+            calls.append(("timer", name, log_level))
+            return FakeTimer()
+
+        def log(self, names, barrier=False):
+            calls.append(("timer-log", tuple(names), barrier))
+
+    monkeypatch.setitem(training._STARTUP_TIMESTAMPS, "program_start", None)
+    monkeypatch.setitem(training._STARTUP_TIMESTAMPS, "main_entry", None)
+    monkeypatch.setitem(training._STARTUP_TIMESTAMPS, "pretrain_entry", None)
+    monkeypatch.setattr(training.torch, "tensor", cpu_tensor)
+    monkeypatch.setattr(
+        training.torch.distributed,
+        "all_reduce",
+        lambda tensor, op=None: calls.append(("all-reduce", tensor.item())),
+    )
+    monkeypatch.setattr(training, "initialize_megatron", lambda **kwargs: calls.append("init"))
+    monkeypatch.setattr(training, "get_args", lambda: args)
+    monkeypatch.setattr(training, "get_timers", lambda: FakeTimers())
+    monkeypatch.setattr(training, "set_jit_fusion_options", lambda: calls.append("jit"))
+    monkeypatch.setattr(training, "set_startup_timestamps", lambda **kwargs: calls.append("startup"))
+    monkeypatch.setattr(training, "print_rank_0", lambda message: calls.append(("print0", message)))
+    monkeypatch.setattr(training, "print_datetime", lambda *items, **kwargs: calls.append(("datetime", items[0])))
+    monkeypatch.setattr(training.one_logger_utils, "get_timestamp_in_ms", lambda: 123)
+    monkeypatch.setattr(training.one_logger_utils, "on_pretrain_start", lambda: calls.append("pretrain-start"))
+    monkeypatch.setattr(training.ft_integration, "setup", lambda: calls.append("ft-setup"))
+    monkeypatch.setattr(training, "setup_model_and_optimizer", lambda *items, **kwargs: ([SimpleNamespace()], None, None))
+    monkeypatch.setattr(training, "get_model_config", lambda model: SimpleNamespace())
+
+    with pytest.raises(ValueError, match="requires a separate inference model"):
+        pretrain(
+            lambda samples: None,
+            lambda: None,
+            training.ModelType.encoder_or_decoder,
+            lambda *_: None,
+        )
+
+    assert "init" in calls
+    assert "ft-setup" in calls
+    assert "jit" in calls
+    assert "pretrain-start" in calls
+    assert ("datetime", "after model, optimizer, and learning rate scheduler are built") in calls
 
 
 def test_checkpoint_and_decide_exit_save_and_iteration_paths(monkeypatch):
@@ -593,6 +1275,35 @@ def test_compute_throughputs_and_append_to_progress_log_formats_checkpoint_line(
     calls.clear()
     compute_throughputs_and_append_to_progress_log(8, 4.0e12)
     assert calls == []
+
+
+def test_compute_throughputs_and_append_to_progress_log_formats_sync_checkpoint(monkeypatch):
+    calls = []
+    args = SimpleNamespace(
+        save="/tmp/checkpoints",
+        num_floating_point_operations_so_far=1.0e12,
+        world_size=4,
+        consumed_train_samples=2_000_000,
+        seq_length=2048,
+        async_save=False,
+    )
+    monkeypatch.setattr(training, "get_args", lambda: args)
+    monkeypatch.setattr(training, "_TRAIN_START_TIME", 50.0)
+    monkeypatch.setattr(training.time, "time", lambda: 100.0)
+    monkeypatch.setattr(
+        training,
+        "get_start_time_from_progress_log",
+        lambda: (training.datetime.fromtimestamp(75), 0.25e12),
+    )
+    monkeypatch.setattr(training, "append_to_progress_log", lambda message: calls.append(message))
+
+    compute_throughputs_and_append_to_progress_log(11, 5.0e12)
+
+    assert len(calls) == 1
+    assert calls[0].startswith("Saved checkpoint\tIteration: 11")
+    assert "Job throughput:" in calls[0]
+    assert "Cumulative throughput:" in calls[0]
+    assert "Tokens (in billions): 4.10" in calls[0]
 
 
 def test_save_checkpoint_and_time_covers_persistent_progress_and_cleanup(monkeypatch):
@@ -1902,6 +2613,14 @@ def test_get_optimizer_param_scheduler_iteration_and_sample_modes(monkeypatch):
     assert scheduler.kwargs["wsd_decay_steps"] == 20
 
 
+def test_get_optimizer_param_scheduler_rejects_missing_training_horizon(monkeypatch):
+    args = SimpleNamespace(train_iters=None, train_samples=None)
+    monkeypatch.setattr(training, "get_args", lambda: args)
+
+    with pytest.raises(Exception, match="either train-iters or train-samples"):
+        get_optimizer_param_scheduler("optimizer")
+
+
 def test_get_megatron_optimizer_config_selects_supported_optimizers():
     adam_config, adam_overrides = get_megatron_optimizer_config(SimpleNamespace(optimizer="adam"))
     muon_config, _ = get_megatron_optimizer_config(SimpleNamespace(optimizer="muon"))
@@ -2215,6 +2934,101 @@ def test_get_model_wraps_with_fsdp2_and_broadcasts_params(monkeypatch):
     assert ("defaults", (2,)) in calls
     assert ("wrap", False) in calls
     assert "broadcast" in calls
+    assert "stream-enter" in calls and "stream-exit" in calls
+
+
+def test_get_model_wraps_virtual_chunks_with_ddp_config_and_side_stream(monkeypatch):
+    calls = []
+
+    class FakeModel(torch.nn.Module):
+        def __init__(self, **metadata):
+            super().__init__()
+            self.param = torch.nn.Parameter(torch.ones(4))
+            self.metadata = metadata
+
+    class FakeDDP:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+            calls.append(
+                (
+                    "ddp",
+                    kwargs["module"].metadata["vp_stage"],
+                    kwargs["disable_bucketing"],
+                    kwargs["ddp_config"].bucket_size,
+                )
+            )
+
+    class FakeStream:
+        def wait_stream(self, stream):
+            calls.append(("wait", stream))
+
+    class FakeStreamContext:
+        def __enter__(self):
+            calls.append("stream-enter")
+
+        def __exit__(self, exc_type, exc, tb):
+            calls.append("stream-exit")
+
+    args = SimpleNamespace(
+        virtual_pipeline_model_parallel_size=2,
+        init_model_with_meta_device=True,
+        load=None,
+        export_kd_teacher_load=None,
+        use_torch_fsdp2=False,
+        use_cpu_initialization=False,
+        use_megatron_fsdp=False,
+        fp16=False,
+        bf16=False,
+        accumulate_allreduce_grads_in_fp32=False,
+        check_for_nan_in_loss_and_grad=True,
+        check_for_large_grads=False,
+        ddp_num_buckets=2,
+        ddp_bucket_size=None,
+        ddp_pad_buckets_for_high_nccl_busbw=True,
+        ddp_reduce_scatter_with_fp32_accumulation=False,
+        ddp_param_name_patterns_for_fp32_local_accumulation=[".*weight"],
+        ddp_average_in_collective=True,
+        overlap_grad_reduce=True,
+        megatron_fsdp_main_params_dtype=torch.float32,
+        megatron_fsdp_main_grads_dtype=torch.float32,
+        megatron_fsdp_grad_comm_dtype=torch.float32,
+        overlap_param_gather_with_optimizer_step=False,
+        data_parallel_random_init=False,
+    )
+    pg_collection = SimpleNamespace(pp="pp", dp="dp", cp="cp", tp="tp")
+    monkeypatch.setattr(training, "DDP", FakeDDP)
+    monkeypatch.setattr(training, "get_args", lambda: args)
+    monkeypatch.setattr(training.ProcessGroupCollection, "use_mpu_process_groups", lambda: pg_collection)
+    monkeypatch.setattr(training, "get_pg_size", lambda group: 2 if group == "pp" else 1)
+    monkeypatch.setattr(training, "get_pg_rank", lambda group: 0)
+    monkeypatch.setattr(training, "is_pp_first_stage", lambda pp: True)
+    monkeypatch.setattr(training, "is_pp_last_stage", lambda pp: True)
+    monkeypatch.setattr(training, "is_vp_first_stage", lambda vp_stage, vp_size: vp_stage == 0)
+    monkeypatch.setattr(training, "is_vp_last_stage", lambda vp_stage, vp_size: vp_stage == vp_size - 1)
+    monkeypatch.setattr(
+        training.tensor_parallel,
+        "set_defaults_if_not_set_tensor_model_parallel_attributes",
+        lambda param: calls.append(("defaults", param.nelement())),
+    )
+    monkeypatch.setattr(training, "to_empty_if_meta_device", lambda model, device: model)
+    monkeypatch.setattr(training, "get_model_config", lambda model: SimpleNamespace())
+    monkeypatch.setattr(training.torch.cuda, "Stream", lambda: FakeStream())
+    monkeypatch.setattr(training.torch.cuda, "current_stream", lambda: FakeStream())
+    monkeypatch.setattr(training.torch.cuda, "stream", lambda stream: FakeStreamContext())
+    monkeypatch.setattr(training, "correct_amax_history_if_needed", lambda model: calls.append(("amax", len(model))))
+
+    model = get_model(lambda **kwargs: FakeModel(**kwargs), wrap_with_ddp=True)
+
+    assert len(model) == 2
+    assert [chunk.kwargs["module"].metadata["pre_process"] for chunk in model] == [True, False]
+    assert [chunk.kwargs["module"].metadata["post_process"] for chunk in model] == [False, True]
+    assert ("ddp", 0, False, 4) in calls
+    assert ("ddp", 1, True, 4) in calls
+    assert model[0].kwargs["ddp_config"].param_name_patterns_for_fp32_local_accumulation == (
+        ".*weight",
+    )
+    assert ("defaults", 4) in calls
+    assert ("amax", 2) in calls
     assert "stream-enter" in calls and "stream-exit" in calls
 
 
