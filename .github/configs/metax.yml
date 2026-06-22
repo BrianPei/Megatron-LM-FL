@@ -55,7 +55,16 @@ test_matrix:
       # single test cases below are unstable on Metax now, need further investigation
       ## 1.core
       - tests/unit_tests/test_fp8_param.py
-      - tests/unit_tests/test_optimizer.py ## RuntimeError: No CUDA GPUs are available
+      # Keep the generic optimizer tests enabled. These cases construct CUDA tensors,
+      # Transformer Engine optimizers, device meshes, or real distributed optimizers.
+      - tests/unit_tests/test_optimizer.py::test_chained_optimizer
+      - tests/unit_tests/test_optimizer.py::test_precision_aware_fused_adam
+      - tests/unit_tests/test_optimizer.py::test_precision_aware_optimizer
+      - tests/unit_tests/test_optimizer.py::test_distrib_optimizer_save_load_with_non_tensor_state
+      - tests/unit_tests/test_optimizer.py::test_optim_sharded_state_dict
+      - tests/unit_tests/test_optimizer.py::test_optimizer_reload_model_params
+      - tests/unit_tests/test_optimizer.py::test_get_megatron_optimizer_with_custom_process_groups
+      - tests/unit_tests/test_optimizer.py::test_get_megatron_optimizer_custom_process_groups_validation
       - tests/unit_tests/test_utils.py::test_straggler_detector
       # Metax C500 CPU optimizer offload overlap has larger numeric drift than CUDA tolerance.
       - tests/unit_tests/test_optimizer_cpu_offloading.py::test_overlap_cpu_optimizer_d2h_h2d_sync_correctness

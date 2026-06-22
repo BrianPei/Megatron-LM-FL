@@ -41,33 +41,42 @@ jobs:
         test_group:
           - name: core
             path: "tests/unit_tests/test_*.py"
+            extra_path: "megatron/plugin/tests/"
             description: "Core unit tests"
           # - name: transformer
           #   path: "tests/unit_tests/transformer/"
           #   description: "Transformer tests"
           - name: models
             path: "tests/unit_tests/models/"
+            extra_path: ""
             description: "Model tests"
           - name: distributed
             path: "tests/unit_tests/distributed/"
+            extra_path: ""
             description: "Distributed tests"
           - name: dist_checkpointing
             path: "tests/unit_tests/dist_checkpointing/"
+            extra_path: ""
             description: "Distributed checkpointing tests"
           - name: tensor_parallel
             path: "tests/unit_tests/tensor_parallel/"
+            extra_path: ""
             description: "Tensor parallel tests"
           - name: pipeline_parallel
             path: "tests/unit_tests/pipeline_parallel/"
+            extra_path: ""
             description: "Pipeline parallel tests"
           - name: data
             path: "tests/unit_tests/data/"
+            extra_path: ""
             description: "Data tests"
           - name: fusions
             path: "tests/unit_tests/fusions/"
+            extra_path: ""
             description: "Fusion tests"
           - name: others
             path: "tests/unit_tests/export/ tests/unit_tests/post_training/ tests/unit_tests/tokenizers/ tests/unit_tests/utils/"
+            extra_path: ""
             description: "Other tests (a2a_overlap, export, post_training, tokenizers, utils)"
     name: unit-${{ inputs.device }}-${{ matrix.test_group.name }}
     container:
@@ -149,6 +158,7 @@ jobs:
           DEVICE='${{ inputs.device }}'
           TEST_GROUP='${{ matrix.test_group.name }}'
           TEST_PATH='${{ matrix.test_group.path }}'
+          EXTRA_TEST_PATH='${{ matrix.test_group.extra_path }}'
 
           echo "Running unit tests: $TEST_GROUP"
           echo "Test path: $TEST_PATH"
@@ -182,6 +192,10 @@ jobs:
               echo "Ignoring tests: $IGNORE_OPTS"
             fi
           fi
+          if [ -n "$EXTRA_TEST_PATH" ]; then
+            FINAL_TEST_PATH="$FINAL_TEST_PATH $EXTRA_TEST_PATH"
+            echo "Additional test path: $EXTRA_TEST_PATH"
+          fi
 
           # Calc GPU num
           if [ "$PLATFORM" = "metax" ]; then
@@ -202,7 +216,7 @@ jobs:
             MARKER_OPTS=(-m "not flaky_in_dev")
           fi
           mkdir -p "$COVERAGE_DIR"
-          printf '[run]\nparallel = true\nsource =\n    %s\n    %s\ndata_file = %s/.coverage\n' \
+          printf '[run]\nparallel = true\ndynamic_context = test_function\nsource =\n    %s\n    %s\ndata_file = %s/.coverage\n' \
             "$COVERAGE_TRAINING_SOURCE" "$COVERAGE_PLUGIN_SOURCE" "$COVERAGE_DIR" \
             > "$COVERAGE_DIR/.coveragerc"
           RUNNER_CMD="-m coverage run --rcfile=$COVERAGE_DIR/.coveragerc -m pytest"
@@ -213,6 +227,7 @@ jobs:
           # Combine coverage fragments and generate JSON report
           coverage combine --rcfile="$COVERAGE_DIR/.coveragerc" "$COVERAGE_DIR" 2>/dev/null || true
           coverage json --rcfile="$COVERAGE_DIR/.coveragerc" \
+            --show-contexts \
             -o "$COVERAGE_DIR/coverage-${{ inputs.platform }}-${{ inputs.device }}-${{ matrix.test_group.name }}.json" --include="$COVERAGE_INCLUDE" 2>/dev/null || true
 
           echo "exit_code=$exit_code" >> $GITHUB_OUTPUT
