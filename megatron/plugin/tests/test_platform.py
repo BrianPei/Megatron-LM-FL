@@ -525,6 +525,8 @@ class TestMockedVendorPlatforms(unittest.TestCase):
         module_updates = {"torch": fake_torch}
         if extra_modules:
             module_updates.update(extra_modules(accelerator))
+        if device_prefix == "txda":
+            fake_torch.txda = accelerator
 
         with ExitStack() as stack:
             stack.enter_context(patch.dict(sys.modules, module_updates))
