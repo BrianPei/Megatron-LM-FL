@@ -64,6 +64,12 @@ def _bare_parallel_context():
     context._global_group_ranks = defaultdict(list)
     context._global_all_group_ranks = defaultdict(list)
     context._global_process_group_to_ranks = {}
+    context._inter_mesh_group_ranks = defaultdict(list)
+    context._inter_mesh_process_groups_pp = {}
+    context._inter_mesh_process_groups_dp = {}
+    context._inter_mesh_process_groups_edp = {}
+    context._inter_mesh_tensor_slices = {}
+    context._inter_mesh_tensor_slices_for_embd_group = {}
     return context
 
 
