@@ -1805,6 +1805,7 @@ class DistributedOptimizer(MixedPrecisionOptimizer):
                         param_idx += 1
         return state
 
+    # Loading checkpoint state mutates optimizer tensors in-place outside autograd.
     @torch.no_grad()
     def load_parameter_state_from_dp_reshardable(self, state_dict):
         """Loads the parameter state from an internal representation.
@@ -1840,6 +1841,7 @@ class DistributedOptimizer(MixedPrecisionOptimizer):
                         # Main param & optimizer states.
                         self._set_main_param_and_optimizer_states(model_param, src_tensors)
 
+    # Loading checkpoint state mutates optimizer tensors in-place outside autograd.
     @torch.no_grad()
     def load_parameter_state_from_fs_model_space(self, state_dict):
         """Loads the parameter state from a "model space" representation.
@@ -2103,6 +2105,7 @@ class DistributedOptimizer(MixedPrecisionOptimizer):
                 for model_param, tensors in recv_tensors.items():
                     self._set_main_param_and_optimizer_states(model_param, tensors)
 
+    # Loading checkpoint state mutates optimizer tensors in-place outside autograd.
     @torch.no_grad()
     def load_parameter_state_from_fully_reshardable(self, state_dict: dict):
         """Load counterpart of sharded_param_state_fully_reshardable.

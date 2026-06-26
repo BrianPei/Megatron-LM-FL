@@ -41,42 +41,36 @@ jobs:
         test_group:
           - name: core
             path: "tests/unit_tests/test_*.py"
-            extra_path: "megatron/plugin/tests/"
             description: "Core unit tests"
+          - name: plugin
+            path: "megatron/plugin/tests/"
+            description: "Plugin tests"
           # - name: transformer
           #   path: "tests/unit_tests/transformer/"
           #   description: "Transformer tests"
           - name: models
             path: "tests/unit_tests/models/"
-            extra_path: ""
             description: "Model tests"
           - name: distributed
             path: "tests/unit_tests/distributed/"
-            extra_path: ""
             description: "Distributed tests"
           - name: dist_checkpointing
             path: "tests/unit_tests/dist_checkpointing/"
-            extra_path: ""
             description: "Distributed checkpointing tests"
           - name: tensor_parallel
             path: "tests/unit_tests/tensor_parallel/"
-            extra_path: ""
             description: "Tensor parallel tests"
           - name: pipeline_parallel
             path: "tests/unit_tests/pipeline_parallel/"
-            extra_path: ""
             description: "Pipeline parallel tests"
           - name: data
             path: "tests/unit_tests/data/"
-            extra_path: ""
             description: "Data tests"
           - name: fusions
             path: "tests/unit_tests/fusions/"
-            extra_path: ""
             description: "Fusion tests"
           - name: others
             path: "tests/unit_tests/export/ tests/unit_tests/post_training/ tests/unit_tests/tokenizers/ tests/unit_tests/utils/"
-            extra_path: ""
             description: "Other tests (a2a_overlap, export, post_training, tokenizers, utils)"
     name: unit-${{ inputs.device }}-${{ matrix.test_group.name }}
     container:
@@ -158,7 +152,6 @@ jobs:
           DEVICE='${{ inputs.device }}'
           TEST_GROUP='${{ matrix.test_group.name }}'
           TEST_PATH='${{ matrix.test_group.path }}'
-          EXTRA_TEST_PATH='${{ matrix.test_group.extra_path }}'
 
           echo "Running unit tests: $TEST_GROUP"
           echo "Test path: $TEST_PATH"
@@ -192,11 +185,6 @@ jobs:
               echo "Ignoring tests: $IGNORE_OPTS"
             fi
           fi
-          if [ -n "$EXTRA_TEST_PATH" ]; then
-            FINAL_TEST_PATH="$FINAL_TEST_PATH $EXTRA_TEST_PATH"
-            echo "Additional test path: $EXTRA_TEST_PATH"
-          fi
-
           # Calc GPU num
           if [ "$PLATFORM" = "metax" ]; then
             NUM_GPUS=$(python3 -c "import torch; print(torch.cuda.device_count() if hasattr(torch, 'cuda') and torch.cuda.is_available() else 2)")
