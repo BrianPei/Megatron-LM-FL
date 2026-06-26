@@ -101,9 +101,6 @@ def handle_experts_in_state_dict(state_dict, num_experts: int | None = None):
     Returns:
         The processed state dictionary with rewritten expert keys.
     """
-    if num_experts is None:
-        return state_dict.copy()
-
     local_expert_start = get_ep_layer_offset(num_experts)
     local_expert_end = num_experts if num_experts else 0
 

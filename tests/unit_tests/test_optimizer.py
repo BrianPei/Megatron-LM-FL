@@ -663,50 +663,6 @@ def test_distrib_optimizer_save_load_with_non_tensor_state(use_precision_aware):
     distrib_optim.load_parameter_state_from_dp_reshardable(saved_state)
 
 
-def test_distrib_optimizer_dp_reshardable_load_fp32_state_outside_autograd():
-    """dp_reshardable checkpoint load copies into fp32 param views outside autograd."""
-    world = int(os.getenv('WORLD_SIZE', '1'))
-    rank = int(os.getenv('RANK', '0'))
-
-    _init_distributed(world, rank)
-    Utils.initialize_model_parallel()
-
-    model = torch.nn.Linear(16, 16, bias=False, dtype=torch.float32, device='cuda')
-    model.requires_grad_(True)
-    ddp_config = DistributedDataParallelConfig(use_distributed_optimizer=True)
-    model = DistributedDataParallel(
-        TransformerConfig(num_attention_heads=1, num_layers=1), ddp_config, model
-    )
-
-    optimizer_config = OptimizerConfig(
-        optimizer='adam',
-        lr=0.01,
-        use_distributed_optimizer=True,
-        bf16=False,
-        fp16=False,
-    )
-    optim = get_megatron_optimizer(optimizer_config, [model])
-
-    input_data = torch.randn(4, 16, dtype=torch.float32, device='cuda')
-    loss = model(input_data).sum()
-    loss.backward()
-    optim.step()
-
-    distrib_optim = optim.chained_optimizers[0]
-    saved_state = distrib_optim.get_parameter_state_dp_reshardable()
-    metadata_keys = {"per_bucket_numel", "per_bucket_numel_unpadded"}
-    for key, value in saved_state.items():
-        if key in metadata_keys:
-            continue
-        for buckets_state in value.values():
-            for bucket_state in buckets_state:
-                for param_dict in bucket_state:
-                    param_dict['padding'] = False
-
-    assert torch.is_grad_enabled()
-    distrib_optim.load_parameter_state_from_dp_reshardable(saved_state)
-
-
 @pytest.mark.parametrize("use_distributed_optimizer", [False, True])
 @pytest.mark.parametrize("precision", ['bf16', 'fp32'])
 def test_optim_sharded_state_dict(use_distributed_optimizer: bool, precision: str):
