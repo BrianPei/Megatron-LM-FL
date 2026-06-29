@@ -2,6 +2,7 @@
 
 import os
 import gc
+import time
 from datetime import timedelta
 from pathlib import Path
 
@@ -102,25 +103,58 @@ def tmp_path_dist_ckpt(tmp_path_factory) -> Path:
 def ensure_test_data():
     """Ensure test data is available at /opt/data by downloading if necessary."""
     data_path = Path("/opt/data")
+    ready_file_name = (
+        f"megatron_unit_test_data_ready_{os.getenv('MASTER_PORT', 'single')}_"
+        f"{os.getenv('WORLD_SIZE', '1')}"
+    )
+    ready_file = Path("/tmp") / ready_file_name
+    rank = int(os.getenv("RANK", os.getenv("LOCAL_RANK", "0")))
+    world_size = int(os.getenv("WORLD_SIZE", "1"))
 
-    # Check if data directory exists and has content
-    if not data_path.exists() or not any(data_path.iterdir()):
-        print("Test data not found at /opt/data. Downloading...")
+    def data_available():
+        return data_path.exists() and any(
+            path.name != ready_file.name for path in data_path.iterdir()
+        )
+
+    def ensure_data_on_rank_zero():
+        # Check if data directory exists and has content
+        if not data_available():
+            print("Test data not found at /opt/data. Downloading...")
+
+            try:
+                # Download assets to /opt/data
+                download_and_extract_asset(assets_dir=data_path)
+
+                print("Test data downloaded successfully.")
+
+            except ImportError as e:
+                print(f"Failed to import download function: {e}")
+                # Don't fail the tests, just warn
+            except Exception as e:
+                print(f"Failed to download test data: {e}")
+                # Don't fail the tests, just warn
+        else:
+            print("Test data already available at /opt/data")
 
         try:
-            # Download assets to /opt/data
-            download_and_extract_asset(assets_dir=data_path)
-
-            print("Test data downloaded successfully.")
-
-        except ImportError as e:
-            print(f"Failed to import download function: {e}")
-            # Don't fail the tests, just warn
+            data_path.mkdir(parents=True, exist_ok=True)
+            ready_file.touch()
         except Exception as e:
-            print(f"Failed to download test data: {e}")
-            # Don't fail the tests, just warn
-    else:
-        print("Test data already available at /opt/data")
+            print(f"Failed to mark test data readiness: {e}")
+
+    if world_size <= 1 or rank == 0:
+        ensure_data_on_rank_zero()
+        return
+
+    # In torchrun jobs, every rank executes pytest collection/setup. If nonzero ranks race
+    # ahead while rank 0 is still downloading data, distributed tests can time out in NCCL
+    # setup. Wait on a simple file sentinel before entering test setup.
+    deadline = time.monotonic() + 600
+    while time.monotonic() < deadline:
+        if ready_file.exists() or data_available():
+            return
+        time.sleep(1)
+    print("Timed out waiting for rank 0 to prepare /opt/data; continuing without downloaded data.")
 
 
 @pytest.fixture(autouse=True)
