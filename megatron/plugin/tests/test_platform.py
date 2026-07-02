@@ -252,6 +252,31 @@ class TestPlatformCPU(unittest.TestCase):
         result = self.cpu.is_fp16_supported()
         self.assertIsInstance(result, bool)
 
+    def test_is_fp16_supported_follows_mkldnn_probe(self):
+        """CPU fp16 support follows the mkldnn fp16 capability probe."""
+        with patch(
+            "megatron.plugin.platform.platform_cpu.torch.ops.mkldnn._is_mkldnn_fp16_supported",
+            return_value=True,
+            create=True,
+        ):
+            self.assertTrue(self.cpu.is_fp16_supported())
+
+        with patch(
+            "megatron.plugin.platform.platform_cpu.torch.ops.mkldnn._is_mkldnn_fp16_supported",
+            return_value=False,
+            create=True,
+        ):
+            self.assertFalse(self.cpu.is_fp16_supported())
+
+    def test_is_fp16_supported_returns_false_when_mkldnn_probe_fails(self):
+        """CPU fp16 support is false when mkldnn fp16 probing is unavailable."""
+        with patch(
+            "megatron.plugin.platform.platform_cpu.torch.ops.mkldnn._is_mkldnn_fp16_supported",
+            side_effect=RuntimeError("mkldnn fp16 probe unavailable"),
+            create=True,
+        ):
+            self.assertFalse(self.cpu.is_fp16_supported())
+
     def test_is_triton_supported(self):
         """CPU does not support triton."""
         self.assertFalse(self.cpu.is_triton_supported())
