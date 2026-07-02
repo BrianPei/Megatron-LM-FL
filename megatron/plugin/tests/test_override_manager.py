@@ -2,9 +2,6 @@ import os
 import sys
 import unittest
 
-# Ensure megatron can be imported
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
 from megatron.plugin.decorators import (
     _plugin_registry,
     _plugin_impl_cache,
