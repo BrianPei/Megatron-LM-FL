@@ -206,6 +206,11 @@ jobs:
           echo "GPUs per node: ${GPUS_PER_NODE:-default}"
 
           export PYTHONPATH=${{ github.workspace }}:${PYTHONPATH:-}
+          if [[ '${{ inputs.platform }}' == 'metax' ]]; then
+            export NCCL_DEBUG=INFO
+            export NCCL_DEBUG_SUBSYS=INIT,NET
+            export MCCL_DEBUG=INFO
+          fi
 
           OUTPUT_DIR="./test_output/${TEST_CASE}"
           TENSORBOARD_PATH="${OUTPUT_DIR}/${TENSORBOARD_SUBPATH}"
