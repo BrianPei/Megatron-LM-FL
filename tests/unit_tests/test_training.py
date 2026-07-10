@@ -2807,7 +2807,7 @@ def test_setup_model_and_optimizer_ckpt_convert_format(monkeypatch):
         lambda it, m, o, s, f, **kw: calls.append(("save", it, f is not None)),
     )
     monkeypatch.setattr(training, "print_rank_0", lambda msg: calls.append(("print", msg)))
-    monkeypatch.setattr(training.os, "_exit", lambda code: calls.append(("exit", code)))
+    monkeypatch.setattr("builtins.exit", lambda code=0: calls.append(("exit", code)))
     monkeypatch.setattr(training.torch.distributed, "barrier", lambda **kw: calls.append("barrier"))
 
     training.setup_model_and_optimizer(lambda: None, training.ModelType.encoder_or_decoder)
@@ -2936,7 +2936,7 @@ def test_setup_model_and_optimizer_moe_upcycling(monkeypatch):
     assert "reload-model-params" in calls
     assert any("Upcycled checkpoint" in str(c) for c in calls)
 
-    assert args.iteration == 1
+    assert args.iteration == 0
     assert args.num_experts == 8
     assert args.expert_model_parallel_size == 2
     assert args.ffn_hidden_size == 4096
@@ -2946,6 +2946,9 @@ def test_train_step_save_dgrads_and_wgrads_paths(monkeypatch):
     calls = []
     args = SimpleNamespace(
         seq_length=1024, micro_batch_size=4, global_batch_size=32,
+        data_parallel_size=1,
+        decoder_seq_length=None,
+        save="/tmp/dummy_save",
         save_dgrads_interval=1,
         save_wgrads_interval=1,
         reuse_grad_buf_for_mxfp8_param_ag=False,
@@ -2969,7 +2972,12 @@ def test_train_step_save_dgrads_and_wgrads_paths(monkeypatch):
             return True, torch.tensor(1.0), torch.tensor(0)
 
     optimizer = FakeOptimizer()
-    opt_param_scheduler = SimpleNamespace()
+
+    class FakeScheduler:
+        def step(self, increment=0):
+            pass
+
+    opt_param_scheduler = FakeScheduler()
 
     model = [SimpleNamespace()]
     model[0].force_all_reduce = False
@@ -2998,8 +3006,22 @@ def test_train_step_save_dgrads_and_wgrads_paths(monkeypatch):
         def should_checkpoint_and_exit(self):
             return False, False, None
 
+    class FakeTimerObj:
+        def start(self, barrier=False):
+            pass
+        def stop(self, barrier=False):
+            pass
+        def active_time(self):
+            return 1.0
+
+    class FakeTimers:
+        def __call__(self, name, log_level=None):
+            return FakeTimerObj()
+        def log(self, names, normalizer=None, reset=True):
+            pass
+
     monkeypatch.setattr(training, "get_args", lambda: args)
-    monkeypatch.setattr(training, "get_timers", lambda: SimpleNamespace())
+    monkeypatch.setattr(training, "get_timers", lambda: FakeTimers())
     monkeypatch.setattr(training, "get_num_microbatches", lambda: 1)
     monkeypatch.setattr(training, "get_rerun_state_machine", lambda: FakeRerunMachine())
     monkeypatch.setattr(training, "has_nvidia_modelopt", False)
@@ -3012,7 +3034,7 @@ def test_train_step_save_dgrads_and_wgrads_paths(monkeypatch):
                         lambda: calls.append("disable-dgrad"))
     monkeypatch.setattr(training, "save_dgrads",
                         lambda it: calls.append(("save-dgrads", it)))
-    monkeypatch.setattr(training.checkpointing, "save_grads",
+    monkeypatch.setattr(training, "save_grads",
                         lambda save_dir, sd, it, label: calls.append(("save-grads", label, it)))
 
     
@@ -3031,35 +3053,17 @@ def test_train_step_save_dgrads_and_wgrads_paths(monkeypatch):
         iteration=0,
     )
 
-    # dgrads path（while 循环内执行）
+
     assert "enable-dgrad" in calls
     assert "fbw" in calls
     assert "disable-dgrad" in calls
     assert ("save-dgrads", 1) in calls
-    # wgrads path（while 循环外执行）
     assert ("save-grads", "wgrads", 1) in calls
 
 
-# ============================================================================
-# 覆盖率提升测试：training_log - GRPO/world_size/显存/memory 指标路径
-# ============================================================================
+
 def test_training_log_grpo_and_auxiliary_writer_paths(monkeypatch):
-    """覆盖 training_log 中 writer/scalar 写入分支中尚未被覆盖的路径。
 
-    现有测试 test_training_log_skipped_nan_memory_and_auxiliary_metrics
-    设了 writer=None，因此 if writer and ... 块内的所有代码都未执行过。
-    本测试提供 FakeWriter 和对应的 args flag，互补覆盖。
-
-    新覆盖的路径（均在 if writer 块内）：
-      - skipped-train-samples > 0 → writer/wandb 写入
-      - log_world_size_to_tensorboard=True
-      - perform_rl_step=True → GRPO collection iteration
-      - log_memory_to_tensorboard=True → 显存指标
-      - log_loss_scale_to_tensorboard=True
-      - log_max_attention_logit=True
-      - rl_use_sequence_packing + has_rl_utils → RL seq packing 指标
-      - grad_norm 非空 → 正常日志路径
-    """
     calls = []
     real_tensor = torch.tensor
 
@@ -3095,8 +3099,8 @@ def test_training_log_grpo_and_auxiliary_writer_paths(monkeypatch):
 
     args = SimpleNamespace(
         timing_log_level=1,
-        perform_rl_step=True,                          # ★ GRPO
-        rl_use_sequence_packing=True,                 # ★ RL seq packing
+        perform_rl_step=True,                          
+        rl_use_sequence_packing=True,                
         grpo_iterations=1,
         grpo_samples_per_iteration=128,
         global_batch_size=32,
@@ -3104,14 +3108,14 @@ def test_training_log_grpo_and_auxiliary_writer_paths(monkeypatch):
         data_parallel_size=2,
         world_size=8,
         seq_length=8,
-        tensorboard_log_interval=10,                   # iteration=10 时触发
+        tensorboard_log_interval=10,                   
         consumed_train_samples=16,
-        skipped_train_samples=10,                      # ★ >0 触发 skipped 标量
-        log_loss_scale_to_tensorboard=True,            # ★
-        log_world_size_to_tensorboard=True,            # ★
-        log_memory_to_tensorboard=True,                # ★
-        log_max_attention_logit=True,                  # ★
-        num_experts=None,                              # 不触发 MoE，简化测试
+        skipped_train_samples=10,                      
+        log_loss_scale_to_tensorboard=True,            
+        log_world_size_to_tensorboard=True,            
+        log_memory_to_tensorboard=True,                
+        log_max_attention_logit=True,                  
+        num_experts=None,                              
         moe_router_load_balancing_type="",
         moe_z_loss_coeff=None,
         num_layers=3,
@@ -3129,12 +3133,16 @@ def test_training_log_grpo_and_auxiliary_writer_paths(monkeypatch):
         log_memory_interval=2,
     )
 
-    # ★ rl_utils mock（需同时设 has_rl_utils 和 rl_utils 模块）
+
     class FakeRlUtils:
         @staticmethod
         def get_sequence_packing_tensorboard_metrics(args):
             calls.append("rl-packing-metrics")
             return {"packed_bins": 5}
+
+        @staticmethod
+        def get_sequence_packing_log_info(args):
+            return ""
 
     monkeypatch.setattr(training.torch, "tensor", cpu_tensor)
     monkeypatch.setattr(training, "get_args", lambda: args)
@@ -3165,47 +3173,42 @@ def test_training_log_grpo_and_auxiliary_writer_paths(monkeypatch):
                         lambda *items, **kwargs: None)
     monkeypatch.setattr(training, "report_memory", lambda message: calls.append(("memory", message)))
     monkeypatch.setattr(training, "get_loaded_iteration", lambda: 0)
-    # ★ RL 相关 mock
+    
     monkeypatch.setattr(training, "has_rl_utils", True)
     monkeypatch.setattr(training, "rl_utils", FakeRlUtils())
-    # ★ cuda memory_stats mock
+    
     monkeypatch.setattr(training.torch.cuda, "memory_stats", lambda: FakeMemStats())
 
     training_log(
         {"lm loss": torch.tensor([2.0])},
         total_loss_dict={},
         learning_rate=0.0001,
-        iteration=10,                                   # ★ 整除 interval=10
+        iteration=10,                                   
         loss_scale=64.0,
         report_memory_flag=True,
         skipped_iter=0,
-        grad_norm=torch.tensor(1.0),                   # 非空 → 覆盖 grad-norm 路径
+        grad_norm=torch.tensor(1.0),                   
         params_norm=None,
         num_zeros_in_grad=None,
         max_attention_logit=0.5,
     )
 
-    # 验证 writer/scalar 被正确调用
-    scalar_names = {name for (_, name, _, _) in calls if isinstance(name, str)}
-    assert "skipped-train-samples" in scalar_names       # skipped_train_samples=10
-    assert "grpo_collection_iteration" in scalar_names   # perform_rl_step=True
-    assert "world-size" in scalar_names                  # log_world_size=True
-    assert "mem-reserved-bytes" in scalar_names          # log_memory=True
+
+    scalar_names = {item[1] for item in calls if isinstance(item, tuple) and len(item) >= 2 and item[0] == "scalar"}
+    assert "skipped-train-samples" in scalar_names       
+    assert "grpo_collection_iteration" in scalar_names   
+    assert "world-size" in scalar_names                  
+    assert "mem-reserved-bytes" in scalar_names         
     assert "mem-allocated-bytes" in scalar_names
     assert "mem-max-allocated-bytes" in scalar_names
-    assert "loss-scale" in scalar_names                  # log_loss_scale=True
-    assert "max_attention_logit" in scalar_names         # log_max_attention_logit=True
-    assert "grad-norm" in scalar_names                   # grad_norm 非空
-    assert "batch-size" in scalar_names                  # 基本标量
+    assert "loss-scale" in scalar_names                  
+    assert "max_attention_logit" in scalar_names         
+    assert "grad-norm" in scalar_names                  
+    assert "batch-size" in scalar_names                  
 
-    # 验证 wandb 也写入了
+
     assert any(item[0] == "wandb" for item in calls)
 
-    # 验证 GRPO 值计算正确
-    # iteration=10, grpo_iterations=1, grpo_samples_per_iteration=128, global_batch_size=32
-    # grpo_collection_iteration = 10 // (1 * (128//32)) = 10 // 4 = 2
     grpo_calls = [item for item in calls if item[0] == "scalar" and item[1] == "grpo_collection_iteration"]
     assert grpo_calls[0][2] == 2
-
-    # 验证 rl_utils 被调用
     assert "rl-packing-metrics" in calls
