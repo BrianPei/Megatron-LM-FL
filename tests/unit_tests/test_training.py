@@ -3028,6 +3028,11 @@ def test_train_step_save_dgrads_and_wgrads_paths(monkeypatch):
     monkeypatch.setattr(training, "clip_qk", lambda m, **kw: 0.0)
     monkeypatch.setattr(training, "reduce_max_stat_across_model_parallel_group", lambda v: v)
     monkeypatch.setattr(training, "logical_and_across_model_parallel_group", lambda v: v)
+    monkeypatch.setattr(training.mpu, "is_pipeline_last_stage", lambda ignore_virtual=True: True)
+    monkeypatch.setattr(training.mpu, "get_data_parallel_group",
+                        lambda with_context_parallel=False: "dp")
+    monkeypatch.setattr(training.torch.distributed, "all_reduce",
+                        lambda tensor, group=None, op=None: None)
     monkeypatch.setattr(training, "enable_dgrad_logging",
                         lambda m, s: calls.append("enable-dgrad"))
     monkeypatch.setattr(training, "disable_dgrad_logging",
