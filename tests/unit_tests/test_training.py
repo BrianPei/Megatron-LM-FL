@@ -3180,7 +3180,7 @@ def test_training_log_grpo_and_auxiliary_writer_paths(monkeypatch):
     monkeypatch.setattr(training, "get_loaded_iteration", lambda: 0)
 
     monkeypatch.setattr(training, "has_rl_utils", True)
-    monkeypatch.setattr(training, "rl_utils", FakeRlUtils())
+    monkeypatch.setattr(training, "rl_utils", FakeRlUtils(), raising=False)
 
     monkeypatch.setattr(training.torch.cuda, "memory_stats", lambda: FakeMemStats())
 
