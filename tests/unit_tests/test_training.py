@@ -2976,7 +2976,7 @@ def test_train_step_save_dgrads_and_wgrads_paths(monkeypatch):
     class FakeScheduler:
         def step(self, increment=0):
             pass
-
+ 
     opt_param_scheduler = FakeScheduler()
 
     model = [SimpleNamespace()]
@@ -3037,7 +3037,7 @@ def test_train_step_save_dgrads_and_wgrads_paths(monkeypatch):
     monkeypatch.setattr(training, "save_grads",
                         lambda save_dir, sd, it, label: calls.append(("save-grads", label, it)))
 
-    
+
     def fake_forward_backward(**kw):
         calls.append("fbw")
         return [{"lm_loss": torch.tensor(1.0)}]
@@ -3099,8 +3099,8 @@ def test_training_log_grpo_and_auxiliary_writer_paths(monkeypatch):
 
     args = SimpleNamespace(
         timing_log_level=1,
-        perform_rl_step=True,                          
-        rl_use_sequence_packing=True,                
+        perform_rl_step=True,
+        rl_use_sequence_packing=True,
         grpo_iterations=1,
         grpo_samples_per_iteration=128,
         global_batch_size=32,
@@ -3108,14 +3108,14 @@ def test_training_log_grpo_and_auxiliary_writer_paths(monkeypatch):
         data_parallel_size=2,
         world_size=8,
         seq_length=8,
-        tensorboard_log_interval=10,                   
+        tensorboard_log_interval=10,
         consumed_train_samples=16,
-        skipped_train_samples=10,                      
-        log_loss_scale_to_tensorboard=True,            
-        log_world_size_to_tensorboard=True,            
-        log_memory_to_tensorboard=True,                
-        log_max_attention_logit=True,                  
-        num_experts=None,                              
+        skipped_train_samples=10,
+        log_loss_scale_to_tensorboard=True,
+        log_world_size_to_tensorboard=True,
+        log_memory_to_tensorboard=True,
+        log_max_attention_logit=True,
+        num_experts=None,
         moe_router_load_balancing_type="",
         moe_z_loss_coeff=None,
         num_layers=3,
@@ -3173,21 +3173,21 @@ def test_training_log_grpo_and_auxiliary_writer_paths(monkeypatch):
                         lambda *items, **kwargs: None)
     monkeypatch.setattr(training, "report_memory", lambda message: calls.append(("memory", message)))
     monkeypatch.setattr(training, "get_loaded_iteration", lambda: 0)
-    
+
     monkeypatch.setattr(training, "has_rl_utils", True)
     monkeypatch.setattr(training, "rl_utils", FakeRlUtils())
-    
+
     monkeypatch.setattr(training.torch.cuda, "memory_stats", lambda: FakeMemStats())
 
     training_log(
         {"lm loss": torch.tensor([2.0])},
         total_loss_dict={},
         learning_rate=0.0001,
-        iteration=10,                                   
+        iteration=10,
         loss_scale=64.0,
         report_memory_flag=True,
         skipped_iter=0,
-        grad_norm=torch.tensor(1.0),                   
+        grad_norm=torch.tensor(1.0),
         params_norm=None,
         num_zeros_in_grad=None,
         max_attention_logit=0.5,
@@ -3195,16 +3195,16 @@ def test_training_log_grpo_and_auxiliary_writer_paths(monkeypatch):
 
 
     scalar_names = {item[1] for item in calls if isinstance(item, tuple) and len(item) >= 2 and item[0] == "scalar"}
-    assert "skipped-train-samples" in scalar_names       
-    assert "grpo_collection_iteration" in scalar_names   
-    assert "world-size" in scalar_names                  
-    assert "mem-reserved-bytes" in scalar_names         
+    assert "skipped-train-samples" in scalar_names
+    assert "grpo_collection_iteration" in scalar_names
+    assert "world-size" in scalar_names
+    assert "mem-reserved-bytes" in scalar_names
     assert "mem-allocated-bytes" in scalar_names
     assert "mem-max-allocated-bytes" in scalar_names
-    assert "loss-scale" in scalar_names                  
-    assert "max_attention_logit" in scalar_names         
-    assert "grad-norm" in scalar_names                  
-    assert "batch-size" in scalar_names                  
+    assert "loss-scale" in scalar_names
+    assert "max_attention_logit" in scalar_names
+    assert "grad-norm" in scalar_names
+    assert "batch-size" in scalar_names
 
 
     assert any(item[0] == "wandb" for item in calls)
