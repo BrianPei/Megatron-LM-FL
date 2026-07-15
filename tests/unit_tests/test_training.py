@@ -3145,6 +3145,7 @@ def test_training_log_grpo_and_auxiliary_writer_paths(monkeypatch):
         moe_layer_freq=[1, 0, 1],
         mtp_num_layers=1,
         dsa_indexer_loss_coeff=0.2,
+        csa_compress_ratios=None,
         log_interval=2,
         train_iters=12,
         log_throughput=True,
