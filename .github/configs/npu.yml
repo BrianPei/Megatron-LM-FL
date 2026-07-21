@@ -1,6 +1,6 @@
 # NPU (Ascend) Hardware Configuration for Megatron-LM-FL
 # This file defines CI/CD settings for Ascend NPU-based testing.
-# Validated on: Ascend 910C (A3), 16 devices, CANN 9.0.0, torch 2.7.1
+# Validated on: Ascend 910C (A3), 8 CI-visible devices, CANN 9.0.0, torch 2.7.1
 
 hardware_name: npu
 display_name: 'Npu Tests'
@@ -28,6 +28,7 @@ container_options: >-
   --ipc=host
   --pid=host
   --ulimit nofile=65535:65535
+  --env ASCEND_RT_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
   --device=/dev/davinci0
   --device=/dev/davinci1
   --device=/dev/davinci2
