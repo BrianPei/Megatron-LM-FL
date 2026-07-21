@@ -26,7 +26,6 @@ container_options: >-
   --hostname megatron_cicd
   --user root
   --ipc=host
-  --network=host
   --pid=host
   --ulimit nofile=65535:65535
   --device=/dev/davinci0
