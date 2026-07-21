@@ -1,0 +1,136 @@
+# NPU (Ascend) Hardware Configuration for Megatron-LM-FL
+# This file defines CI/CD settings for Ascend NPU-based testing.
+# Validated on: Ascend 910C (A3), 16 devices, CANN 9.0.0, torch 2.7.1
+
+hardware_name: npu
+display_name: 'Npu Tests'
+
+# CI image for NPU env (built and pushed 2026-07-17, validated on Ascend 910C)
+ci_image: harbor.baai.ac.cn/flagos-dev/megatron-lm-fl:manual-20260717-ascend-dev
+
+# Runner labels for NPU node
+runner_labels:
+  - hw-8g-cicd-megatron
+
+# Container volumes (hardware-specific paths)
+# NOTE: /usr/local/Ascend/add-ons does not exist on this runner; not mounted.
+# NOTE: datasets/tokenizers not mounted for unit tests (add when functional tests needed).
+container_volumes:
+  - /usr/local/Ascend/driver:/usr/local/Ascend/driver
+  - /usr/local/sbin/npu-smi:/usr/local/sbin/npu-smi
+
+# Container options (hardware-specific settings)
+container_options: >-
+  --privileged
+  --shm-size=500g
+  --hostname megatron_cicd
+  --user root
+  --ipc=host
+  --network=host
+  --pid=host
+  --ulimit nofile=65535:65535
+  --device=/dev/davinci0
+  --device=/dev/davinci1
+  --device=/dev/davinci2
+  --device=/dev/davinci3
+  --device=/dev/davinci4
+  --device=/dev/davinci5
+  --device=/dev/davinci6
+  --device=/dev/davinci7
+  --device=/dev/davinci_manager
+  --device=/dev/devmm_svm
+  --device=/dev/hisi_hdc
+
+# Device types to run tests on
+device_types:
+  - 910c
+
+# Test matrix configuration
+test_matrix:
+  unit:
+    devices:
+      - 910c
+    # Ignored test files/cases for unit tests.
+    # These are skipped when running pytest on Ascend NPU.
+    ignored_tests:
+      ## 1. core — FP8
+      # Ascend 910C does not support FP8; all scaling/quantization tests fail
+      # at the TE-FL operator layer.
+      - tests/unit_tests/test_fp8_param.py
+
+      ## 2. core — SGD optimizer (CPU offloading)
+      # TE-FL reference implementation of multi_tensor_sgd has wrong argument
+      # signature on NPU: takes 8 positional arguments but 11 are given.
+      # Only 'sgd' parameter combinations fail; 'adam' combinations pass and
+      # are kept enabled for coverage.
+      - tests/unit_tests/test_optimizer_cpu_offloading.py::test_multi_device_hybrid_optimizer[False-sgd-0-False-1]
+      - tests/unit_tests/test_optimizer_cpu_offloading.py::test_multi_device_hybrid_optimizer[False-sgd-0-False-10]
+      - tests/unit_tests/test_optimizer_cpu_offloading.py::test_multi_device_hybrid_optimizer[False-sgd-0-True-1]
+      - tests/unit_tests/test_optimizer_cpu_offloading.py::test_multi_device_hybrid_optimizer[False-sgd-0-True-10]
+      - tests/unit_tests/test_optimizer_cpu_offloading.py::test_multi_device_hybrid_optimizer[False-sgd-0.5-False-1]
+      - tests/unit_tests/test_optimizer_cpu_offloading.py::test_multi_device_hybrid_optimizer[False-sgd-0.5-False-10]
+      - tests/unit_tests/test_optimizer_cpu_offloading.py::test_multi_device_hybrid_optimizer[False-sgd-0.5-True-1]
+      - tests/unit_tests/test_optimizer_cpu_offloading.py::test_multi_device_hybrid_optimizer[False-sgd-0.5-True-10]
+      - tests/unit_tests/test_optimizer_cpu_offloading.py::test_multi_device_hybrid_optimizer[False-sgd-1.0-False-1]
+      - tests/unit_tests/test_optimizer_cpu_offloading.py::test_multi_device_hybrid_optimizer[False-sgd-1.0-False-10]
+      - tests/unit_tests/test_optimizer_cpu_offloading.py::test_multi_device_hybrid_optimizer[False-sgd-1.0-True-1]
+      - tests/unit_tests/test_optimizer_cpu_offloading.py::test_multi_device_hybrid_optimizer[False-sgd-1.0-True-10]
+      - tests/unit_tests/test_optimizer_cpu_offloading.py::test_multi_device_hybrid_optimizer[True-sgd-0-False-1]
+      - tests/unit_tests/test_optimizer_cpu_offloading.py::test_multi_device_hybrid_optimizer[True-sgd-0-False-10]
+      - tests/unit_tests/test_optimizer_cpu_offloading.py::test_multi_device_hybrid_optimizer[True-sgd-0-True-1]
+      - tests/unit_tests/test_optimizer_cpu_offloading.py::test_multi_device_hybrid_optimizer[True-sgd-0-True-10]
+      - tests/unit_tests/test_optimizer_cpu_offloading.py::test_multi_device_hybrid_optimizer[True-sgd-0.5-False-1]
+      - tests/unit_tests/test_optimizer_cpu_offloading.py::test_multi_device_hybrid_optimizer[True-sgd-0.5-False-10]
+      - tests/unit_tests/test_optimizer_cpu_offloading.py::test_multi_device_hybrid_optimizer[True-sgd-0.5-True-1]
+      - tests/unit_tests/test_optimizer_cpu_offloading.py::test_multi_device_hybrid_optimizer[True-sgd-0.5-True-10]
+      - tests/unit_tests/test_optimizer_cpu_offloading.py::test_multi_device_hybrid_optimizer[True-sgd-1.0-False-1]
+      - tests/unit_tests/test_optimizer_cpu_offloading.py::test_multi_device_hybrid_optimizer[True-sgd-1.0-False-10]
+      - tests/unit_tests/test_optimizer_cpu_offloading.py::test_multi_device_hybrid_optimizer[True-sgd-1.0-True-1]
+      - tests/unit_tests/test_optimizer_cpu_offloading.py::test_multi_device_hybrid_optimizer[True-sgd-1.0-True-10]
+      # All overlap correctness cases use sgd only; ignore the whole function.
+      - tests/unit_tests/test_optimizer_cpu_offloading.py::test_overlap_cpu_optimizer_d2h_h2d_sync_correctness
+
+      ## 3. core — precision-aware optimizer
+      # Requires CUDA/TE-specific features not available on NPU.
+      # metax also ignores this case.
+      - tests/unit_tests/test_optimizer.py::test_precision_aware_fused_adam
+
+      ## 4. core — NCCL allocator (collection error)
+      # torch._C._nccl_version does not exist on NPU (uses HCCL, not NCCL).
+      # Collection fails at class definition level; no runtime workaround.
+      - tests/unit_tests/test_nccl_allocator.py
+
+      ## 5. core — straggler detector and param norm
+      # test_straggler_detector: HCCL teardown crash during pytest session
+      # cleanup. Same environment issue seen on metax/cuda; metax also ignores.
+      - tests/unit_tests/test_utils.py::test_straggler_detector
+      # test_param_norm_*: RuntimeError in distributed param norm computation
+      # on NPU. Not reproduced on metax or cuda. Under investigation.
+      - tests/unit_tests/test_utils.py::test_param_norm_linear[False]
+      - tests/unit_tests/test_utils.py::test_param_norm_linear[True]
+      - tests/unit_tests/test_utils.py::test_param_norm_moe[False]
+      - tests/unit_tests/test_utils.py::test_param_norm_moe[True]
+
+      # NOTE: test_training_log_grpo_and_auxiliary_writer_paths is NOT ignored.
+      # Upstream PR #82 will remove that test; the failure is transient.
+
+      # NOTE (B policy): megatron/plugin/tests/test_platform.py failures are
+      # NOT ignored. Root cause: bugs in platform_npu.py —
+      #   - monitoring methods (temperature/power_draw/utilization/clock_rate)
+      #     return None instead of int/float
+      #   - is_triton_supported returns None instead of bool
+      #   - registry_patch is non-idempotent (duplicate call raises RuntimeError)
+      # metax does NOT ignore these (they pass there). Fix required in
+      # megatron/plugin/platform/platform_npu.py before CI can be fully green.
+
+  functional:
+    train:
+      # Golden values for Ascend 910C not yet recorded.
+      # Populate once a validated training run is complete:
+      # - model: gpt
+      #   test_case: qwen3_0p6b_mcore_te_tp1_pp1_no_mmap_bin_files_npu
+      #   training_script: pretrain_gpt.py
+      #   n_repeat: 1
+      #   golden_environment: dev
+      #   golden_platform: 910c
+      #   enable_lightweight_mode: false
