@@ -1,4 +1,4 @@
-name: npu_tests
+name: ascend_tests
 
 on:
   push:
@@ -13,10 +13,10 @@ concurrency:
 
 jobs:
   run_tests:
-    # Package manager and environment settings are read from .github/configs/npu.yml
+    # Package manager and environment settings are read from .github/configs/ascend.yml
     uses: ./.github/workflows/all_tests_common.yml
     with:
-      platform: npu
+      platform: ascend
       run_unit_tests: true
       run_functional_tests: true
 

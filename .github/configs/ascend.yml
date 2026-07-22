@@ -1,14 +1,14 @@
-# NPU (Ascend) Hardware Configuration for Megatron-LM-FL
-# This file defines CI/CD settings for Ascend NPU-based testing.
+# Ascend Hardware Configuration for Megatron-LM-FL
+# This file defines CI/CD settings for Ascend-based testing.
 # Validated on: Ascend 910C (A3), 8 CI-visible devices, CANN 9.0.0, torch 2.7.1
 
-hardware_name: npu
-display_name: 'Npu Tests'
+hardware_name: ascend
+display_name: 'Ascend Tests'
 
-# CI image for NPU env (built and pushed 2026-07-17, validated on Ascend 910C)
+# CI image for the Ascend environment (built and pushed 2026-07-17, validated on Ascend 910C)
 ci_image: harbor.baai.ac.cn/flagos-dev/megatron-lm-fl:manual-20260717-ascend-dev
 
-# Runner labels for NPU node
+# Runner labels for the Ascend node
 runner_labels:
   - hw-8g-cicd-megatron
 
