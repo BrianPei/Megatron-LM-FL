@@ -217,7 +217,6 @@ jobs:
           COVERAGE_TRAINING_SOURCE="$GITHUB_WORKSPACE/megatron/training"
           COVERAGE_PLUGIN_SOURCE="$GITHUB_WORKSPACE/megatron/plugin"
           COVERAGE_INCLUDE="megatron/training/*,megatron/plugin/*"
-          RUNNER_CMD="-m pytest"
           MARKER_OPTS=()
           if [ "$PLATFORM" = "cuda" ]; then
             MARKER_OPTS=(-m "not flaky_in_dev")
@@ -226,9 +225,18 @@ jobs:
           printf '[run]\nparallel = true\ndynamic_context = test_function\nsource =\n    %s\n    %s\ndata_file = %s/.coverage\n' \
             "$COVERAGE_TRAINING_SOURCE" "$COVERAGE_PLUGIN_SOURCE" "$COVERAGE_DIR" \
             > "$COVERAGE_DIR/.coveragerc"
-          RUNNER_CMD="-m coverage run --rcfile=$COVERAGE_DIR/.coveragerc -m pytest"
-          
-          torchrun --nproc_per_node=$NUM_GPUS $RUNNER_CMD -v $FINAL_TEST_PATH --ignore=tests/functional_tests $IGNORE_OPTS "${MARKER_OPTS[@]}" -p no:randomly
+          if [ "$PLATFORM" = "npu" ]; then
+            # Avoid nested module launch: torchrun -> coverage -> pytest script.
+            PYTEST_BIN=$(command -v pytest)
+            echo "NPU pytest executable: $PYTEST_BIN"
+            torchrun --nproc_per_node=$NUM_GPUS \
+              -m coverage run --rcfile="$COVERAGE_DIR/.coveragerc" "$PYTEST_BIN" \
+              -v $FINAL_TEST_PATH --ignore=tests/functional_tests $IGNORE_OPTS "${MARKER_OPTS[@]}" -p no:randomly
+          else
+            torchrun --nproc_per_node=$NUM_GPUS \
+              -m coverage run --rcfile="$COVERAGE_DIR/.coveragerc" -m pytest \
+              -v $FINAL_TEST_PATH --ignore=tests/functional_tests $IGNORE_OPTS "${MARKER_OPTS[@]}" -p no:randomly
+          fi
           exit_code=$?
 
           # Combine coverage fragments and generate JSON report
