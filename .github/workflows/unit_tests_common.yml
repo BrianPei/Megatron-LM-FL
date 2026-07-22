@@ -228,20 +228,7 @@ jobs:
             > "$COVERAGE_DIR/.coveragerc"
           RUNNER_CMD="-m coverage run --rcfile=$COVERAGE_DIR/.coveragerc -m pytest"
           
-          if [ "$PLATFORM" = "npu" ]; then
-            # Bypass the NPU image's broken Python module entrypoint resolution.
-            PYTEST_BIN=$(command -v pytest)
-            echo "NPU pytest executable: $PYTEST_BIN"
-            python3 -m torch.distributed.run \
-              --standalone \
-              --nnodes=1 \
-              --nproc_per_node=$NUM_GPUS \
-              --no-python \
-              "$PYTEST_BIN" \
-              -v $FINAL_TEST_PATH --ignore=tests/functional_tests $IGNORE_OPTS "${MARKER_OPTS[@]}" -p no:randomly
-          else
-            torchrun --nproc_per_node=$NUM_GPUS $RUNNER_CMD -v $FINAL_TEST_PATH --ignore=tests/functional_tests $IGNORE_OPTS "${MARKER_OPTS[@]}" -p no:randomly
-          fi
+          torchrun --nproc_per_node=$NUM_GPUS $RUNNER_CMD -v $FINAL_TEST_PATH --ignore=tests/functional_tests $IGNORE_OPTS "${MARKER_OPTS[@]}" -p no:randomly
           exit_code=$?
 
           # Combine coverage fragments and generate JSON report
