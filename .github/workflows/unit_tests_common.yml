@@ -198,6 +198,16 @@ jobs:
           export MEGATRON_TEST_PLATFORM=$PLATFORM
           mkdir -p $TORCHINDUCTOR_CACHE_DIR
 
+          if [ "$PLATFORM" = "ascend" ] && [ "$TEST_GROUP" = "models" ]; then
+            # Flash Attention is CUDA-only, but model skip decorators import it while
+            # collecting tests. Expose only a version stub so those cases skip cleanly.
+            FLASH_ATTN_STUB_DIR=/tmp/megatron-ci-stubs
+            mkdir -p "$FLASH_ATTN_STUB_DIR/flash_attn"
+            printf '__version__ = "0.0.0"\n' > "$FLASH_ATTN_STUB_DIR/flash_attn/__init__.py"
+            export PYTHONPATH="$FLASH_ATTN_STUB_DIR:$PYTHONPATH"
+            python3 -c "import flash_attn; assert flash_attn.__version__ == '0.0.0'"
+          fi
+
           # Build ignore options from ignored_tests input
           IGNORED_TESTS='${{ inputs.ignored_tests }}'
           IGNORE_OPTS=""
