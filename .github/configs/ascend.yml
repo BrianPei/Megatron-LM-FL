@@ -139,7 +139,11 @@ test_matrix:
       # (single-rank), incompatible with torchrun --nproc_per_node=8.
       - tests/unit_tests/test_checkpointing.py::test_save_checkpoint[torch]
 
-      
+      ## 9. tensor_parallel — TransformerEngine RNG tracker
+      # TransformerEngine-FL still reads torch.cuda.default_generators for an
+      # NPU device, whose CUDA generator tuple is empty in the CPU torch build.
+      # Remove after TE-FL uses torch.npu.default_generators for Ascend.
+      - tests/unit_tests/tensor_parallel/test_random.py::test_convert_cuda_rng_state
 
   functional:
     train:
