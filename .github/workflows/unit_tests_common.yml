@@ -118,8 +118,18 @@ jobs:
           # Ensure curl is available (required by coverage upload action)
           command -v curl || (apt-get update -qq && apt-get install -y --no-install-recommends curl 2>/dev/null)
 
-          # Install dependence package
-          pip install torch boto3 mock pytest-mock coverage pytest-asyncio anyio wandb openai httpx nltk msgpack --no-cache-dir
+          # Preserve the validated torch/torch_npu pair shipped in the NPU image.
+          TEST_DEPENDENCIES=(boto3 mock pytest-mock coverage pytest-asyncio anyio wandb openai httpx nltk msgpack)
+          if [ "$PLATFORM" = "npu" ]; then
+            python3 -c "import torch, torch_npu; assert torch.__version__ == '2.7.1+cpu', torch.__version__; assert torch_npu.__version__ == '2.7.1.post2', torch_npu.__version__"
+            # Use the domestic mirror while the development image is still missing some test dependencies.
+            pip install "${TEST_DEPENDENCIES[@]}" \
+              --index-url https://pypi.tuna.tsinghua.edu.cn/simple \
+              --timeout 300 --retries 10 --no-cache-dir
+            python3 -c "import torch, torch_npu; assert torch.__version__ == '2.7.1+cpu', torch.__version__; assert torch_npu.__version__ == '2.7.1.post2', torch_npu.__version__; assert torch.npu.is_available(); assert torch.npu.device_count() == 8, torch.npu.device_count(); print(f'Torch: {torch.__version__}, torch_npu: {torch_npu.__version__}, NPU devices: {torch.npu.device_count()}')"
+          else
+            pip install torch "${TEST_DEPENDENCIES[@]}" --no-cache-dir
+          fi
           if [ "$PLATFORM" = "metax" ]; then
             pip install fastapi uvicorn --no-cache-dir
           fi
@@ -218,7 +228,20 @@ jobs:
             > "$COVERAGE_DIR/.coveragerc"
           RUNNER_CMD="-m coverage run --rcfile=$COVERAGE_DIR/.coveragerc -m pytest"
           
-          torchrun --nproc_per_node=$NUM_GPUS $RUNNER_CMD -v $FINAL_TEST_PATH --ignore=tests/functional_tests $IGNORE_OPTS "${MARKER_OPTS[@]}" -p no:randomly
+          if [ "$PLATFORM" = "npu" ]; then
+            # Bypass the NPU image's broken Python module entrypoint resolution.
+            PYTEST_BIN=$(command -v pytest)
+            echo "NPU pytest executable: $PYTEST_BIN"
+            python3 -m torch.distributed.run \
+              --standalone \
+              --nnodes=1 \
+              --nproc_per_node=$NUM_GPUS \
+              --no-python \
+              "$PYTEST_BIN" \
+              -v $FINAL_TEST_PATH --ignore=tests/functional_tests $IGNORE_OPTS "${MARKER_OPTS[@]}" -p no:randomly
+          else
+            torchrun --nproc_per_node=$NUM_GPUS $RUNNER_CMD -v $FINAL_TEST_PATH --ignore=tests/functional_tests $IGNORE_OPTS "${MARKER_OPTS[@]}" -p no:randomly
+          fi
           exit_code=$?
 
           # Combine coverage fragments and generate JSON report
