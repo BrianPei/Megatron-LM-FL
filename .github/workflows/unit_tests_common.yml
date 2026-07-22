@@ -122,6 +122,24 @@ jobs:
           TEST_DEPENDENCIES=(mock pytest-mock coverage pytest-asyncio anyio wandb openai httpx nltk msgpack griffe)
           if [ "$PLATFORM" = "ascend" ]; then
             python3 -c "import torch, torch_npu; assert torch.__version__ == '2.7.1+cpu', torch.__version__; assert torch_npu.__version__ == '2.7.1.post2', torch_npu.__version__"
+            # The fixed Ascend image omits python3-config, which dataset helper builds
+            # use only to query the active interpreter's extension suffix.
+            if ! command -v python3-config >/dev/null 2>&1; then
+              cat > /usr/local/bin/python3-config <<'PYTHON_CONFIG'
+          #!/usr/bin/env python3
+          import sys
+          import sysconfig
+
+          if sys.argv[1:] != ["--extension-suffix"]:
+              raise SystemExit("python3-config shim only supports --extension-suffix")
+          suffix = sysconfig.get_config_var("EXT_SUFFIX")
+          if not suffix:
+              raise SystemExit("Python EXT_SUFFIX is unavailable")
+          print(suffix)
+          PYTHON_CONFIG
+              chmod 0755 /usr/local/bin/python3-config
+            fi
+            echo "Python extension suffix: $(python3-config --extension-suffix)"
             # S3 unit tests provide a local boto3 mock when the optional package is absent.
             # Avoid downloading its large botocore dependency through the unstable CI proxy.
             pip install "${TEST_DEPENDENCIES[@]}" \
