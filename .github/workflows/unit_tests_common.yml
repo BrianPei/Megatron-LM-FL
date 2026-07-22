@@ -118,9 +118,9 @@ jobs:
           # Ensure curl is available (required by coverage upload action)
           command -v curl || (apt-get update -qq && apt-get install -y --no-install-recommends curl 2>/dev/null)
 
-          # Preserve the validated torch/torch_npu pair shipped in the NPU image.
+          # Preserve the validated torch/torch_npu pair shipped in the Ascend image.
           TEST_DEPENDENCIES=(boto3 mock pytest-mock coverage pytest-asyncio anyio wandb openai httpx nltk msgpack)
-          if [ "$PLATFORM" = "npu" ]; then
+          if [ "$PLATFORM" = "ascend" ]; then
             python3 -c "import torch, torch_npu; assert torch.__version__ == '2.7.1+cpu', torch.__version__; assert torch_npu.__version__ == '2.7.1.post2', torch_npu.__version__"
             pip install "${TEST_DEPENDENCIES[@]}" --no-cache-dir
             python3 -c "import torch, torch_npu; assert torch.__version__ == '2.7.1+cpu', torch.__version__; assert torch_npu.__version__ == '2.7.1.post2', torch_npu.__version__; assert torch.npu.is_available(); assert torch.npu.device_count() >= 8, torch.npu.device_count(); print(f'Torch: {torch.__version__}, torch_npu: {torch_npu.__version__}, NPU devices: {torch.npu.device_count()}')"
@@ -132,7 +132,7 @@ jobs:
           fi
 
           # Install nvidia-resiliency-ext from source
-          if [ "$PLATFORM" != "metax" ] && [ "$PLATFORM" != "npu" ]; then
+          if [ "$PLATFORM" != "metax" ] && [ "$PLATFORM" != "ascend" ]; then
             git clone --branch v0.6.0-main https://github.com/NVIDIA/nvidia-resiliency-ext.git /tmp/nvidia-resiliency-ext
             pip install -e /tmp/nvidia-resiliency-ext --no-cache-dir
           else
@@ -140,8 +140,8 @@ jobs:
           fi
 
           # Install emerging-optimizers from source. It depends on GitHub access and is optional
-          # for Metax and NPU unit tests; tests that require it already skip when the package is missing.
-          if [ "$PLATFORM" = "metax" ] || [ "$PLATFORM" = "npu" ]; then
+          # for Metax and Ascend unit tests; tests that require it already skip when the package is missing.
+          if [ "$PLATFORM" = "metax" ] || [ "$PLATFORM" = "ascend" ]; then
             echo "Skipping optional Emerging-Optimizers on $PLATFORM."
           else
             pip install git+https://github.com/NVIDIA-NeMo/Emerging-Optimizers.git@v0.1.0 --no-cache-dir
@@ -201,7 +201,7 @@ jobs:
           # Calc GPU num
           if [ "$PLATFORM" = "metax" ]; then
             NUM_GPUS=$(python3 -c "import torch; print(torch.cuda.device_count() if hasattr(torch, 'cuda') and torch.cuda.is_available() else 2)")
-          elif [ "$PLATFORM" = "npu" ]; then
+          elif [ "$PLATFORM" = "ascend" ]; then
             NUM_GPUS=$(python3 -c "import torch, torch_npu; print(torch_npu.npu.device_count())")
           else
             NUM_GPUS=$(python3 -c "import torch; print(torch.cuda.device_count())")
