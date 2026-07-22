@@ -206,9 +206,14 @@ jobs:
           if [ "$PLATFORM" = "metax" ]; then
             NUM_GPUS=$(python3 -c "import torch; print(torch.cuda.device_count() if hasattr(torch, 'cuda') and torch.cuda.is_available() else 2)")
           elif [ "$PLATFORM" = "npu" ]; then
-            NUM_GPUS=$(python3 -c "import torch, torch_npu; print(torch_npu.npu.device_count())")
+            # Some Ascend runtime builds emit diagnostics to stdout during shutdown.
+            NUM_GPUS=$(python3 -c "import torch, torch_npu; print(torch_npu.npu.device_count())" | awk '/^[0-9]+$/ { count = $0 } END { print count }')
           else
             NUM_GPUS=$(python3 -c "import torch; print(torch.cuda.device_count())")
+          fi
+          if ! [[ "$NUM_GPUS" =~ ^[1-9][0-9]*$ ]]; then
+            echo "::error::Invalid device count: '$NUM_GPUS'"
+            exit 1
           fi
           echo "=== Platform: ${{ inputs.platform }} | Device: ${{ inputs.device }} | GPUs: $NUM_GPUS ==="
 
@@ -229,11 +234,11 @@ jobs:
             # Avoid nested module launch: torchrun -> coverage -> pytest script.
             PYTEST_BIN=$(command -v pytest)
             echo "NPU pytest executable: $PYTEST_BIN"
-            torchrun --nproc_per_node=$NUM_GPUS \
+            torchrun --nproc_per_node="$NUM_GPUS" \
               -m coverage run --rcfile="$COVERAGE_DIR/.coveragerc" "$PYTEST_BIN" \
               -v $FINAL_TEST_PATH --ignore=tests/functional_tests $IGNORE_OPTS "${MARKER_OPTS[@]}" -p no:randomly
           else
-            torchrun --nproc_per_node=$NUM_GPUS \
+            torchrun --nproc_per_node="$NUM_GPUS" \
               -m coverage run --rcfile="$COVERAGE_DIR/.coveragerc" -m pytest \
               -v $FINAL_TEST_PATH --ignore=tests/functional_tests $IGNORE_OPTS "${MARKER_OPTS[@]}" -p no:randomly
           fi
