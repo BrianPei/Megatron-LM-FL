@@ -146,6 +146,11 @@ jobs:
               --index-url https://pypi.tuna.tsinghua.edu.cn/simple \
               --timeout 300 --retries 10 --no-cache-dir
             echo "Ninja: $(ninja --version)"
+            # tensorboard is needed only for test collection; install it without
+            # dependencies to keep the validated torch/protobuf/numpy versions intact.
+            pip install tensorboard --no-deps \
+              --index-url https://pypi.tuna.tsinghua.edu.cn/simple \
+              --timeout 300 --retries 10 --no-cache-dir
             python3 -c "import torch, torch_npu; assert torch.__version__ == '2.7.1+cpu', torch.__version__; assert torch_npu.__version__ == '2.7.1.post2', torch_npu.__version__; assert torch.npu.is_available(); assert torch.npu.device_count() == 8, torch.npu.device_count(); print(f'Torch: {torch.__version__}, torch_npu: {torch_npu.__version__}, NPU devices: {torch.npu.device_count()}')"
           else
             pip install torch boto3 "${TEST_DEPENDENCIES[@]}" --no-cache-dir

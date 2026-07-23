@@ -145,6 +145,11 @@ test_matrix:
       # Remove after TE-FL uses torch.npu.default_generators for Ascend.
       - tests/unit_tests/tensor_parallel/test_random.py::test_convert_cuda_rng_state
 
+      ## 10. distributed — Megatron-FSDP ReduceOp unsupported by HCCL
+      # test_fsdp_with_process_groups[8] uses a ReduceOp that Ascend HCCL
+      # does not implement (Unhandled ReduceOp). Smaller group sizes pass.
+      - tests/unit_tests/distributed/megatron_fsdp/test_mcore_fully_sharded_data_parallel.py::TestFullyShardedDataParallel::test_fsdp_with_process_groups[8]
+
   functional:
     train:
       # Golden values for Ascend 910C not yet recorded.
