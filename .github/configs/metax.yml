@@ -4,6 +4,8 @@
 
 hardware_name: metax
 display_name: 'Metax Tests'
+setup_script: .github/scripts/set_env_metax.sh
+nproc_per_node: 8
 
 # CI image for Metax dev env
 # ci_image: localhost:5000/cr.metax-tech.com/public-ai-release/maca/megatron-lm:0.12.0-maca.ai3.3.0.11-torch2.6-py312-ubuntu22.04-amd64
@@ -49,6 +51,14 @@ test_matrix:
   unit:
     devices:
       - c550
+    pytest_extra_args: []
+    groups:
+      - name: models
+        path: tests/unit_tests/models/
+        description: Model tests
+      - name: distributed
+        path: tests/unit_tests/distributed/
+        description: Distributed tests
     # Ignored test files for unit tests
     # These files will be skipped when running pytest
     ignored_tests:

@@ -4,6 +4,8 @@
 
 hardware_name: ascend
 display_name: 'Ascend Tests'
+setup_script: .github/scripts/set_env_ascend.sh
+nproc_per_node: 8
 
 # CI image for the Ascend environment (built and pushed 2026-07-17, validated on Ascend 910C)
 ci_image: harbor.baai.ac.cn/flagos-dev/megatron-lm-fl:manual-20260717-ascend-dev
@@ -50,6 +52,14 @@ test_matrix:
   unit:
     devices:
       - 910c
+    pytest_extra_args: []
+    groups:
+      - name: models
+        path: tests/unit_tests/models/
+        description: Model tests
+      - name: distributed
+        path: tests/unit_tests/distributed/
+        description: Distributed tests
     # Ignored test files/cases for unit tests.
     # These are skipped when running pytest on Ascend NPU.
     ignored_tests:
