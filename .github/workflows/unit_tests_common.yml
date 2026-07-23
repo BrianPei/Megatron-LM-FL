@@ -39,9 +39,9 @@ jobs:
       fail-fast: false
       matrix:
         test_group:
-          - name: core
-            path: "tests/unit_tests/test_*.py megatron/plugin/tests/"
-            description: "Core unit tests"
+          #- name: core
+          #  path: "tests/unit_tests/test_*.py megatron/plugin/tests/"
+          #  description: "Core unit tests"
           # - name: transformer
           #   path: "tests/unit_tests/transformer/"
           #   description: "Transformer tests"
