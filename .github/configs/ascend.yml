@@ -149,6 +149,9 @@ test_matrix:
       # test_fsdp_with_process_groups[8] uses a ReduceOp that Ascend HCCL
       # does not implement (Unhandled ReduceOp). Smaller group sizes pass.
       - tests/unit_tests/distributed/megatron_fsdp/test_mcore_fully_sharded_data_parallel.py::TestFullyShardedDataParallel::test_fsdp_with_process_groups[8]
+      # FSDP custom-dtype matrix tests hit NCCL internal errors on Ascend.
+      # metax also ignores the entire function.
+      - tests/unit_tests/distributed/megatron_fsdp/test_mfsdp_fully_shard.py::TestMegatronFsdpFullyShard::test_fully_shard_custom_dtype
 
   functional:
     train:

@@ -118,7 +118,7 @@ jobs:
           command -v curl || (apt-get update -qq && apt-get install -y --no-install-recommends curl 2>/dev/null)
 
           # Preserve the validated torch/torch_npu pair shipped in the Ascend image.
-          TEST_DEPENDENCIES=(mock pytest-mock coverage pytest-asyncio anyio wandb openai httpx nltk msgpack griffe)
+          TEST_DEPENDENCIES=(mock pytest-mock coverage pytest-asyncio anyio wandb openai httpx nltk msgpack)
           if [ "$PLATFORM" = "ascend" ]; then
             python3 -c "import torch, torch_npu; assert torch.__version__ == '2.7.1+cpu', torch.__version__; assert torch_npu.__version__ == '2.7.1.post2', torch_npu.__version__"
             # The fixed Ascend image omits python3-config, which dataset helper builds
@@ -149,6 +149,13 @@ jobs:
             # tensorboard is needed only for test collection; install it without
             # dependencies to keep the validated torch/protobuf/numpy versions intact.
             pip install "tensorboard<2.18" --no-deps \
+              --index-url https://pypi.tuna.tsinghua.edu.cn/simple \
+              --timeout 300 --retries 10 --no-cache-dir
+            # fastapi is needed for model test collection (RL inference imports).
+            pip install fastapi --no-deps \
+              --index-url https://pypi.tuna.tsinghua.edu.cn/simple \
+              --timeout 300 --retries 10 --no-cache-dir
+            pip install griffe --no-deps \
               --index-url https://pypi.tuna.tsinghua.edu.cn/simple \
               --timeout 300 --retries 10 --no-cache-dir
             python3 -c "import torch, torch_npu; assert torch.__version__ == '2.7.1+cpu', torch.__version__; assert torch_npu.__version__ == '2.7.1.post2', torch_npu.__version__; assert torch.npu.is_available(); assert torch.npu.device_count() == 8, torch.npu.device_count(); print(f'Torch: {torch.__version__}, torch_npu: {torch_npu.__version__}, NPU devices: {torch.npu.device_count()}')"
