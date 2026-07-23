@@ -145,13 +145,19 @@ test_matrix:
       # Remove after TE-FL uses torch.npu.default_generators for Ascend.
       - tests/unit_tests/tensor_parallel/test_random.py::test_convert_cuda_rng_state
 
-      ## 10. distributed — Megatron-FSDP ReduceOp unsupported by HCCL
-      # test_fsdp_with_process_groups[8] uses a ReduceOp that Ascend HCCL
-      # does not implement (Unhandled ReduceOp). Smaller group sizes pass.
-      - tests/unit_tests/distributed/megatron_fsdp/test_mcore_fully_sharded_data_parallel.py::TestFullyShardedDataParallel::test_fsdp_with_process_groups[8]
-      # FSDP custom-dtype matrix tests hit NCCL internal errors on Ascend.
-      # metax also ignores the entire function.
+      ## 10. distributed — HCCL/HCCS errors on Ascend
+      # 0% pass rate: all tests error/fail at HCCL setup.
+      - tests/unit_tests/distributed/megatron_fsdp/test_mcore_fully_sharded_data_parallel.py
       - tests/unit_tests/distributed/megatron_fsdp/test_mfsdp_fully_shard.py::TestMegatronFsdpFullyShard::test_fully_shard_custom_dtype
+      - tests/unit_tests/distributed/megatron_fsdp/test_mfsdp_fully_shard.py::TestMegatronFsdpFullyShard::test_fully_shard_ez
+      - tests/unit_tests/distributed/megatron_fsdp/test_mfsdp_fully_shard.py::TestMegatronFsdpFullyShard::test_fully_shard_te_quantized
+      # HCCL error code 7 / port conflict
+      - tests/unit_tests/distributed/test_grad_reduce_for_replicated_embedder.py
+      - tests/unit_tests/distributed/test_grad_sync_with_expert_parallel.py
+      - tests/unit_tests/distributed/test_param_and_grad_buffer.py
+      - tests/unit_tests/distributed/test_reduce_scatter_with_fp32_accumulation.py
+      - tests/unit_tests/distributed/megatron_fsdp/test_mfsdp_fully_shard.py::TestMegatronFsdpFullyShard::test_dcp_checkpoint_save_and_load
+      - tests/unit_tests/distributed/test_finalize_model_grads.py
 
   functional:
     train:
