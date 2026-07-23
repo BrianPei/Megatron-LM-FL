@@ -52,14 +52,40 @@ test_matrix:
   unit:
     devices:
       - 910c
-    pytest_extra_args: []
+    # Keep executing collected tests after an import/collection error so one
+    # manual run reports the complete platform gap. Collection errors still
+    # make the job fail.
+    pytest_extra_args:
+      - --continue-on-collection-errors
+      - --tb=short
     groups:
+      - name: core
+        path: tests/unit_tests/test_*.py megatron/plugin/tests/
+        description: Core unit tests
       - name: models
         path: tests/unit_tests/models/
         description: Model tests
       - name: distributed
         path: tests/unit_tests/distributed/
         description: Distributed tests
+      - name: dist_checkpointing
+        path: tests/unit_tests/dist_checkpointing/
+        description: Distributed checkpointing tests
+      - name: tensor_parallel
+        path: tests/unit_tests/tensor_parallel/
+        description: Tensor parallel tests
+      - name: pipeline_parallel
+        path: tests/unit_tests/pipeline_parallel/
+        description: Pipeline parallel tests
+      - name: data
+        path: tests/unit_tests/data/
+        description: Data tests
+      - name: fusions
+        path: tests/unit_tests/fusions/
+        description: Fusion tests
+      - name: others
+        path: tests/unit_tests/export/ tests/unit_tests/post_training/ tests/unit_tests/tokenizers/ tests/unit_tests/utils/
+        description: Export, post-training, tokenizer, and utility tests
     # Ignored test files/cases for unit tests.
     # These are skipped when running pytest on Ascend NPU.
     ignored_tests:
@@ -148,6 +174,9 @@ test_matrix:
       # test_save_checkpoint[torch] uses initialize_model_parallel(1,1)
       # (single-rank), incompatible with torchrun --nproc_per_node=8.
       - tests/unit_tests/test_checkpointing.py::test_save_checkpoint[torch]
+      # The inference API tests require tokenizer assets that are not mounted
+      # on the Ascend unit runner.
+      - tests/unit_tests/test_inference.py
 
       ## 9. tensor_parallel — TransformerEngine RNG tracker
       # TransformerEngine-FL still reads torch.cuda.default_generators for an
@@ -155,8 +184,22 @@ test_matrix:
       # Remove after TE-FL uses torch.npu.default_generators for Ascend.
       - tests/unit_tests/tensor_parallel/test_random.py::test_convert_cuda_rng_state
 
-      ## 10. distributed — HCCL/HCCS errors on Ascend
-      # 0% pass rate: all tests error/fail at HCCL setup.
+      ## 10. data - external fixtures are not mounted
+      # These suites require tokenizer/dataset files under /opt/data. Keep the
+      # mock dataset and generated-data tests enabled.
+      - tests/unit_tests/data/test_fim_dataset.py
+      - tests/unit_tests/data/test_preprocess_data.py
+
+      ## 11. dist_checkpointing - unsupported optional runtimes
+      # Ascend 910C does not expose Transformer Engine FP8 tensor support.
+      - tests/unit_tests/dist_checkpointing/test_fp8.py
+      # Mamba checkpoint tests require CUDA-only mamba_ssm/causal_conv1d kernels.
+      - tests/unit_tests/dist_checkpointing/models/test_mamba.py
+      # nvidia-resiliency-ext is intentionally not installed on Ascend because
+      # it requires NVIDIA CUPTI. Keep the native mcore strategy enabled.
+      - tests/unit_tests/dist_checkpointing/test_async_save.py::TestAsyncSave::test_get_async_strategy[nvrx]
+
+      ## 12. distributed - unsupported MCore FSDP paths on Ascend
       # test_distributed_data_parallel.py port conflict — may be resolved by HCCL_NPU_SOCKET_PORT_RANGE
       # - tests/unit_tests/distributed/test_distributed_data_parallel.py
       - tests/unit_tests/distributed/megatron_fsdp/test_mcore_fully_sharded_data_parallel.py
@@ -172,7 +215,7 @@ test_matrix:
       # - tests/unit_tests/distributed/test_finalize_model_grads.py
       # - tests/unit_tests/distributed/test_torch_fully_sharded_parallel.py::test_fsdp2_constructor
 
-      ## 11. models — need CUDA / HCCL init errors / TE missing backend
+      ## 13. models - need CUDA / HCCL init errors / TE missing backend
       # MambaSSM not installed (CUDA dependency)
       - tests/unit_tests/models/test_mamba_model.py
       - tests/unit_tests/models/test_mamba_moe_model.py
@@ -194,6 +237,23 @@ test_matrix:
       - tests/unit_tests/models/test_llava_model.py::TestLLaVAModel::test_forward
       - tests/unit_tests/models/test_llava_model.py::TestLLaVAModel::test_forward_fsdp
       - tests/unit_tests/models/test_llava_model.py::TestLLaVAModelTokenParallel::test_process_embedding_token_parallel
+
+      ## 14. fusions - CUDA/Triton-only kernels
+      # Fused MLA YaRN RoPE is implemented with Triton CUDA kernels. The test
+      # asserts that those kernels imported successfully, so it cannot fall
+      # back to the portable PyTorch implementation on Ascend.
+      - tests/unit_tests/fusions/test_mla_yarn_rope_apply.py
+
+      ## 15. others - unavailable NVIDIA components or test assets
+      # FP8 TensorRT-LLM export requires CUDA FP8 execution.
+      - tests/unit_tests/export/trtllm/test_distributed_fp8.py
+      - tests/unit_tests/export/trtllm/test_single_device_fp8.py
+      # ModelOpt is not installed in the Ascend image. Preserve the pure
+      # interface tests while excluding paths that instantiate it or Mamba.
+      - tests/unit_tests/post_training/test_modelopt_model_builder.py::test_model_provider_switches_to_modelopt_builder
+      - tests/unit_tests/post_training/test_modelopt_module_spec.py::TestModelOptMambaModel
+      # The Ascend unit runner does not mount the tokenizer fixture directory.
+      - tests/unit_tests/tokenizers/test_tokenizer.py
 
   functional:
     train:

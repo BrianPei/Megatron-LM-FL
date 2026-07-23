@@ -59,6 +59,18 @@ install_flash_attn_collection_stub() {
   python3 -c "import flash_attn; assert flash_attn.__version__ == '0.0.0'"
 }
 
+disable_unavailable_test_asset_downloads() {
+  local data_dir=/opt/data
+  mkdir -p "$data_dir"
+
+  # The Ascend unit runner does not mount the NVIDIA unit-test release assets.
+  # Asset-dependent tests are excluded in ascend.yml; this marker prevents the
+  # session fixture from downloading the same archives in every matrix job.
+  if [ -z "$(find "$data_dir" -mindepth 1 -maxdepth 1 -print -quit)" ]; then
+    touch "$data_dir/.ascend-ci-assets-unavailable"
+  fi
+}
+
 setup_unit_environment() {
   ci_activate_python_environment
   ci_ensure_curl
@@ -98,6 +110,7 @@ setup_unit_environment() {
   echo "Skipping NVIDIA CUPTI dependencies and Emerging-Optimizers on Ascend."
   ci_install_project
   configure_ascend_runtime
+  disable_unavailable_test_asset_downloads
   install_flash_attn_collection_stub
 }
 
