@@ -158,6 +158,9 @@ jobs:
             pip install starlette --no-deps \
               --index-url https://pypi.tuna.tsinghua.edu.cn/simple \
               --timeout 300 --retries 10 --no-cache-dir
+            pip install uvicorn --no-deps \
+              --index-url https://pypi.tuna.tsinghua.edu.cn/simple \
+              --timeout 300 --retries 10 --no-cache-dir
             pip install griffe --no-deps \
               --index-url https://pypi.tuna.tsinghua.edu.cn/simple \
               --timeout 300 --retries 10 --no-cache-dir
@@ -275,9 +278,12 @@ jobs:
           printf '[run]\nparallel = true\ndynamic_context = test_function\nsource =\n    %s\n    %s\ndata_file = %s/.coverage\n' \
             "$COVERAGE_TRAINING_SOURCE" "$COVERAGE_PLUGIN_SOURCE" "$COVERAGE_DIR" \
             > "$COVERAGE_DIR/.coveragerc"
+          # torchrun --nproc_per_node="$NUM_GPUS" \
+          #   -m coverage run --rcfile="$COVERAGE_DIR/.coveragerc" -m pytest \
+          #   -v $FINAL_TEST_PATH --ignore=tests/functional_tests $IGNORE_OPTS "${MARKER_OPTS[@]}" -p no:randomly
           torchrun --nproc_per_node="$NUM_GPUS" \
             -m coverage run --rcfile="$COVERAGE_DIR/.coveragerc" -m pytest \
-            -v $FINAL_TEST_PATH --ignore=tests/functional_tests $IGNORE_OPTS "${MARKER_OPTS[@]}" -p no:randomly
+            -v $FINAL_TEST_PATH --ignore=tests/functional_tests $IGNORE_OPTS "${MARKER_OPTS[@]}" -p no:randomly -o addopts="--durations=15 -s -rA"
           exit_code=$?
 
           # Combine coverage fragments and generate JSON report
