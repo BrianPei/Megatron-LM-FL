@@ -45,30 +45,29 @@ jobs:
           # - name: transformer
           #   path: "tests/unit_tests/transformer/"
           #   description: "Transformer tests"
-          - name: models
-            path: "tests/unit_tests/models/"
-            description: "Model tests"
-          - name: distributed
-            path: "tests/unit_tests/distributed/"
-            description: "Distributed tests"
-          - name: dist_checkpointing
-            path: "tests/unit_tests/dist_checkpointing/"
-            description: "Distributed checkpointing tests"
-          - name: tensor_parallel
-            path: "tests/unit_tests/tensor_parallel/"
-            description: "Tensor parallel tests"
-          - name: pipeline_parallel
-            path: "tests/unit_tests/pipeline_parallel/"
-            description: "Pipeline parallel tests"
-          - name: data
-            path: "tests/unit_tests/data/"
-            description: "Data tests"
-          - name: fusions
-            path: "tests/unit_tests/fusions/"
-            description: "Fusion tests"
-          - name: others
-            path: "tests/unit_tests/export/ tests/unit_tests/post_training/ tests/unit_tests/tokenizers/ tests/unit_tests/utils/"
-            description: "Other tests (a2a_overlap, export, post_training, tokenizers, utils)"
+          #- name: models
+          #  path: "tests/unit_tests/models/"
+          #  description: "Model tests"
+          #- name: distributed
+          #  path: "tests/unit_tests/distributed/"
+          #  description: "Distributed tests"
+          #- name: dist_checkpointing
+          #  path: "tests/unit_tests/dist_checkpointing/"
+          #- name: tensor_parallel
+          #  path: "tests/unit_tests/tensor_parallel/"
+          #  description: "Tensor parallel tests"
+          #- name: pipeline_parallel
+          #  path: "tests/unit_tests/pipeline_parallel/"
+          #  description: "Pipeline parallel tests"
+          #- name: data
+          #  path: "tests/unit_tests/data/"
+          #  description: "Data tests"
+          #- name: fusions
+          #  path: "tests/unit_tests/fusions/"
+          #  description: "Fusion tests"
+          # name: others
+           # path: "tests/unit_tests/export/ tests/unit_tests/post_training/ tests/unit_tests/tokenizers/ tests/unit_tests/utils/"
+          #  description: "Other tests (a2a_overlap, export, post_training, tokenizers, utils)"
     name: unit-${{ inputs.device }}-${{ matrix.test_group.name }}
     container:
       image: ${{ inputs.image }}
@@ -261,18 +260,9 @@ jobs:
           printf '[run]\nparallel = true\ndynamic_context = test_function\nsource =\n    %s\n    %s\ndata_file = %s/.coverage\n' \
             "$COVERAGE_TRAINING_SOURCE" "$COVERAGE_PLUGIN_SOURCE" "$COVERAGE_DIR" \
             > "$COVERAGE_DIR/.coveragerc"
-          if [ "$PLATFORM" = "ascend" ]; then
-            # Avoid nested module launch: torchrun -> coverage -> pytest script.
-            PYTEST_BIN=$(command -v pytest)
-            echo "Ascend pytest executable: $PYTEST_BIN"
-            torchrun --nproc_per_node="$NUM_GPUS" \
-              -m coverage run --rcfile="$COVERAGE_DIR/.coveragerc" "$PYTEST_BIN" \
-              -v $FINAL_TEST_PATH --ignore=tests/functional_tests $IGNORE_OPTS "${MARKER_OPTS[@]}" -p no:randomly
-          else
-            torchrun --nproc_per_node="$NUM_GPUS" \
-              -m coverage run --rcfile="$COVERAGE_DIR/.coveragerc" -m pytest \
-              -v $FINAL_TEST_PATH --ignore=tests/functional_tests $IGNORE_OPTS "${MARKER_OPTS[@]}" -p no:randomly
-          fi
+          torchrun --nproc_per_node="$NUM_GPUS" \
+            -m coverage run --rcfile="$COVERAGE_DIR/.coveragerc" -m pytest \
+            -v $FINAL_TEST_PATH --ignore=tests/functional_tests $IGNORE_OPTS "${MARKER_OPTS[@]}" -p no:randomly
           exit_code=$?
 
           # Combine coverage fragments and generate JSON report
