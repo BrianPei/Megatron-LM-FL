@@ -147,6 +147,7 @@ test_matrix:
 
       ## 10. distributed — HCCL/HCCS errors on Ascend
       # 0% pass rate: all tests error/fail at HCCL setup.
+      - tests/unit_tests/distributed/test_distributed_data_parallel.py
       - tests/unit_tests/distributed/megatron_fsdp/test_mcore_fully_sharded_data_parallel.py
       - tests/unit_tests/distributed/megatron_fsdp/test_mfsdp_fully_shard.py::TestMegatronFsdpFullyShard::test_fully_shard_custom_dtype
       - tests/unit_tests/distributed/megatron_fsdp/test_mfsdp_fully_shard.py::TestMegatronFsdpFullyShard::test_fully_shard_ez
@@ -158,6 +159,27 @@ test_matrix:
       - tests/unit_tests/distributed/test_reduce_scatter_with_fp32_accumulation.py
       - tests/unit_tests/distributed/megatron_fsdp/test_mfsdp_fully_shard.py::TestMegatronFsdpFullyShard::test_dcp_checkpoint_save_and_load
       - tests/unit_tests/distributed/test_finalize_model_grads.py
+
+      ## 11. models — need CUDA / HCCL init errors / TE missing backend
+      # MambaSSM not installed (CUDA dependency)
+      - tests/unit_tests/models/test_mamba_model.py
+      - tests/unit_tests/models/test_mamba_moe_model.py::TestMambaMoEModel::test_forward
+      - tests/unit_tests/models/test_heterogeneous_gpt_model.py
+      # HCCL error code 7
+      - tests/unit_tests/models/test_mimo_1f1b_schedule.py::TestMimo1F1BSchedule::test_encoder_tp2_llm_tp2_pp3_8gpu
+      - tests/unit_tests/models/test_mimo_1f1b_schedule.py::TestMimo1F1BSchedule::test_full_pp_8gpu
+      - tests/unit_tests/models/test_mimo_1f1b_schedule.py::TestMimo1F1BSchedule::test_fan_in_dp4_to_dp1_llm_tp2_pp2_8gpu
+      - tests/unit_tests/models/test_mimo_1f1b_schedule.py::TestMimo1F1BSchedule::test_fan_out_dp1_to_dp4_enc_tp2_pp2_8gpu
+      - tests/unit_tests/models/test_mimo_1f1b_schedule.py::TestMimo1F1BSchedule::test_fan_in_dp2_to_dp1_llm_pp3_8gpu
+      - tests/unit_tests/models/test_mimo_checkpoint.py
+      # Hardcoded CUDA device check
+      - tests/unit_tests/models/test_base_embedding.py::TestBaseEmbedding::test_gpu_forward
+      # Needs CUDA/TE-specific features; metax also ignores
+      - tests/unit_tests/models/test_gpt_model.py::TestGPTModelWithCustomPG::test_gpt_model_with_custom_pg
+      # TE-FL misses get_fused_attn_backend
+      - tests/unit_tests/models/test_llava_model.py::TestLLaVAModel::test_forward
+      - tests/unit_tests/models/test_llava_model.py::TestLLaVAModel::test_forward_fsdp
+      - tests/unit_tests/models/test_llava_model.py::TestLLaVAModelTokenParallel::test_process_embedding_token_parallel
 
   functional:
     train:
