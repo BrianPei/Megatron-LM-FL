@@ -213,6 +213,9 @@ jobs:
           export PYTHONPATH=$GITHUB_WORKSPACE:${PYTHONPATH:-}
           export TORCHINDUCTOR_CACHE_DIR=/tmp/.torch_inductor_cache
           export MEGATRON_TEST_PLATFORM=$PLATFORM
+          if [ "$PLATFORM" = "ascend" ]; then
+            export HCCL_NPU_SOCKET_PORT_RANGE="16666-16766"
+          fi
           mkdir -p $TORCHINDUCTOR_CACHE_DIR
 
           if [ "$PLATFORM" = "ascend" ] && [ "$TEST_GROUP" = "models" ]; then
