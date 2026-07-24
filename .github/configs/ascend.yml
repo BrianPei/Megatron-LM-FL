@@ -65,12 +65,12 @@ test_matrix:
       #- name: models
       #  path: tests/unit_tests/models/
       #  description: Model tests
-      #- name: distributed
-      #  path: tests/unit_tests/distributed/
-      #  description: Distributed tests
-      - name: dist_checkpointing
-        path: tests/unit_tests/dist_checkpointing/
-        description: Distributed checkpointing tests
+      - name: distributed
+        path: tests/unit_tests/distributed/
+        description: Distributed tests
+      #- name: dist_checkpointing
+      #  path: tests/unit_tests/dist_checkpointing/
+      #  description: Distributed checkpointing tests
       #- name: tensor_parallel
       #  path: tests/unit_tests/tensor_parallel/
       #  description: Tensor parallel tests
