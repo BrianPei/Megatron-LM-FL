@@ -235,16 +235,15 @@ test_matrix:
       - tests/unit_tests/distributed/megatron_fsdp/test_mfsdp_fully_shard.py::TestMegatronFsdpFullyShard::test_fully_shard_custom_dtype
       - tests/unit_tests/distributed/megatron_fsdp/test_mfsdp_fully_shard.py::TestMegatronFsdpFullyShard::test_fully_shard_ez
       - tests/unit_tests/distributed/megatron_fsdp/test_mfsdp_fully_shard.py::TestMegatronFsdpFullyShard::test_fully_shard_te_quantized
-      # The runnable TE transformer checkpoint variants require the unregistered
-      # TE-FL `glu` operator. The CNN and native PyTorch transformer no_shard
-      # variants reach Megatron-FSDP's coalesced reduce-scatter, but HCCL
-      # rejects its reduction with "Unhandled ReduceOp". Keep the outer-sharded
-      # native variants enabled. A failed rank otherwise corrupts later
-      # distributed tests with resource-not-found and incorrect-gradient errors.
-      # - tests/unit_tests/distributed/test_grad_reduce_for_replicated_embedder.py
-      # - tests/unit_tests/distributed/test_grad_sync_with_expert_parallel.py
-      # - tests/unit_tests/distributed/test_param_and_grad_buffer.py
-      # - tests/unit_tests/distributed/test_reduce_scatter_with_fp32_accumulation.py
+      # HCCL all-reduce / reduce-scatter exhaust NPU coprocessor streams
+      # (rtStreamCreateWithFlags resource alloc fail), same root cause as
+      # the MoE and optimizer resharding stream ceiling in dist_checkpointing.
+      # Gradients come back as zeros or wrong values, and rank crashes
+      # cascade UnboundLocalError / device-mismatch / tensor-close failures.
+      - tests/unit_tests/distributed/test_grad_reduce_for_replicated_embedder.py
+      - tests/unit_tests/distributed/test_grad_sync_with_expert_parallel.py
+      - tests/unit_tests/distributed/test_param_and_grad_buffer.py
+      - tests/unit_tests/distributed/test_reduce_scatter_with_fp32_accumulation.py
       - tests/unit_tests/distributed/megatron_fsdp/test_mfsdp_fully_shard.py::TestMegatronFsdpFullyShard::test_dcp_checkpoint_save_and_load[mesh_dim_config0-te_transformer-no_shard-optim_grads_params]
       - tests/unit_tests/distributed/megatron_fsdp/test_mfsdp_fully_shard.py::TestMegatronFsdpFullyShard::test_dcp_checkpoint_save_and_load[mesh_dim_config0-te_transformer-no_shard-optim_grads]
       - tests/unit_tests/distributed/megatron_fsdp/test_mfsdp_fully_shard.py::TestMegatronFsdpFullyShard::test_dcp_checkpoint_save_and_load[mesh_dim_config0-te_transformer-no_shard-optim]
