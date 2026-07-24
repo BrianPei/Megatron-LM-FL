@@ -221,6 +221,12 @@ test_matrix:
       # it requires NVIDIA CUPTI. Keep the native mcore strategy enabled.
       - tests/unit_tests/dist_checkpointing/test_async_save.py::TestAsyncSave::test_get_async_strategy[nvrx]
       - tests/unit_tests/dist_checkpointing/test_global_metadata_reuse.py
+      # Serialization tests call all_gather_object so frequently inside a
+      # single test that even per-test NPU stream sync cannot prevent the
+      # stream pool from draining.  Once a rank's rtStreamCreateWithFlags
+      # fails it drops out of the collective and the other seven ranks
+      # deadlock — no pytest summary is produced.
+      - tests/unit_tests/dist_checkpointing/test_serialization.py
 
       ## 12. distributed - unsupported MCore FSDP paths on Ascend
       # test_distributed_data_parallel.py port conflict — may be resolved by HCCL_NPU_SOCKET_PORT_RANGE
