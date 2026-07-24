@@ -206,12 +206,23 @@ test_matrix:
       - tests/unit_tests/distributed/megatron_fsdp/test_mfsdp_fully_shard.py::TestMegatronFsdpFullyShard::test_fully_shard_custom_dtype
       - tests/unit_tests/distributed/megatron_fsdp/test_mfsdp_fully_shard.py::TestMegatronFsdpFullyShard::test_fully_shard_ez
       - tests/unit_tests/distributed/megatron_fsdp/test_mfsdp_fully_shard.py::TestMegatronFsdpFullyShard::test_fully_shard_te_quantized
-      # HCCL error code 7 / port conflict — may be resolved by HCCL_NPU_SOCKET_PORT_RANGE
+      # The runnable TE transformer checkpoint variants require the unregistered
+      # TE-FL `glu` operator. Once one rank fails, the remaining ranks enter
+      # later tests and issue mismatched HCCL collectives, producing secondary
+      # resource-not-found, rendezvous-timeout, and communicator-init errors.
+      # Keep the CNN and native PyTorch transformer variants enabled.
       # - tests/unit_tests/distributed/test_grad_reduce_for_replicated_embedder.py
       # - tests/unit_tests/distributed/test_grad_sync_with_expert_parallel.py
       # - tests/unit_tests/distributed/test_param_and_grad_buffer.py
       # - tests/unit_tests/distributed/test_reduce_scatter_with_fp32_accumulation.py
-      # - tests/unit_tests/distributed/megatron_fsdp/test_mfsdp_fully_shard.py::TestMegatronFsdpFullyShard::test_dcp_checkpoint_save_and_load
+      - tests/unit_tests/distributed/megatron_fsdp/test_mfsdp_fully_shard.py::TestMegatronFsdpFullyShard::test_dcp_checkpoint_save_and_load[mesh_dim_config0-te_transformer-no_shard-optim_grads_params]
+      - tests/unit_tests/distributed/megatron_fsdp/test_mfsdp_fully_shard.py::TestMegatronFsdpFullyShard::test_dcp_checkpoint_save_and_load[mesh_dim_config0-te_transformer-no_shard-optim_grads]
+      - tests/unit_tests/distributed/megatron_fsdp/test_mfsdp_fully_shard.py::TestMegatronFsdpFullyShard::test_dcp_checkpoint_save_and_load[mesh_dim_config0-te_transformer-no_shard-optim]
+      - tests/unit_tests/distributed/megatron_fsdp/test_mfsdp_fully_shard.py::TestMegatronFsdpFullyShard::test_dcp_checkpoint_save_and_load[mesh_dim_config0-te_transformer-optim-optim_grads_params]
+      - tests/unit_tests/distributed/megatron_fsdp/test_mfsdp_fully_shard.py::TestMegatronFsdpFullyShard::test_dcp_checkpoint_save_and_load[mesh_dim_config1-te_transformer-no_shard-optim_grads_params]
+      - tests/unit_tests/distributed/megatron_fsdp/test_mfsdp_fully_shard.py::TestMegatronFsdpFullyShard::test_dcp_checkpoint_save_and_load[mesh_dim_config1-te_transformer-no_shard-optim_grads]
+      - tests/unit_tests/distributed/megatron_fsdp/test_mfsdp_fully_shard.py::TestMegatronFsdpFullyShard::test_dcp_checkpoint_save_and_load[mesh_dim_config1-te_transformer-no_shard-optim]
+      - tests/unit_tests/distributed/megatron_fsdp/test_mfsdp_fully_shard.py::TestMegatronFsdpFullyShard::test_dcp_checkpoint_save_and_load[mesh_dim_config1-te_transformer-optim-optim_grads_params]
       # - tests/unit_tests/distributed/test_finalize_model_grads.py
       # - tests/unit_tests/distributed/test_torch_fully_sharded_parallel.py::test_fsdp2_constructor
 
