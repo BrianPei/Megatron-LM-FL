@@ -141,7 +141,6 @@ PYTEST_ARGS+=(
 set +e
 "$TORCHRUN_BIN" --nproc_per_node="$CI_NPROC_PER_NODE" \
   -m coverage run \
-  --ignore-errors \
   --rcfile="$COVERAGE_DIR/.coveragerc" \
   "$PYTEST_BIN" \
   "${PYTEST_ARGS[@]}"
