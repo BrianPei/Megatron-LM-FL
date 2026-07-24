@@ -25,6 +25,18 @@ configure_ascend_runtime() {
   validate_ascend_torch
   validate_ascend_capacity
   ci_export_env HCCL_NPU_SOCKET_PORT_RANGE "16666-16766"
+
+  # Suppress "CPU RNG state changed within GPU RNG context" log spam.
+  # On Ascend the NPU RNG path touches CPU RNG state as a side-effect,
+  # so this warning fires on every fork() context entry.  It is harmless
+  # noise (not an error indicator) but can produce tens of thousands of
+  # lines in dist_checkpointing, inflating logs past 60k lines.
+  mkdir -p /tmp/ascend-ci-site
+  cat > /tmp/ascend-ci-site/sitecustomize.py <<'SITEEOF'
+import logging
+logging.getLogger('megatron.core.tensor_parallel.random').setLevel(logging.ERROR)
+SITEEOF
+  ci_export_env PYTHONPATH "/tmp/ascend-ci-site:${PYTHONPATH:-}"
 }
 
 install_python_config_shim() {
