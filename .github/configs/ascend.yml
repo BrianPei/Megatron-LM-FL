@@ -263,6 +263,11 @@ test_matrix:
       - tests/unit_tests/pipeline_parallel/test_fine_grained_activation_offloading.py::test_fine_grained_activation_offload_with_ep_a2a_overlap_compatibility
       - tests/unit_tests/pipeline_parallel/test_fine_grained_activation_offloading.py::test_gpt_fine_grained_activation_offloading_correctness_and_memory
       - tests/unit_tests/pipeline_parallel/test_multimodule_communicator.py::TestMultiModulePipelineCommunicator::test_send_forward_recv_forward_with_transformer_blocks_and_different_parallelisms
+      # The 8-device multimodule schedules use the same TP=2/PP=2 TE path.
+      # TE-FL's reference generic_gemm rejects its 1024-by-1536 operands,
+      # causing rank divergence and a 30-minute HCCL 507001/SIGABRT cascade.
+      - tests/unit_tests/pipeline_parallel/test_multimodule_schedules.py::TestMultimoduleSchedules::test_single_encoder_8gpu
+      - tests/unit_tests/pipeline_parallel/test_multimodule_schedules.py::TestMultimoduleSchedules::test_dual_encoder_8gpu
 
       ## 14. fusions - CUDA/Triton-only kernels
       # Fused MLA YaRN RoPE is implemented with Triton CUDA kernels. The test
