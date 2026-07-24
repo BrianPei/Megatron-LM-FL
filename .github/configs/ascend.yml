@@ -199,10 +199,12 @@ test_matrix:
       # required by these TE MoE checkpoint tests.
       - tests/unit_tests/dist_checkpointing/models/test_moe_experts.py::TestExpertLayerReconfiguration::test_sequential_grouped_mlp_extra_state
       - tests/unit_tests/dist_checkpointing/models/test_moe_experts.py::TestExpertLayerReconfiguration::test_te_grouped_linear_torch_native
-      # This is the first failing reconfiguration case. Its HCCL all-gather
-      # failure makes ranks enter later checkpoint tests out of sequence,
-      # producing secondary 1EB OOM, symbolic-shape, EOF, and pickle errors.
+      # This reconfiguration case fails for both singleton-shard metadata
+      # variants. Its all-gather makes ranks enter later checkpoint tests out
+      # of sequence, producing secondary 1EB OOM, symbolic-shape, EOF, global
+      # fixture-state, and pickle errors.
       - tests/unit_tests/dist_checkpointing/models/test_moe_experts.py::TestExpertLayerReconfiguration::test_parallel_reconfiguration_e2e[False-tp-ep-dp-pp-tp-ep-dp-pp-te_grouped-True-src_tp_pp_ep_etp3-dest_tp_pp_ep_etp3-False]
+      - tests/unit_tests/dist_checkpointing/models/test_moe_experts.py::TestExpertLayerReconfiguration::test_parallel_reconfiguration_e2e[True-tp-ep-dp-pp-tp-ep-dp-pp-te_grouped-True-src_tp_pp_ep_etp3-dest_tp_pp_ep_etp3-False]
       # nvidia-resiliency-ext is intentionally not installed on Ascend because
       # it requires NVIDIA CUPTI. Keep the native mcore strategy enabled.
       - tests/unit_tests/dist_checkpointing/test_async_save.py::TestAsyncSave::test_get_async_strategy[nvrx]
