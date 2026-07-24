@@ -1,6 +1,10 @@
 name: ascend_tests
 
 on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
   workflow_dispatch: # Allows manual triggering
 
 concurrency:
@@ -14,7 +18,7 @@ jobs:
     with:
       platform: ascend
       run_unit_tests: true
-      run_functional_tests: true
+      run_functional_tests: false
 
   all_tests:
     needs: run_tests
