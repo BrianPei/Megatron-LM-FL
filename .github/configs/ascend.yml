@@ -233,13 +233,25 @@ test_matrix:
       # Hardcoded CUDA device check
       - tests/unit_tests/models/test_base_embedding.py::TestBaseEmbedding::test_gpu_forward
       # HCCL port conflict — may be resolved by HCCL_NPU_SOCKET_PORT_RANGE
-      # - tests/unit_tests/models/test_base_embedding.py::TestBaseEmbedding::test_constructor
+      - tests/unit_tests/models/test_base_embedding.py::TestBaseEmbedding::test_constructor
       # Needs CUDA/TE-specific features; metax also ignores
       - tests/unit_tests/models/test_gpt_model.py::TestGPTModelWithCustomPG::test_gpt_model_with_custom_pg
       # TE-FL misses get_fused_attn_backend
       - tests/unit_tests/models/test_llava_model.py::TestLLaVAModel::test_forward
       - tests/unit_tests/models/test_llava_model.py::TestLLaVAModel::test_forward_fsdp
       - tests/unit_tests/models/test_llava_model.py::TestLLaVAModelTokenParallel::test_process_embedding_token_parallel
+
+      ## 13b. pipeline_parallel - device-side runtime error 507001 + abort
+      # These multi-device cases enter the NPU but fail with Ascend runtime
+      # error 507001 ("internal error in the task scheduler module"), surfaced
+      # via aclnnInplaceNormal / rtMemcpyAsync / rtEventQueryStatus. One rank
+      # aborts (SIGABRT), which tears down the whole process group and cascades
+      # into follow-on errors, so the pytest session never reports a summary.
+      # This is a device/CANN-level failure on the current 910C image, not a
+      # test-logic issue.
+      - tests/unit_tests/pipeline_parallel/test_fine_grained_activation_offloading.py::test_fine_grained_activation_offload_with_ep_a2a_overlap_compatibility
+      - tests/unit_tests/pipeline_parallel/test_fine_grained_activation_offloading.py::test_gpt_fine_grained_activation_offloading_correctness_and_memory
+      - tests/unit_tests/pipeline_parallel/test_multimodule_communicator.py::TestMultiModulePipelineCommunicator::test_send_forward_recv_forward_with_transformer_blocks_and_different_parallelisms
 
       ## 14. fusions - CUDA/Triton-only kernels
       # Fused MLA YaRN RoPE is implemented with Triton CUDA kernels. The test
