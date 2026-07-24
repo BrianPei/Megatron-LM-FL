@@ -269,6 +269,9 @@ test_matrix:
       # asserts that those kernels imported successfully, so it cannot fall
       # back to the portable PyTorch implementation on Ascend.
       - tests/unit_tests/fusions/test_mla_yarn_rope_apply.py
+      # TE-FL exposes rmsnorm_fwd/rmsnorm_bwd but not the fused residual
+      # backward operator rmsnorm_bwd_add used by this test's six variants.
+      - tests/unit_tests/fusions/test_rmsnorm_residual_fusion.py
 
       ## 15. others - unavailable NVIDIA components or test assets
       # FP8 TensorRT-LLM export requires CUDA FP8 execution.
