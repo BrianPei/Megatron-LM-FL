@@ -145,8 +145,7 @@ jobs:
     steps:
       - name: Check unit tests result
         run: |
-          if [ "${{ needs.unit_tests.result }}" != "success" ] && \
-             [ "${{ needs.unit_tests.result }}" != "skipped" ]; then
+          if [ "${{ needs.unit_tests.result }}" != "success" ]; then
             echo "❌ Unit tests failed: ${{ needs.unit_tests.result }}"
             exit 1
           fi
@@ -154,7 +153,12 @@ jobs:
 
   functional_tests:
     name: functional_tests
-    if: inputs.run_functional_tests
+    if: >-
+      always() &&
+      inputs.run_functional_tests &&
+      needs.checkout_and_config.result == 'success' &&
+      needs.lint.result == 'success' &&
+      (inputs.run_unit_tests == false || needs.unit_tests_complete.result == 'success')
     needs:
       - checkout_and_config
       - lint
@@ -184,8 +188,7 @@ jobs:
     steps:
       - name: Check functional tests result
         run: |
-          if [ "${{ needs.functional_tests.result }}" != "success" ] && \
-             [ "${{ needs.functional_tests.result }}" != "skipped" ]; then
+          if [ "${{ needs.functional_tests.result }}" != "success" ]; then
             echo "❌ Functional tests failed: ${{ needs.functional_tests.result }}"
             exit 1
           fi
