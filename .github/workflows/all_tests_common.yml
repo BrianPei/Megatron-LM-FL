@@ -90,16 +90,20 @@ jobs:
           echo "nproc_per_node=$NPROC_PER_NODE" >> $GITHUB_OUTPUT
 
           # Read test matrix for training
-          TRAIN_MATRIX=$(yq '.test_matrix.functional.train | tojson(0)' "$CONFIG_FILE")
+          TRAIN_MATRIX=$(yq '.test_matrix.functional.train // [] | tojson(0)' "$CONFIG_FILE")
+          if [ "${{ inputs.run_functional_tests }}" = "true" ] && [ "$TRAIN_MATRIX" = "[]" ]; then
+            echo "::error::test_matrix.functional.train must contain at least one test when functional tests are enabled"
+            exit 1
+          fi
           echo "train_test_matrix=$TRAIN_MATRIX" >> $GITHUB_OUTPUT
 
           # Read the complete unit-test contract from the platform configuration.
-          UNIT_TEST_GROUPS=$(yq '.test_matrix.unit.groups | tojson(0)' "$CONFIG_FILE")
+          UNIT_TEST_GROUPS=$(yq '.test_matrix.unit.groups // [] | tojson(0)' "$CONFIG_FILE")
           UNIT_PYTEST_EXTRA_ARGS=$(yq '.test_matrix.unit.pytest_extra_args // [] | tojson(0)' "$CONFIG_FILE")
           IGNORED_TESTS=$(yq '.test_matrix.unit.ignored_tests // [] | tojson(0)' "$CONFIG_FILE")
 
-          if [ "$UNIT_TEST_GROUPS" = "null" ] || [ "$UNIT_TEST_GROUPS" = "[]" ]; then
-            echo "::error::test_matrix.unit.groups must contain at least one test group"
+          if [ "${{ inputs.run_unit_tests }}" = "true" ] && [ "$UNIT_TEST_GROUPS" = "[]" ]; then
+            echo "::error::test_matrix.unit.groups must contain at least one group when unit tests are enabled"
             exit 1
           fi
           echo "unit_test_groups=$UNIT_TEST_GROUPS" >> $GITHUB_OUTPUT
