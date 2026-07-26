@@ -16,10 +16,11 @@ runner_labels:
 
 # Container volumes (hardware-specific paths)
 # NOTE: /usr/local/Ascend/add-ons does not exist on this runner; not mounted.
-# NOTE: datasets/tokenizers not mounted for unit tests (add when functional tests needed).
 container_volumes:
   - /usr/local/Ascend/driver:/usr/local/Ascend/driver
   - /usr/local/sbin/npu-smi:/usr/local/sbin/npu-smi
+  - /home/secure/cicd_dev/megatron-lm-fl/ci-assets/datasets:/home/gitlab-runner/data
+  - /home/secure/cicd_dev/megatron-lm-fl/ci-assets/tokenizers:/home/gitlab-runner/tokenizers
 
 # Container options (hardware-specific settings)
 container_options: >-
@@ -332,12 +333,21 @@ test_matrix:
 
   functional:
     train:
-      # Golden values for Ascend 910C not yet recorded.
-      # Populate once a validated training run is complete:
-      # - model: gpt
-      #   test_case: qwen3_0p6b_mcore_te_tp1_pp1_no_mmap_bin_files_npu
-      #   training_script: pretrain_gpt.py
-      #   n_repeat: 1
-      #   golden_environment: dev
-      #   golden_platform: 910c
-      #   enable_lightweight_mode: false
+      - model: gpt
+        test_case: qwen3_0p6b_mcore_te_tp1_pp1_no_mmap_bin_files_ascend
+        training_script: pretrain_gpt.py
+        n_repeat: 1
+        golden_environment: dev
+        golden_platform: 910c
+        enable_lightweight_mode: false
+        data_cache_path: /tmp/megatron-data-cache
+        gpus_per_node: 8
+      - model: gpt
+        test_case: qwen3_0p6b_mcore_te_tp2_pp2_benchmark_ascend
+        training_script: pretrain_gpt.py
+        n_repeat: 1
+        golden_environment: dev
+        golden_platform: 910c
+        enable_lightweight_mode: false
+        data_cache_path: /tmp/megatron-data-cache
+        gpus_per_node: 8
