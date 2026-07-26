@@ -1,4 +1,7 @@
 ENV_VARS:
+  # Megatron's deterministic-mode validation reads NCCL_ALGO even when
+  # torch_npu redirects the distributed backend to HCCL.
+  NCCL_ALGO: Ring
   NVTE_ALLOW_NONDETERMINISTIC_ALGO: 0
   NON_DETERMINSTIC_RESULTS: 1
 MODEL_ARGS:
