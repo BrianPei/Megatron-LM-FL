@@ -39,6 +39,60 @@ SITEEOF
   ci_export_env PYTHONPATH "/tmp/ascend-ci-site:${PYTHONPATH:-}"
 }
 
+install_ascend_uv_system_python_shim() {
+  local shim_dir=/tmp/ascend-ci-bin
+  mkdir -p "$shim_dir"
+
+  cat > "$shim_dir/uv" <<'UVEOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [ "${1:-}" != "run" ]; then
+  echo "Ascend CI uv shim only supports 'uv run': $*" >&2
+  exit 1
+fi
+
+shift
+if [ "${1:-}" = "--no-sync" ]; then
+  shift
+fi
+
+if [ "${1:-}" = "python" ]; then
+  shift
+  exec python3 "$@"
+fi
+if [ "${1:-}" = "pytest" ]; then
+  shift
+  exec python3 -m pytest "$@"
+fi
+
+exec "$@"
+UVEOF
+  chmod 0755 "$shim_dir/uv"
+
+  export PATH="$shim_dir:$PATH"
+  if [ -n "${GITHUB_PATH:-}" ]; then
+    printf '%s\n' "$shim_dir" >> "$GITHUB_PATH"
+  fi
+  ci_export_env PATH "$PATH"
+  uv run --no-sync python -c "import sys; print('Ascend functional Python:', sys.executable)"
+}
+
+install_ascend_functional_dependencies() {
+  local pip_index_args=(
+    --index-url https://pypi.tuna.tsinghua.edu.cn/simple
+    --timeout 300
+    --retries 10
+    --no-cache-dir
+  )
+
+  # The image already contains TensorBoard's runtime dependencies. Installing
+  # only the frontend package avoids changing torch, protobuf, or numpy.
+  python3 -m pip install "tensorboard==2.17.1" --no-deps "${pip_index_args[@]}"
+  python3 -c \
+    "import numpy, pytest; from torch.utils.tensorboard import SummaryWriter; print('Ascend functional dependencies validated')"
+}
+
 install_python_config_shim() {
   if command -v python3-config >/dev/null 2>&1; then
     return
@@ -141,6 +195,8 @@ case "$CI_TEST_SUITE" in
   functional)
     validate_ascend_torch
     ci_setup_functional_environment
+    install_ascend_uv_system_python_shim
+    install_ascend_functional_dependencies
     configure_ascend_runtime
     ;;
   build)
