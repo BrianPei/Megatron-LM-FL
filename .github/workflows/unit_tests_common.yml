@@ -120,6 +120,9 @@ jobs:
 
           # Install dependence package. MUSA images provide their own torch/torch_musa stack.
           if [ "$PLATFORM" = "musa" ]; then
+            # Prepend host MUSA driver path, preserving the image's own
+            # LD_LIBRARY_PATH (which includes libmudnn and other MUSA libraries).
+            printf 'LD_LIBRARY_PATH=/usr/local/musa-4.3.4/lib:${LD_LIBRARY_PATH:-}\n' >> $GITHUB_ENV
             pip install boto3 mock pytest-mock coverage pytest-asyncio anyio wandb openai httpx nltk --no-cache-dir
           else
             pip install torch boto3 mock pytest-mock coverage pytest-asyncio anyio wandb openai httpx --no-cache-dir

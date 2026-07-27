@@ -32,7 +32,6 @@ container_options: >-
   --hostname megatron_cicd
   --user root
   --ulimit nofile=65535:65535
-  --env LD_LIBRARY_PATH=/usr/local/musa-4.3.4/lib
 
 # Device types to run tests on
 device_types:
