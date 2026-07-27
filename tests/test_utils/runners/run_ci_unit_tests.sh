@@ -83,14 +83,14 @@ if [ "${#TEST_PATHS[@]}" -eq 0 ]; then
   exit 1
 fi
 
+PYTHON_BIN="${CI_PYTHON_BIN:-$(command -v python3)}"
 PYTEST_BIN="${CI_PYTEST_BIN:-$(command -v pytest)}"
-TORCHRUN_BIN="${CI_TORCHRUN_BIN:-$(command -v torchrun)}"
-if [ ! -x "$PYTEST_BIN" ]; then
-  echo "::error::pytest executable not found: $PYTEST_BIN"
+if [ ! -x "$PYTHON_BIN" ]; then
+  echo "::error::python3 executable not found: $PYTHON_BIN"
   exit 1
 fi
-if [ ! -x "$TORCHRUN_BIN" ]; then
-  echo "::error::torchrun executable not found: $TORCHRUN_BIN"
+if [ ! -x "$PYTEST_BIN" ]; then
+  echo "::error::pytest executable not found: $PYTEST_BIN"
   exit 1
 fi
 
@@ -139,7 +139,7 @@ PYTEST_ARGS+=(
 )
 
 set +e
-"$TORCHRUN_BIN" --nproc_per_node="$CI_NPROC_PER_NODE" \
+"$PYTHON_BIN" -m torch.distributed.run --nproc_per_node="$CI_NPROC_PER_NODE" \
   -m coverage run \
   --rcfile="$COVERAGE_DIR/.coveragerc" \
   "$PYTEST_BIN" \

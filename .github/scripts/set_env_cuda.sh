@@ -40,6 +40,8 @@ setup_unit_environment() {
     --no-cache-dir
 
   ci_install_project
+  python3 -c \
+    "from megatron.core.dist_checkpointing.strategies.torch import get_async_strategy; get_async_strategy('nvrx'); print('NVRx async checkpoint import passed')"
   validate_cuda_capacity
 }
 
