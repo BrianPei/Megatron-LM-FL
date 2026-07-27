@@ -18,6 +18,8 @@ container_volumes:
   - /home/flagscale_cicd/docker/docker_build/docker_tokenizers:/home/gitlab-runner/tokenizers
   - /home/flagscale_cicd/docker/docker_build/docker_data/Megatron-LM/datasets:/opt/data/datasets
   - /home/flagscale_cicd/docker/docker_build/docker_tokenizers/Megatron-LM/tokenizers:/opt/data/tokenizers
+  # Mount MUSA driver — the image ships a broken libmusa.so stub.
+  - /usr/local/musa-4.3.4:/usr/local/musa-4.3.4
 
 # Container options (hardware-specific settings)
 container_options: >-
@@ -26,6 +28,7 @@ container_options: >-
   --hostname megatron_cicd
   --user root
   --ulimit nofile=65535:65535
+  --env LD_LIBRARY_PATH=/usr/local/musa-4.3.4/lib
 
 # Device types to run tests on
 device_types:
