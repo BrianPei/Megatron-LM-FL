@@ -6,8 +6,7 @@ display_name: 'S5000 Tests'
 
 # Runner labels for Moore Threads node
 runner_labels:
-  - bm-mthreads-bjsjq-zone1-moer-s5000-80g-38-19
-
+  - mt-8g-cicd-megatron
 # CI image for online env
 ci_image: registry.mthreads.com/presale/devtech/flagsclae:0206
 
