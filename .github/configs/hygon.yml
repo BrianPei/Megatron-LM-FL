@@ -1,0 +1,62 @@
+hardware_name: hygon
+display_name: 'Hygon BW1000 Tests'
+setup_script: .github/scripts/set_env_hygon.sh
+nproc_per_node: 8
+
+ci_image: harbor.sourcefind.cn:5443/dcu/admin/base/vllm:0.15.1-ubuntu22.04-dtk26.04-py3.10
+
+runner_labels:
+  - hg-8g-cicd-megatron
+
+# The DTK PyTorch package loads driver-side runtime libraries from this host
+# path. Functional-test dataset mounts will be added after they are validated.
+container_volumes:
+  - /opt/hyhal:/opt/hyhal
+
+container_options: >-
+  --ipc=host
+  --shm-size=500g
+  --hostname megatron_cicd
+  --user root
+  --ulimit nofile=65535:65535
+  --env DTK_HOME=/opt/dtk
+  --env GEMS_VENDOR=amd
+  --env ROCM_PATH=/opt/dtk
+  --env HIP_PATH=/opt/dtk/hip
+  --env HSA_PATH=/opt/dtk/hsa
+  --env HIP_CLANG_PATH=/opt/dtk/llvm/bin
+  --env DEVICE_LIB_PATH=/opt/dtk/amdgcn/bitcode
+  --env PATH=/opt/dtk/bin:/opt/dtk/hip/bin:/opt/dtk/llvm/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+  --env LD_LIBRARY_PATH=/opt/hyhal/lib/criu:/opt/hyhal/lib/rocprofiler:/opt/hyhal/lib:/opt/dtk/hip/lib:/opt/dtk/lib:/opt/dtk/llvm/lib:/opt/dtk/dcc/lib:/opt/dtk/aillvm/lib:/opt/dtk/hsa/lib
+  --device=/dev/kfd
+  --device=/dev/mkfd
+  --device=/dev/dri
+  --group-add video
+  --cap-add=SYS_PTRACE
+  --security-opt seccomp=unconfined
+
+device_types:
+  - bw1000
+
+test_matrix:
+  unit:
+    devices:
+      - bw1000
+    pytest_extra_args: []
+    groups:
+      - name: core
+        path: tests/unit_tests/test_*.py
+        description: Core unit tests
+    ignored_tests:
+      # NVIDIA Transformer Engine FP4/FP8 paths are unavailable in the
+      # documented BW1000 image; TE-FL uses its FlagOS backend instead.
+      - tests/unit_tests/test_fp4_param.py
+      - tests/unit_tests/test_fp8_param.py
+      - tests/unit_tests/test_fp8_utils.py
+      # This test exercises NVIDIA NCCL memory allocator APIs directly.
+      - tests/unit_tests/test_nccl_allocator.py
+
+  # Enable after runner dataset/tokenizer mounts and BW1000 golden values are
+  # available. The common workflow rejects an empty enabled matrix.
+  functional:
+    train: []
