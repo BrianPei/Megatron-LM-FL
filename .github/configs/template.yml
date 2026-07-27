@@ -2,6 +2,8 @@
 
 hardware_name: my_hardware # Change this to your hardware name
 display_name: 'My Hardware Tests' # Display name for GitHub Actions
+setup_script: .github/scripts/set_env_my_hardware.sh
+nproc_per_node: 8
 
 # Docker image for this hardware (change image tag if needed)
 ci_image: harbor.baai.ac.cn/flagscale/megatron-lm-fl:my-hardware-image
@@ -27,4 +29,44 @@ container_volumes:
 # Container options (hardware-specific settings)
 container_options: '--privileged --gpus all --shm-size=500g --hostname megatron_cicd --user root --ulimit nofile=65535:65535'
 
-# Add your Device types and Test matrix configuration below
+# Device types exposed to the workflow matrix
+device_types:
+  - generic
+
+test_matrix:
+  unit:
+    devices:
+      - generic
+    pytest_extra_args: []
+    groups:
+      - name: core
+        path: tests/unit_tests/test_*.py
+        description: Core unit tests
+      - name: models
+        path: tests/unit_tests/models/
+        description: Model tests
+      - name: distributed
+        path: tests/unit_tests/distributed/
+        description: Distributed tests
+      - name: dist_checkpointing
+        path: tests/unit_tests/dist_checkpointing/
+        description: Distributed checkpointing tests
+      - name: tensor_parallel
+        path: tests/unit_tests/tensor_parallel/
+        description: Tensor parallel tests
+      - name: pipeline_parallel
+        path: tests/unit_tests/pipeline_parallel/
+        description: Pipeline parallel tests
+      - name: data
+        path: tests/unit_tests/data/
+        description: Data tests
+      - name: fusions
+        path: tests/unit_tests/fusions/
+        description: Fusion tests
+      - name: others
+        path: tests/unit_tests/export/ tests/unit_tests/post_training/ tests/unit_tests/tokenizers/ tests/unit_tests/utils/
+        description: Export, post-training, tokenizer, and utility tests
+    ignored_tests: []
+
+  functional:
+    train: []
