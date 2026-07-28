@@ -2,17 +2,17 @@
     "musa": {
         "s5000": {
             "elapsed time per iteration (ms):": {
-                "values": [1000000000.0],
+                "values": [19294.0, 9924.1, 554.4, 552.7, 553.2, 556.0, 555.8, 551.5, 553.5, 553.4, 551.3, 553.5, 552.6, 559.2, 558.0, 553.1, 552.6, 550.8, 553.0, 550.1],
                 "threshold": {
                     "type": "upper_bound",
-                    "tolerance": 0.0
+                    "tolerance": 0.1
                 }
             },
             "throughput per GPU (TFLOP/s/GPU):": {
-                "values": [0.0],
+                "values": [0.6, 1.2, 22.3, 22.4, 22.4, 22.3, 22.3, 22.5, 22.4, 22.4, 22.5, 22.4, 22.4, 22.2, 22.2, 22.4, 22.4, 22.5, 22.4, 22.5],
                 "threshold": {
                     "type": "lower_bound",
-                    "tolerance": 0.0
+                    "tolerance": 0.1
                 }
             }
         }
