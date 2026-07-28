@@ -3,7 +3,9 @@ display_name: 'Hygon BW1000 Tests'
 setup_script: .github/scripts/set_env_hygon.sh
 nproc_per_node: 8
 
-ci_image: harbor.sourcefind.cn:5443/dcu/admin/base/vllm:0.15.1-ubuntu22.04-dtk26.04-py3.10
+# Built from the documented DTK image with FlagGems, TransformerEngine-FL, and
+# the test dependencies preinstalled, so CI setup only installs this project.
+ci_image: harbor.baai.ac.cn/flagos-dev/megatron-lm-fl:manual-20260728-hygon-dev
 
 runner_labels:
   - hg-8g-cicd-megatron

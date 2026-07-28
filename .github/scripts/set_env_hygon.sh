@@ -5,8 +5,10 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/set_env_common.sh"
 
-HYGON_FLAGGEMS_REF="66a4ddb3656bf2fc4d305f610a5c49c26192bb04"
-HYGON_TE_FL_REF="b7f65d1b4a4c73b554e5b8f5ce0547eab0c3c35a"
+# The CI image now ships FlagGems and TransformerEngine-FL preinstalled, so the
+# refs below are kept only to document which commits that image was built from.
+# HYGON_FLAGGEMS_REF="66a4ddb3656bf2fc4d305f610a5c49c26192bb04"
+# HYGON_TE_FL_REF="b7f65d1b4a4c73b554e5b8f5ce0547eab0c3c35a"
 
 configure_hygon_runtime() {
   # DTK exposes BW1000 through PyTorch's CUDA-compatible API. FlagGems uses
@@ -42,102 +44,109 @@ configure_hygon_runtime() {
   test -d /dev/dri
 }
 
-checkout_pinned_source() {
-  local name="$1"
-  local url="$2"
-  local ref="$3"
-  local destination="$4"
+# Unused while the CI image ships the dependencies. Restore if the image has to
+# be rebuilt from source refs again.
+# checkout_pinned_source() {
+#   local name="$1"
+#   local url="$2"
+#   local ref="$3"
+#   local destination="$4"
+#
+#   local attempt
+#   for attempt in 1 2 3 4 5; do
+#     local attempt_destination="${destination}.attempt-${attempt}"
+#     echo "Fetching $name at $ref (attempt $attempt/5)"
+#     git init --quiet "$attempt_destination"
+#     git -C "$attempt_destination" remote add origin "$url"
+#
+#     if git -c http.version=HTTP/1.1 \
+#       -C "$attempt_destination" fetch \
+#       --no-tags \
+#       --depth=1 \
+#       --filter=blob:none \
+#       origin \
+#       "$ref"; then
+#       git -C "$attempt_destination" checkout --quiet --detach FETCH_HEAD
+#       mv "$attempt_destination" "$destination"
+#       break
+#     fi
+#
+#     if [ "$attempt" -eq 5 ]; then
+#       echo "::error::Failed to fetch $name at $ref after 5 attempts"
+#       exit 1
+#     fi
+#     sleep $((attempt * 5))
+#   done
+#
+#   local actual_ref
+#   actual_ref=$(git -C "$destination" rev-parse HEAD)
+#   if [ "$actual_ref" != "$ref" ]; then
+#     echo "::error::$name checkout mismatch: expected $ref, got $actual_ref"
+#     exit 1
+#   fi
+#   echo "$name source: $actual_ref"
+# }
 
-  local attempt
-  for attempt in 1 2 3 4 5; do
-    local attempt_destination="${destination}.attempt-${attempt}"
-    echo "Fetching $name at $ref (attempt $attempt/5)"
-    git init --quiet "$attempt_destination"
-    git -C "$attempt_destination" remote add origin "$url"
+# Preinstalled in the CI image.
+# install_hygon_python_dependencies() {
+#   python3 -m pip install \
+#     --index-url https://pypi.tuna.tsinghua.edu.cn/simple \
+#     setuptools \
+#     setuptools-scm \
+#     wheel \
+#     scikit-build-core==0.11 \
+#     pybind11 \
+#     ninja \
+#     cmake \
+#     pyyaml \
+#     decorator \
+#     pydantic \
+#     importlib-metadata \
+#     packaging \
+#     einops \
+#     onnxscript \
+#     onnx \
+#     nvdlfw-inspect \
+#     --no-cache-dir
+# }
 
-    if git -c http.version=HTTP/1.1 \
-      -C "$attempt_destination" fetch \
-      --no-tags \
-      --depth=1 \
-      --filter=blob:none \
-      origin \
-      "$ref"; then
-      git -C "$attempt_destination" checkout --quiet --detach FETCH_HEAD
-      mv "$attempt_destination" "$destination"
-      break
-    fi
+# FlagGems and TransformerEngine-FL are baked into the CI image.
+# install_hygon_software_stack() {
+#   local dependency_root
+#   dependency_root=$(mktemp -d /tmp/megatron-hygon-dependencies.XXXXXX)
+#   local torch_version_before
+#   torch_version_before=$(python3 -c "import torch; print(torch.__version__)")
+#
+#   checkout_pinned_source \
+#     FlagGems \
+#     https://github.com/flagos-ai/FlagGems.git \
+#     "$HYGON_FLAGGEMS_REF" \
+#     "$dependency_root/FlagGems"
+#   python3 -m pip install -e "$dependency_root/FlagGems" \
+#     --no-deps \
+#     --no-build-isolation \
+#     --no-cache-dir
+#
+#   checkout_pinned_source \
+#     TransformerEngine-FL \
+#     https://github.com/flagos-ai/TransformerEngine-FL.git \
+#     "$HYGON_TE_FL_REF" \
+#     "$dependency_root/TransformerEngine-FL"
+#   python3 -m pip install -e "$dependency_root/TransformerEngine-FL" \
+#     --no-deps \
+#     --no-build-isolation \
+#     --no-cache-dir
+#
+#   local torch_version_after
+#   torch_version_after=$(python3 -c "import torch; print(torch.__version__)")
+#   if [ "$torch_version_after" != "$torch_version_before" ]; then
+#     echo "::error::DTK torch changed from $torch_version_before to $torch_version_after"
+#     exit 1
+#   fi
+# }
 
-    if [ "$attempt" -eq 5 ]; then
-      echo "::error::Failed to fetch $name at $ref after 5 attempts"
-      exit 1
-    fi
-    sleep $((attempt * 5))
-  done
-
-  local actual_ref
-  actual_ref=$(git -C "$destination" rev-parse HEAD)
-  if [ "$actual_ref" != "$ref" ]; then
-    echo "::error::$name checkout mismatch: expected $ref, got $actual_ref"
-    exit 1
-  fi
-  echo "$name source: $actual_ref"
-}
-
-install_hygon_python_dependencies() {
-  python3 -m pip install \
-    --index-url https://pypi.tuna.tsinghua.edu.cn/simple \
-    setuptools \
-    setuptools-scm \
-    wheel \
-    scikit-build-core==0.11 \
-    pybind11 \
-    ninja \
-    cmake \
-    pyyaml \
-    decorator \
-    pydantic \
-    importlib-metadata \
-    packaging \
-    einops \
-    onnxscript \
-    onnx \
-    nvdlfw-inspect \
-    --no-cache-dir
-}
-
-install_hygon_software_stack() {
-  local dependency_root
-  dependency_root=$(mktemp -d /tmp/megatron-hygon-dependencies.XXXXXX)
-  local torch_version_before
-  torch_version_before=$(python3 -c "import torch; print(torch.__version__)")
-
-  checkout_pinned_source \
-    FlagGems \
-    https://github.com/flagos-ai/FlagGems.git \
-    "$HYGON_FLAGGEMS_REF" \
-    "$dependency_root/FlagGems"
-  python3 -m pip install -e "$dependency_root/FlagGems" \
-    --no-deps \
-    --no-build-isolation \
-    --no-cache-dir
-
-  checkout_pinned_source \
-    TransformerEngine-FL \
-    https://github.com/flagos-ai/TransformerEngine-FL.git \
-    "$HYGON_TE_FL_REF" \
-    "$dependency_root/TransformerEngine-FL"
-  python3 -m pip install -e "$dependency_root/TransformerEngine-FL" \
-    --no-deps \
-    --no-build-isolation \
-    --no-cache-dir
-
-  local torch_version_after
-  torch_version_after=$(python3 -c "import torch; print(torch.__version__)")
-  if [ "$torch_version_after" != "$torch_version_before" ]; then
-    echo "::error::DTK torch changed from $torch_version_before to $torch_version_after"
-    exit 1
-  fi
-
+# Catch a stale or mis-tagged image before the tests start.
+verify_hygon_software_stack() {
   python3 - <<'PY'
 import flag_gems
 import transformer_engine
@@ -184,31 +193,33 @@ setup_unit_environment() {
   configure_hygon_runtime
   ci_ensure_curl
 
-  local test_dependencies=(
-    pytest==8.3.5
-    boto3
-    mock
-    pytest-mock
-    coverage
-    pytest-asyncio
-    anyio
-    wandb
-    openai
-    httpx
-    nltk
-    msgpack
-    wrapt
-    pyyaml
-  )
-  python3 -m pip install \
-    --index-url https://pypi.tuna.tsinghua.edu.cn/simple \
-    "${test_dependencies[@]}" \
-    --no-cache-dir
-  install_hygon_python_dependencies
+  # Preinstalled in the CI image.
+  # local test_dependencies=(
+  #   pytest==8.3.5
+  #   boto3
+  #   mock
+  #   pytest-mock
+  #   coverage
+  #   pytest-asyncio
+  #   anyio
+  #   wandb
+  #   openai
+  #   httpx
+  #   nltk
+  #   msgpack
+  #   wrapt
+  #   pyyaml
+  # )
+  # python3 -m pip install \
+  #   --index-url https://pypi.tuna.tsinghua.edu.cn/simple \
+  #   "${test_dependencies[@]}" \
+  #   --no-cache-dir
+  # install_hygon_python_dependencies
 
   echo "Preserving the PyTorch and DTK packages supplied by the BW1000 image."
   echo "Skipping NVIDIA CUPTI, NVRx, and Emerging Optimizers dependencies."
-  install_hygon_software_stack
+  # install_hygon_software_stack
+  verify_hygon_software_stack
   install_hygon_project
   validate_hygon_capacity
 }
@@ -227,8 +238,9 @@ setup_functional_environment() {
   ci_install_yq
   ci_install_envsubst
   ci_install_uv_compatibility_shim
-  install_hygon_python_dependencies
-  install_hygon_software_stack
+  # install_hygon_python_dependencies
+  # install_hygon_software_stack
+  verify_hygon_software_stack
   install_hygon_project
   validate_hygon_capacity
 }
@@ -236,8 +248,9 @@ setup_functional_environment() {
 setup_build_environment() {
   ci_activate_python_environment
   configure_hygon_runtime
-  install_hygon_python_dependencies
-  install_hygon_software_stack
+  # install_hygon_python_dependencies
+  # install_hygon_software_stack
+  verify_hygon_software_stack
   install_hygon_project
   validate_hygon_capacity
 }
