@@ -45,13 +45,31 @@ checkout_pinned_source() {
   local ref="$3"
   local destination="$4"
 
-  echo "Cloning $name from $url"
-  git -c http.version=HTTP/1.1 clone \
-    --filter=blob:none \
-    --no-checkout \
-    "$url" \
-    "$destination"
-  git -C "$destination" checkout --quiet --detach "$ref"
+  local attempt
+  for attempt in 1 2 3 4 5; do
+    local attempt_destination="${destination}.attempt-${attempt}"
+    echo "Fetching $name at $ref (attempt $attempt/5)"
+    git init --quiet "$attempt_destination"
+    git -C "$attempt_destination" remote add origin "$url"
+
+    if git -c http.version=HTTP/1.1 \
+      -C "$attempt_destination" fetch \
+      --no-tags \
+      --depth=1 \
+      --filter=blob:none \
+      origin \
+      "$ref"; then
+      git -C "$attempt_destination" checkout --quiet --detach FETCH_HEAD
+      mv "$attempt_destination" "$destination"
+      break
+    fi
+
+    if [ "$attempt" -eq 5 ]; then
+      echo "::error::Failed to fetch $name at $ref after 5 attempts"
+      exit 1
+    fi
+    sleep $((attempt * 5))
+  done
 
   local actual_ref
   actual_ref=$(git -C "$destination" rev-parse HEAD)
