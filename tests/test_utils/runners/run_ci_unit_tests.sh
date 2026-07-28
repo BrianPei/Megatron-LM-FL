@@ -134,8 +134,6 @@ fi
 PYTEST_ARGS+=(
   -p
   no:randomly
-  # A single unimportable module must not hide the rest of the group's results.
-  --continue-on-collection-errors
   -o
   addopts="--durations=15 -s -rA"
 )
