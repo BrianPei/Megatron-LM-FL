@@ -19,6 +19,12 @@ configure_hygon_runtime() {
   # RCCL warns about this at init and hangs in ncclCommInitRank without it,
   # so every 8-card collective on BW1000 needs it set before torchrun starts.
   ci_export_env HSA_FORCE_FINE_GRAIN_PCIE 1
+  # Preserve warnings and errors without printing every process-group setup
+  # from all eight ranks.
+  ci_export_env NCCL_DEBUG WARN
+  ci_export_env TORCH_CPP_LOG_LEVEL WARNING
+  # PyTorch otherwise starts 32 Inductor workers per rank in this image.
+  ci_export_env TORCHINDUCTOR_COMPILE_THREADS 1
   ci_export_env TE_FL_SKIP_CUDA 1
   ci_export_env TE_FL_PREFER flagos
   ci_export_env NVTE_SKIP_SUBMODULE_CHECKS_DURING_BUILD 1

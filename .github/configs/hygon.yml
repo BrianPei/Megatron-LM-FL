@@ -46,6 +46,9 @@ test_matrix:
       - bw1000
     pytest_extra_args:
       - --continue-on-collection-errors
+      # Keep successful multi-rank stdout out of the live Actions log. Pytest
+      # still includes captured output for failures.
+      - --capture=fd
     groups:
       - name: core
         path: tests/unit_tests/test_*.py megatron/plugin/tests/
@@ -82,6 +85,9 @@ test_matrix:
       - tests/unit_tests/test_fp8_utils.py
       # This test exercises NVIDIA NCCL memory allocator APIs directly.
       - tests/unit_tests/test_nccl_allocator.py
+      # On BW1000 this DCP matrix produces rank-dependent failures and then
+      # deadlocks in KFD/futex waits while constructing the next process group.
+      - tests/unit_tests/distributed/megatron_fsdp/test_mfsdp_fully_shard.py::TestMegatronFsdpFullyShard::test_dcp_checkpoint_save_and_load
 
   # Enable after runner dataset/tokenizer mounts and BW1000 golden values are
   # available. The common workflow rejects an empty enabled matrix.
