@@ -83,9 +83,6 @@ SITEEOF
 
     # Shared functional test toolchain (yq, envsubst, uv, pybind11, project install).
     ci_setup_functional_environment
-    # MUSA image ships a newer huggingface_hub that rejects local
-    # paths as repo IDs.  Pin to the version CUDA / Metax CI use.
-    python3 -m pip install "huggingface_hub<0.26" --no-cache-dir
     # Re-install with the MUSA-specific pip flag.
     install_musa_project
     validate_musa_capacity
