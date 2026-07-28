@@ -45,6 +45,19 @@ configure_hygon_runtime() {
   test -d /dev/dri
 }
 
+configure_hygon_unit_safety() {
+  # Abort a unit-test job when one rank stops making collective progress
+  # instead of leaving the remaining ranks blocked until the Actions timeout.
+  ci_export_env TORCH_NCCL_ASYNC_ERROR_HANDLING 1
+  ci_export_env TORCH_NCCL_ENABLE_MONITORING 1
+  ci_export_env TORCH_NCCL_HEARTBEAT_TIMEOUT_SEC 180
+  ci_export_env TORCH_NCCL_DUMP_ON_TIMEOUT 1
+  ci_export_env TORCH_NCCL_TRACE_BUFFER_SIZE 2000
+  # The common runner honors this optional limit. It is shorter than the
+  # workflow timeout so coverage finalization still has time to run.
+  ci_export_env CI_UNIT_TEST_TIMEOUT_SECONDS 1800
+}
+
 # Catch a stale or mis-tagged image before the tests start.
 verify_hygon_software_stack() {
   python3 - <<'PY'
@@ -88,16 +101,43 @@ PY
   ci_validate_device_capacity "$device_count"
 }
 
+validate_hygon_distributed_runtime() {
+  local probe_timeout_seconds=180
+  local probe_exit_code=0
+
+  echo "Running the BW1000 device and RCCL preflight."
+  timeout \
+    --signal=TERM \
+    --kill-after=15s \
+    "${probe_timeout_seconds}s" \
+    python3 -u -m torch.distributed.run \
+      --standalone \
+      --nproc_per_node="$CI_NPROC_PER_NODE" \
+      "$CI_PROJECT_ROOT/.github/scripts/probe_hygon_distributed.py" ||
+    probe_exit_code=$?
+
+  if [ "$probe_exit_code" -ne 0 ]; then
+    if [ "$probe_exit_code" -eq 124 ] || [ "$probe_exit_code" -eq 137 ]; then
+      echo "::error::BW1000 distributed preflight timed out. The host device or KFD state must be recovered before rerunning CI."
+    else
+      echo "::error::BW1000 distributed preflight failed with exit code $probe_exit_code."
+    fi
+    return "$probe_exit_code"
+  fi
+}
+
 setup_unit_environment() {
   ci_activate_python_environment
   configure_hygon_runtime
+  configure_hygon_unit_safety
   ci_ensure_curl
 
   echo "Preserving the PyTorch and DTK packages supplied by the BW1000 image."
   echo "Skipping NVIDIA CUPTI, NVRx, and Emerging Optimizers dependencies."
   verify_hygon_software_stack
-  install_hygon_project
   validate_hygon_capacity
+  validate_hygon_distributed_runtime
+  install_hygon_project
 }
 
 setup_functional_environment() {

@@ -46,6 +46,9 @@ test_matrix:
       - bw1000
     pytest_extra_args:
       - --continue-on-collection-errors
+      # A rank-local setup failure must terminate torchrun instead of allowing
+      # the other ranks to enter the next rendezvous and wait indefinitely.
+      - --maxfail=1
       # Keep successful multi-rank stdout out of the live Actions log. Pytest
       # still includes captured output for failures.
       - --capture=fd
