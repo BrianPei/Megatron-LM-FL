@@ -10,10 +10,6 @@ configure_musa_runtime() {
   ci_export_env TORCHDYNAMO_DISABLE 1
   ci_export_env TORCH_COMPILE_DISABLE 1
   ci_export_env LD_LIBRARY_PATH "/usr/local/musa-4.3.4/lib:${LD_LIBRARY_PATH:-}"
-  # MUSA container ships a newer huggingface_hub that rejects local
-  # paths as repo IDs.  Force offline mode so AutoTokenizer loads
-  # from /opt/data/tokenizers without network validation.
-  ci_export_env HF_HUB_OFFLINE 1
 }
 
 validate_musa_capacity() {
