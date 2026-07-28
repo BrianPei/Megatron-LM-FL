@@ -2,6 +2,7 @@ ENV_VARS:
   HF_HUB_OFFLINE: 1
   CUDA_DEVICE_MAX_CONNECTIONS: 1
   NVTE_ALLOW_NONDETERMINISTIC_ALGO: 0
+  NON_DETERMINSTIC_RESULTS: 1
   NCCL_ALGO: Ring
   CUBLAS_WORKSPACE_CONFIG: :4096:8
 MODEL_ARGS:
@@ -12,10 +13,6 @@ MODEL_ARGS:
   --num-attention-heads: 16
   --group-query-attention: true
   --num-query-groups: 8
-  --log-params-norm: true
-  --log-num-zeros-in-grad: true
-  --log-memory-to-tensorboard: true
-  --log-timers-to-tensorboard: true
   --tensorboard-dir: ${TENSORBOARD_PATH}
   --micro-batch-size: 1
   --global-batch-size: 8
@@ -35,7 +32,7 @@ MODEL_ARGS:
   --lr-decay-style: cosine
   --min-lr: 1.0e-6
   --weight-decay: 0.1
-  --clip-grad: 1.0
+  --clip-grad: 0.0
   --lr-warmup-fraction: .01
   --log-interval: 1
   --save-interval: 100000

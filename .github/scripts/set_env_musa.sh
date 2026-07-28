@@ -59,33 +59,42 @@ setup_build_environment() {
   validate_musa_capacity
 }
 
+setup_functional_environment() {
+  configure_musa_runtime
+  ci_setup_functional_environment --ignore-requires-python
+
+  # Keep the image-provided torch/torch_musa pair intact. torchada is a
+  # pure-Python compatibility layer that redirects CUDA APIs and device
+  # strings to MUSA.
+  python3 -m pip install \
+    torchada==0.1.40 \
+    --no-deps \
+    --no-cache-dir
+  validate_musa_capacity
+
+  mkdir -p /tmp/musa-ci-site
+  cat > /tmp/musa-ci-site/sitecustomize.py <<'SITEEOF'
+import torchada  # noqa: F401
+import torch
+
+from megatron.plugin.platform import get_platform
+
+
+# torchada intentionally leaves this probe unchanged for platform detection.
+# Select and cache MUSA first, then satisfy Megatron's legacy CUDA assertion.
+if get_platform().device_name() == "musa":
+    torch.cuda.is_available = torch.musa.is_available
+SITEEOF
+  ci_export_env PYTHONPATH "/tmp/musa-ci-site:${PYTHONPATH:-}"
+}
+
 ci_require_env CI_TEST_SUITE
 case "$CI_TEST_SUITE" in
   unit)
     setup_unit_environment
     ;;
   functional)
-    configure_musa_runtime
-
-    # MUSA uses its own device backend (torch_musa), so torch.cuda.is_available()
-    # returns False by default.  initialize_megatron asserts it is True before
-    # distributed init even runs.  Patch torch.cuda via sitecustomize so the
-    # assertion sees what it expects — the real MUSA device count is still
-    # available through torch.musa.
-    mkdir -p /tmp/musa-ci-site
-    cat > /tmp/musa-ci-site/sitecustomize.py <<'SITEEOF'
-import torch
-if hasattr(torch, "musa") and torch.musa.is_available():
-    torch.cuda.is_available = lambda: True
-    torch.cuda.device_count = torch.musa.device_count
-SITEEOF
-    ci_export_env PYTHONPATH "/tmp/musa-ci-site:${PYTHONPATH:-}"
-
-    # Shared functional test toolchain (yq, envsubst, uv, pybind11, project
-    # install).  The MUSA image ships Python 3.10 while pyproject requires
-    # >=3.12, so the project install needs --ignore-requires-python.
-    ci_setup_functional_environment --ignore-requires-python
-    validate_musa_capacity
+    setup_functional_environment
     ;;
   build)
     setup_build_environment
