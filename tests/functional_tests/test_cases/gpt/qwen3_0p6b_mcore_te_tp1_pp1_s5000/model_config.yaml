@@ -1,3 +1,10 @@
+BEFORE_SCRIPT: |
+  python3 -c "
+  import torch
+  if hasattr(torch, 'musa') and torch.musa.is_available():
+      torch.cuda.is_available = lambda: True
+      torch.cuda.device_count = torch.musa.device_count
+  "
 ENV_VARS:
   CUDA_DEVICE_MAX_CONNECTIONS: 1
   NVTE_ALLOW_NONDETERMINISTIC_ALGO: 0
