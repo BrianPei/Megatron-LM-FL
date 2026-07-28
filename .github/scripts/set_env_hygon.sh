@@ -19,6 +19,9 @@ configure_hygon_runtime() {
 
   ci_export_env GEMS_VENDOR amd
   ci_export_env CUDA_VISIBLE_DEVICES "0,1,2,3,4,5,6,7"
+  # RCCL warns about this at init and hangs in ncclCommInitRank without it,
+  # so every 8-card collective on BW1000 needs it set before torchrun starts.
+  ci_export_env HSA_FORCE_FINE_GRAIN_PCIE 1
   ci_export_env TE_FL_SKIP_CUDA 1
   ci_export_env TE_FL_PREFER flagos
   ci_export_env NVTE_SKIP_SUBMODULE_CHECKS_DURING_BUILD 1
