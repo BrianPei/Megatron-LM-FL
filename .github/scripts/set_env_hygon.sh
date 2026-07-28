@@ -129,6 +129,7 @@ PY
 
 install_hygon_project() {
   cd "$CI_PROJECT_ROOT"
+  git config --global --add safe.directory "$CI_PROJECT_ROOT"
   # The validated DTK image currently provides Python 3.10 while the project
   # metadata requires 3.12. The documented training stack is source-compatible
   # with 3.10, so bypass only the metadata gate and preserve the image runtime.
