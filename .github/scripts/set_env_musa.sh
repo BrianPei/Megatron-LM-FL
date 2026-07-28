@@ -56,6 +56,20 @@ setup_functional_environment() {
   ci_activate_python_environment
   configure_musa_runtime
 
+  # MUSA uses its own device backend (torch_musa), so torch.cuda.is_available()
+  # returns False by default.  initialize_megatron asserts it is True before
+  # distributed init even runs.  Patch torch.cuda via sitecustomize so the
+  # assertion sees what it expects — the real MUSA device count is still
+  # available through torch.musa.
+  mkdir -p /tmp/musa-ci-site
+  cat > /tmp/musa-ci-site/sitecustomize.py <<'SITEEOF'
+import torch
+if hasattr(torch, "musa") and torch.musa.is_available():
+    torch.cuda.is_available = lambda: True
+    torch.cuda.device_count = torch.musa.device_count
+SITEEOF
+  ci_export_env PYTHONPATH "/tmp/musa-ci-site:${PYTHONPATH:-}"
+
   ci_install_yq
   ci_install_envsubst
   ci_install_uv_compatibility_shim
