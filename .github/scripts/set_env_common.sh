@@ -152,7 +152,8 @@ ci_setup_functional_environment() {
   ci_install_envsubst
   ci_install_uv_compatibility_shim
   python3 -m pip install pybind11 --no-cache-dir
-  ci_install_project
+  # Any extra args are forwarded to the project install step.
+  ci_install_project "$@"
 }
 
 ci_validate_device_capacity() {
@@ -172,6 +173,8 @@ ci_validate_device_capacity() {
 }
 
 ci_install_project() {
+  # Extra pip flags may be passed through, e.g. --ignore-requires-python
+  # for images whose Python predates the pyproject requirement.
   cd "$CI_PROJECT_ROOT"
-  python3 -m pip install -e . --no-deps --no-build-isolation --no-cache-dir
+  python3 -m pip install -e . --no-deps --no-build-isolation --no-cache-dir "$@"
 }

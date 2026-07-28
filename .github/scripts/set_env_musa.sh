@@ -81,10 +81,10 @@ if hasattr(torch, "musa") and torch.musa.is_available():
 SITEEOF
     ci_export_env PYTHONPATH "/tmp/musa-ci-site:${PYTHONPATH:-}"
 
-    # Shared functional test toolchain (yq, envsubst, uv, pybind11, project install).
-    ci_setup_functional_environment
-    # Re-install with the MUSA-specific pip flag.
-    install_musa_project
+    # Shared functional test toolchain (yq, envsubst, uv, pybind11, project
+    # install).  The MUSA image ships Python 3.10 while pyproject requires
+    # >=3.12, so the project install needs --ignore-requires-python.
+    ci_setup_functional_environment --ignore-requires-python
     validate_musa_capacity
     ;;
   build)
