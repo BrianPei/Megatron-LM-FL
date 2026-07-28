@@ -80,7 +80,7 @@ jobs:
           fetch-depth: 0
           set-safe-directory: true
 
-      - name: Setup platform environment
+      - name: Setup Python environment
         working-directory: ${{ github.workspace }}
         env:
           CI_TEST_SUITE: functional

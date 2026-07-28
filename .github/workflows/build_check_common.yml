@@ -41,7 +41,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup platform environment
+      - name: Setup Python environment
         env:
           CI_TEST_SUITE: build
           CI_PLATFORM: ${{ inputs.platform }}

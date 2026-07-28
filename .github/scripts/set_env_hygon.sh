@@ -21,6 +21,7 @@ configure_hygon_runtime() {
   ci_export_env CUDA_VISIBLE_DEVICES "0,1,2,3,4,5,6,7"
   ci_export_env TE_FL_SKIP_CUDA 1
   ci_export_env TE_FL_PREFER flagos
+  ci_export_env NVTE_SKIP_SUBMODULE_CHECKS_DURING_BUILD 1
   ci_export_env NVTE_FUSED_ATTN 0
   ci_export_env NVTE_UNFUSED_ATTN 0
   ci_export_env DTK_HOME "$dtk_home"
