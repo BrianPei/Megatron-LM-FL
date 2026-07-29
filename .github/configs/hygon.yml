@@ -89,13 +89,44 @@ test_matrix:
       - tests/unit_tests/test_fp8_utils.py
       # Exercises NVIDIA NCCL memory allocator APIs directly.
       - tests/unit_tests/test_nccl_allocator.py
+      # TE-FL precision-aware fused Adam pathway not supported on BW1000.
+      - tests/unit_tests/test_optimizer.py::test_precision_aware_fused_adam
+      # TE-FL multi_tensor_sgd API version mismatch (8 args vs 11).
+      - tests/unit_tests/test_optimizer_cpu_offloading.py::test_multi_device_hybrid_optimizer
+      # BW1000 CPU offload overlap exceeds CUDA tolerance.
+      - tests/unit_tests/test_optimizer_cpu_offloading.py::test_overlap_cpu_optimizer_d2h_h2d_sync_correctness
+      # TE-FL broadcast shape mismatch ([] vs [1]).
+      - tests/unit_tests/test_utils.py::test_param_norm_linear
+      - tests/unit_tests/test_utils.py::test_param_norm_moe
+
+
       # distributed
       # Rank-dependent failures deadlock in KFD/futex during next PG init.
       - tests/unit_tests/distributed/megatron_fsdp/test_mfsdp_fully_shard.py::TestMegatronFsdpFullyShard::test_dcp_checkpoint_save_and_load
+      
+      
       # data
       # Hardcoded /opt/data and /opt/megatron-lm paths, plus a vocab download
       # with no timeout that hangs the rank group. Also ignored on cuda/metax.
       - tests/unit_tests/data/test_preprocess_data.py
+      # Intermittently hangs at one of its explicit torch.distributed.barrier()
+      # calls, which follow rank-0-only setup work. Passed on an earlier run.
+      # Not ignored on metax.
+      - tests/unit_tests/data/test_builder.py::test_fast_builder
+
+
+      # models
+      # Intermittently hangs after test_forward with no output from any rank and
+      # no error; only the 30-min hard timeout ends it. Not ignored on metax.
+      - tests/unit_tests/models/test_clip_vit_model.py::TestCLIPViTModel::test_save_load
+
+
+
+      
+      # pipeline_parallel
+      # TE-FL FlagGems te_general_grouped_gemm broadcast shape mismatch.
+      - tests/unit_tests/pipeline_parallel/test_fine_grained_activation_offloading.py::test_gpt_fine_grained_activation_offloading_correctness_and_memory
+      - tests/unit_tests/pipeline_parallel/test_fine_grained_activation_offloading.py::test_fine_grained_activation_offload_with_ep_a2a_overlap_compatibility
 
   # Enable after runner dataset/tokenizer mounts and BW1000 golden values are
   # available. The common workflow rejects an empty enabled matrix.
