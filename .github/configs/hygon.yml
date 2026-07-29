@@ -89,17 +89,9 @@ test_matrix:
       - tests/unit_tests/test_fp8_utils.py
       # Exercises NVIDIA NCCL memory allocator APIs directly.
       - tests/unit_tests/test_nccl_allocator.py
-    
-    
-      # models
-      # cupy unavailable on BW1000 (AMD/HIP).
-      - tests/unit_tests/models/test_gpt_model.py::TestGPTModelWithCustomPG::test_gpt_model_with_custom_pg
       # distributed
       # Rank-dependent failures deadlock in KFD/futex during next PG init.
       - tests/unit_tests/distributed/megatron_fsdp/test_mfsdp_fully_shard.py::TestMegatronFsdpFullyShard::test_dcp_checkpoint_save_and_load
-      # pipeline_parallel
-      # cupy unavailable on BW1000 (AMD/HIP).
-      - tests/unit_tests/pipeline_parallel/test_bridge_communicator.py::TestBridgeCommunicator::test_bridge_communicator_init
 
   # Enable after runner dataset/tokenizer mounts and BW1000 golden values are
   # available. The common workflow rejects an empty enabled matrix.

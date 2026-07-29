@@ -157,6 +157,10 @@ setup_unit_environment() {
   python3 -m pip install multi-storage-client \
     --index-url https://pypi.tuna.tsinghua.edu.cn/simple \
     --no-cache-dir
+  # DTK image ships a cupy that imports but has no ndarray attribute;
+  # einops picks it as a backend and every einops.reduce/rearrange call
+  # raises AttributeError. Removing it lets einops fall back to torch.
+  python3 -m pip uninstall cupy -y
   verify_hygon_software_stack
   validate_hygon_capacity
   validate_hygon_distributed_runtime
