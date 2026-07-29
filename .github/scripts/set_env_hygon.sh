@@ -186,7 +186,8 @@ setup_functional_environment() {
 
   ci_install_yq
   ci_install_envsubst
-  ci_install_uv_compatibility_shim
+  # Keep uv on the Python 3.10 interpreter supplied with the DTK stack.
+  ci_install_uv_compatibility_shim true
   remove_broken_hygon_cupy
   verify_hygon_software_stack
   install_hygon_project
