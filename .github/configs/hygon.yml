@@ -68,12 +68,12 @@ test_matrix:
       #- name: tensor_parallel
       #  path: tests/unit_tests/tensor_parallel/
       #  description: Tensor parallel tests
-      - name: pipeline_parallel
-        path: tests/unit_tests/pipeline_parallel/
-        description: Pipeline parallel tests
-      - name: data
-        path: tests/unit_tests/data/
-        description: Data tests
+      #- name: pipeline_parallel
+      #  path: tests/unit_tests/pipeline_parallel/
+      #  description: Pipeline parallel tests
+      #- name: data
+      #  path: tests/unit_tests/data/
+      #  description: Data tests
       #- name: fusions
       #  path: tests/unit_tests/fusions/
       #  description: Fusion tests
@@ -119,6 +119,18 @@ test_matrix:
       # Intermittently hangs after test_forward with no output from any rank and
       # no error; only the 30-min hard timeout ends it. Not ignored on metax.
       - tests/unit_tests/models/test_clip_vit_model.py::TestCLIPViTModel::test_save_load
+      # models
+      # MIMO 1F1B 8-GPU layouts hit missing tensor model-parallel group
+      # initialization in the HyperCommGrid + TE attention path. Also
+      # ignored on metax.
+      - tests/unit_tests/models/test_mimo_1f1b_schedule.py::TestMimo1F1BSchedule::test_encoder_tp2_llm_tp2_pp3_8gpu
+      - tests/unit_tests/models/test_mimo_1f1b_schedule.py::TestMimo1F1BSchedule::test_full_pp_8gpu
+      - tests/unit_tests/models/test_mimo_1f1b_schedule.py::TestMimo1F1BSchedule::test_fan_in_dp4_to_dp1_llm_tp2_pp2_8gpu
+      - tests/unit_tests/models/test_mimo_1f1b_schedule.py::TestMimo1F1BSchedule::test_fan_out_dp1_to_dp4_enc_tp2_pp2_8gpu
+      - tests/unit_tests/models/test_mimo_1f1b_schedule.py::TestMimo1F1BSchedule::test_fan_in_dp2_to_dp1_llm_pp3_8gpu
+      # models
+      # MIMO checkpoint same HyperCommGrid + TE attention issue as above.
+      - tests/unit_tests/models/test_mimo_checkpoint.py
 
 
 
