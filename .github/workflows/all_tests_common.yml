@@ -33,6 +33,7 @@ jobs:
       device_types: ${{ steps.config.outputs.device_types }}
       setup_script: ${{ steps.config.outputs.setup_script }}
       nproc_per_node: ${{ steps.config.outputs.nproc_per_node }}
+      checkout_fetch_depth: ${{ steps.config.outputs.checkout_fetch_depth }}
       train_test_matrix: ${{ steps.config.outputs.train_test_matrix }}
       unit_test_groups: ${{ steps.config.outputs.unit_test_groups }}
       unit_pytest_extra_args: ${{ steps.config.outputs.unit_pytest_extra_args }}
@@ -78,6 +79,7 @@ jobs:
           # Read the platform setup entry point shared by all test suites.
           SETUP_SCRIPT=$(yq '.setup_script' "$CONFIG_FILE")
           NPROC_PER_NODE=$(yq '.nproc_per_node' "$CONFIG_FILE")
+          CHECKOUT_FETCH_DEPTH=$(yq '.checkout_fetch_depth // 0' "$CONFIG_FILE")
           if [ -z "$SETUP_SCRIPT" ] || [ "$SETUP_SCRIPT" = "null" ]; then
             echo "::error::setup_script is required"
             exit 1
@@ -86,8 +88,13 @@ jobs:
             echo "::error::nproc_per_node must be a positive integer"
             exit 1
           fi
+          if ! [[ "$CHECKOUT_FETCH_DEPTH" =~ ^[0-9]+$ ]]; then
+            echo "::error::checkout_fetch_depth must be a non-negative integer"
+            exit 1
+          fi
           echo "setup_script=$SETUP_SCRIPT" >> $GITHUB_OUTPUT
           echo "nproc_per_node=$NPROC_PER_NODE" >> $GITHUB_OUTPUT
+          echo "checkout_fetch_depth=$CHECKOUT_FETCH_DEPTH" >> $GITHUB_OUTPUT
 
           # Read test matrix for training
           TRAIN_MATRIX=$(yq '.test_matrix.functional.train // [] | tojson(0)' "$CONFIG_FILE")
@@ -137,6 +144,7 @@ jobs:
       setup_script: ${{ needs.checkout_and_config.outputs.setup_script }}
       test_groups: ${{ needs.checkout_and_config.outputs.unit_test_groups }}
       nproc_per_node: ${{ needs.checkout_and_config.outputs.nproc_per_node }}
+      checkout_fetch_depth: ${{ needs.checkout_and_config.outputs.checkout_fetch_depth }}
       pytest_extra_args: ${{ needs.checkout_and_config.outputs.unit_pytest_extra_args }}
       ignored_tests: ${{ needs.checkout_and_config.outputs.ignored_tests }}
 

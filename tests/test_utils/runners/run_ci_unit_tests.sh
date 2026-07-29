@@ -134,8 +134,6 @@ fi
 PYTEST_ARGS+=(
   -p
   no:randomly
-  -o
-  addopts="--durations=15 -s -rA"
 )
 
 set +e

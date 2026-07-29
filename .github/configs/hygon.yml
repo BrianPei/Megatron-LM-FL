@@ -2,6 +2,7 @@ hardware_name: hygon
 display_name: 'Hygon BW1000 Tests'
 setup_script: .github/scripts/set_env_hygon.sh
 nproc_per_node: 8
+checkout_fetch_depth: 1
 
 # Built from the documented DTK image with FlagGems, TransformerEngine-FL, and
 # the test dependencies preinstalled, so CI setup only installs this project.
@@ -46,12 +47,13 @@ test_matrix:
       - bw1000
     pytest_extra_args:
       - --continue-on-collection-errors
-      # A rank-local setup failure must terminate torchrun instead of allowing
-      # the other ranks to enter the next rendezvous and wait indefinitely.
-      #- --maxfail=1
       # Keep successful multi-rank stdout out of the live Actions log. Pytest
       # still includes captured output for failures.
       - --capture=fd
+      # Override the repository-wide "-x" only for Hygon so collection can
+      # report every unsupported case without changing other platforms.
+      - -o
+      - 'addopts=--durations=15 -s -rA'
     groups:
       - name: core
         path: tests/unit_tests/test_*.py megatron/plugin/tests/
@@ -109,8 +111,7 @@ test_matrix:
       - tests/unit_tests/distributed/megatron_fsdp/test_mcore_fully_sharded_data_parallel.py::TestMegatronFSDPE2E::test_compatible_with_nd_parallel
       - tests/unit_tests/distributed/megatron_fsdp/test_mfsdp_fully_shard.py::TestMegatronFsdpFullyShard::test_fully_shard_custom_dtype
       - tests/unit_tests/distributed/megatron_fsdp/test_mfsdp_fully_shard.py::TestMegatronFsdpFullyShard::test_fully_shard_te_quantized
-      
-      
+
       # data
       # Hardcoded /opt/data and /opt/megatron-lm paths, plus a vocab download
       # with no timeout that hangs the rank group. Also ignored on cuda/metax.
@@ -142,9 +143,6 @@ test_matrix:
       - tests/unit_tests/models/test_mamba_model.py
       - tests/unit_tests/models/test_mamba_moe_model.py
 
-
-
-      
       # fusions
       # TE-FL FlagGems backend missing rmsnorm_bwd_add operator.
       # Also ignored on metax.
@@ -172,13 +170,10 @@ test_matrix:
       # TE-FL missing fused_amax_and_scale_update_after_reduction operator.
       - tests/unit_tests/dist_checkpointing/test_async_save.py::TestAsyncSave::test_get_async_strategy[nvrx]
 
-
-
       # pipeline_parallel
       # TE-FL FlagGems te_general_grouped_gemm broadcast shape mismatch.
       - tests/unit_tests/pipeline_parallel/test_fine_grained_activation_offloading.py::test_gpt_fine_grained_activation_offloading_correctness_and_memory
       - tests/unit_tests/pipeline_parallel/test_fine_grained_activation_offloading.py::test_fine_grained_activation_offload_with_ep_a2a_overlap_compatibility
-
 
       # others — all also ignored on metax.
       # TE-FL missing fused_amax_and_scale_update_after_reduction.
