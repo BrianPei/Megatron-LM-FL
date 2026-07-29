@@ -103,6 +103,12 @@ test_matrix:
       # distributed
       # Rank-dependent failures deadlock in KFD/futex during next PG init.
       - tests/unit_tests/distributed/megatron_fsdp/test_mfsdp_fully_shard.py::TestMegatronFsdpFullyShard::test_dcp_checkpoint_save_and_load
+      # all TE-FL missing quantize (FP8) operator. Also on metax.
+      - tests/unit_tests/distributed/test_param_and_grad_buffer.py::test_manual_bucket_group_cpu_sync_partition_and_buffer_helpers
+      - tests/unit_tests/distributed/megatron_fsdp/test_mcore_fully_sharded_data_parallel.py::TestFullyShardedDataParallel::test_fsdp_user_buffer_registration
+      - tests/unit_tests/distributed/megatron_fsdp/test_mcore_fully_sharded_data_parallel.py::TestMegatronFSDPE2E::test_compatible_with_nd_parallel
+      - tests/unit_tests/distributed/megatron_fsdp/test_mfsdp_fully_shard.py::TestMegatronFsdpFullyShard::test_fully_shard_custom_dtype
+      - tests/unit_tests/distributed/megatron_fsdp/test_mfsdp_fully_shard.py::TestMegatronFsdpFullyShard::test_fully_shard_te_quantized
       
       
       # data
@@ -172,6 +178,19 @@ test_matrix:
       # TE-FL FlagGems te_general_grouped_gemm broadcast shape mismatch.
       - tests/unit_tests/pipeline_parallel/test_fine_grained_activation_offloading.py::test_gpt_fine_grained_activation_offloading_correctness_and_memory
       - tests/unit_tests/pipeline_parallel/test_fine_grained_activation_offloading.py::test_fine_grained_activation_offload_with_ep_a2a_overlap_compatibility
+
+
+      # others — all also ignored on metax.
+      # TE-FL missing fused_amax_and_scale_update_after_reduction.
+      - tests/unit_tests/export/trtllm/test_distributed_fp8.py
+      - tests/unit_tests/export/trtllm/test_single_device_fp8.py
+      - tests/unit_tests/export/trtllm/test_trtllm_helper.py
+      # ModelOpt not available on BW1000.
+      - tests/unit_tests/post_training/test_modelopt_model_builder.py::test_model_provider_switches_to_modelopt_builder
+      # MambaSSM unavailable.
+      - tests/unit_tests/post_training/test_modelopt_module_spec.py::TestModelOptMambaModel::test_inference
+      # tokenizers.Encoding has no 'copy' attribute in this image.
+      - tests/unit_tests/tokenizers/test_tokenizer.py
 
   # Enable after runner dataset/tokenizer mounts and BW1000 golden values are
   # available. The common workflow rejects an empty enabled matrix.
