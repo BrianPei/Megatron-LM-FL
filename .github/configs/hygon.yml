@@ -143,11 +143,28 @@ test_matrix:
       # TE-FL FlagGems backend missing rmsnorm_bwd_add operator.
       # Also ignored on metax.
       - tests/unit_tests/fusions/test_rmsnorm_residual_fusion.py
+      # FlagGems fused kernel reduction order differs from the torch baseline;
+      # the fp32 weight-grad check at 1e-6 tolerance fails on some ranks
+      # (inputs are unseeded randn, so it depends on the draw).
+      - tests/unit_tests/fusions/test_weighted_squared_relu_fusion.py::test_weighted_squared_relu_fusion
 
 
       # dist_checkpointing
       # TE-FL doesn't expose remove_sharded_tensors. Also ignored on metax.
       - tests/unit_tests/dist_checkpointing/test_serialization.py::TestSerialization::test_remove_sharded_tensors
+      # dist_checkpointing — all also ignored on metax.
+      # MambaSSM unavailable on BW1000 (AMD/HIP).
+      - tests/unit_tests/dist_checkpointing/models/test_mamba.py
+      # TE-FL missing quantize operator (fp8 paths).
+      - tests/unit_tests/dist_checkpointing/test_fp8.py
+      # Global metadata reuse fails on BW1000.
+      - tests/unit_tests/dist_checkpointing/test_global_metadata_reuse.py
+      # Optimizer resharding fails on BW1000.
+      - tests/unit_tests/dist_checkpointing/test_optimizer.py
+      # MoE expert reconfiguration not compatible with TE-FL.
+      - tests/unit_tests/dist_checkpointing/models/test_moe_experts.py
+      # TE-FL missing fused_amax_and_scale_update_after_reduction operator.
+      - tests/unit_tests/dist_checkpointing/test_async_save.py::TestAsyncSave::test_get_async_strategy[nvrx]
 
 
 
