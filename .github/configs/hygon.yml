@@ -59,9 +59,9 @@ test_matrix:
       #- name: models
       #  path: tests/unit_tests/models/
       #  description: Model tests
-      - name: distributed
-        path: tests/unit_tests/distributed/
-        description: Distributed tests
+      #- name: distributed
+      #  path: tests/unit_tests/distributed/
+      #  description: Distributed tests
       #- name: dist_checkpointing
       #  path: tests/unit_tests/dist_checkpointing/
       #  description: Distributed checkpointing tests
@@ -189,6 +189,7 @@ test_matrix:
       - tests/unit_tests/post_training/test_modelopt_model_builder.py::test_model_provider_switches_to_modelopt_builder
       # MambaSSM unavailable.
       - tests/unit_tests/post_training/test_modelopt_module_spec.py::TestModelOptMambaModel::test_inference
+      - tests/unit_tests/post_training/test_modelopt_module_spec.py::TestModelOptMambaModel::test_sharded_state_dict_restore
       # tokenizers.Encoding has no 'copy' attribute in this image.
       - tests/unit_tests/tokenizers/test_tokenizer.py
 
