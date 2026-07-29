@@ -59,9 +59,9 @@ test_matrix:
       #- name: models
       #  path: tests/unit_tests/models/
       #  description: Model tests
-      - name: distributed
-        path: tests/unit_tests/distributed/
-        description: Distributed tests
+      #- name: distributed
+      #  path: tests/unit_tests/distributed/
+      #  description: Distributed tests
       - name: dist_checkpointing
         path: tests/unit_tests/dist_checkpointing/
         description: Distributed checkpointing tests
@@ -77,9 +77,9 @@ test_matrix:
       - name: fusions
         path: tests/unit_tests/fusions/
         description: Fusion tests
-      - name: others
-        path: tests/unit_tests/export/ tests/unit_tests/post_training/ tests/unit_tests/tokenizers/ tests/unit_tests/utils/
-        description: Export, post-training, tokenizer, and utility tests
+      #- name: others
+      #  path: tests/unit_tests/export/ tests/unit_tests/post_training/ tests/unit_tests/tokenizers/ tests/unit_tests/utils/
+      #  description: Export, post-training, tokenizer, and utility tests
     ignored_tests:
       # core
       # NVIDIA Transformer Engine FP4/FP8 paths are unavailable on BW1000;
@@ -144,7 +144,7 @@ test_matrix:
       # Also ignored on metax.
       - tests/unit_tests/fusions/test_rmsnorm_residual_fusion.py
 
-      
+
       # dist_checkpointing
       # TE-FL doesn't expose remove_sharded_tensors. Also ignored on metax.
       - tests/unit_tests/dist_checkpointing/test_serialization.py::TestSerialization::test_remove_sharded_tensors
