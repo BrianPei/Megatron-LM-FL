@@ -154,6 +154,9 @@ setup_unit_environment() {
 
   echo "Preserving the PyTorch and DTK packages supplied by the BW1000 image."
   echo "Skipping NVIDIA CUPTI, NVRx, and Emerging Optimizers dependencies."
+  python3 -m pip install multi-storage-client \
+    --index-url https://pypi.tuna.tsinghua.edu.cn/simple \
+    --no-cache-dir
   verify_hygon_software_stack
   validate_hygon_capacity
   validate_hygon_distributed_runtime

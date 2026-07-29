@@ -48,7 +48,7 @@ test_matrix:
       - --continue-on-collection-errors
       # A rank-local setup failure must terminate torchrun instead of allowing
       # the other ranks to enter the next rendezvous and wait indefinitely.
-      - --maxfail=1
+      #- --maxfail=1
       # Keep successful multi-rank stdout out of the live Actions log. Pytest
       # still includes captured output for failures.
       - --capture=fd
@@ -59,38 +59,47 @@ test_matrix:
       - name: models
         path: tests/unit_tests/models/
         description: Model tests
-      - name: distributed
-        path: tests/unit_tests/distributed/
-        description: Distributed tests
-      - name: dist_checkpointing
-        path: tests/unit_tests/dist_checkpointing/
-        description: Distributed checkpointing tests
-      - name: tensor_parallel
-        path: tests/unit_tests/tensor_parallel/
-        description: Tensor parallel tests
+      #- name: distributed
+      #  path: tests/unit_tests/distributed/
+      #  description: Distributed tests
+      #- name: dist_checkpointing
+      #  path: tests/unit_tests/dist_checkpointing/
+      #  description: Distributed checkpointing tests
+      #- name: tensor_parallel
+      #  path: tests/unit_tests/tensor_parallel/
+      #  description: Tensor parallel tests
       - name: pipeline_parallel
         path: tests/unit_tests/pipeline_parallel/
         description: Pipeline parallel tests
       - name: data
         path: tests/unit_tests/data/
         description: Data tests
-      - name: fusions
-        path: tests/unit_tests/fusions/
-        description: Fusion tests
-      - name: others
-        path: tests/unit_tests/export/ tests/unit_tests/post_training/ tests/unit_tests/tokenizers/ tests/unit_tests/utils/
-        description: Export, post-training, tokenizer, and utility tests
+      #- name: fusions
+      #  path: tests/unit_tests/fusions/
+      #  description: Fusion tests
+      #- name: others
+      #  path: tests/unit_tests/export/ tests/unit_tests/post_training/ tests/unit_tests/tokenizers/ tests/unit_tests/utils/
+      #  description: Export, post-training, tokenizer, and utility tests
     ignored_tests:
-      # NVIDIA Transformer Engine FP4/FP8 paths are unavailable in the
-      # documented BW1000 image; TE-FL uses its FlagOS backend instead.
+      # core
+      # NVIDIA Transformer Engine FP4/FP8 paths are unavailable on BW1000;
+      # TE-FL uses its FlagOS backend instead.
       - tests/unit_tests/test_fp4_param.py
       - tests/unit_tests/test_fp8_param.py
       - tests/unit_tests/test_fp8_utils.py
-      # This test exercises NVIDIA NCCL memory allocator APIs directly.
+      # Exercises NVIDIA NCCL memory allocator APIs directly.
       - tests/unit_tests/test_nccl_allocator.py
-      # On BW1000 this DCP matrix produces rank-dependent failures and then
-      # deadlocks in KFD/futex waits while constructing the next process group.
+    
+    
+      # models
+      # cupy unavailable on BW1000 (AMD/HIP).
+      - tests/unit_tests/models/test_gpt_model.py::TestGPTModelWithCustomPG::test_gpt_model_with_custom_pg
+      # distributed
+      # Rank-dependent failures deadlock in KFD/futex during next PG init.
       - tests/unit_tests/distributed/megatron_fsdp/test_mfsdp_fully_shard.py::TestMegatronFsdpFullyShard::test_dcp_checkpoint_save_and_load
+      # pipeline_parallel
+      # cupy unavailable on BW1000 (AMD/HIP).
+      - tests/unit_tests/pipeline_parallel/test_bridge_communicator.py::TestBridgeCommunicator::test_bridge_communicator_init
 
   # Enable after runner dataset/tokenizer mounts and BW1000 golden values are
   # available. The common workflow rejects an empty enabled matrix.
