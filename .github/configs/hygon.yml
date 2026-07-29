@@ -11,10 +11,12 @@ ci_image: harbor.baai.ac.cn/flagos-dev/megatron-lm-fl:manual-20260728-hygon-dev
 runner_labels:
   - hg-8g-cicd-megatron
 
-# The DTK PyTorch package loads driver-side runtime libraries from this host
-# path. Functional-test dataset mounts will be added after they are validated.
+# The DTK PyTorch package loads driver-side runtime libraries from /opt/hyhal.
+# Functional tests use the persistent CI assets extracted on the BW1000 host.
 container_volumes:
   - /opt/hyhal:/opt/hyhal
+  - /data/megatron-ci-assets-20260726/baai_datasets:/home/gitlab-runner/data
+  - /data/megatron-ci-assets-20260726/baai_tokenizers:/home/gitlab-runner/tokenizers
 
 container_options: >-
   --ipc=host
@@ -188,7 +190,22 @@ test_matrix:
       # tokenizers.Encoding has no 'copy' attribute in this image.
       - tests/unit_tests/tokenizers/test_tokenizer.py
 
-  # Enable after runner dataset/tokenizer mounts and BW1000 golden values are
-  # available. The common workflow rejects an empty enabled matrix.
   functional:
-    train: []
+    train:
+      - model: gpt
+        test_case: qwen3_0p6b_mcore_te_tp1_pp1_no_mmap_bin_files
+        training_script: pretrain_gpt.py
+        n_repeat: 1
+        golden_environment: dev
+        # Bootstrap the first BW1000 result against an existing golden file.
+        golden_platform: dgx_a100
+        enable_lightweight_mode: false
+      - model: gpt
+        test_case: qwen3_0p6b_mcore_te_tp2_pp2_benchmark
+        training_script: pretrain_gpt.py
+        n_repeat: 1
+        golden_environment: dev
+        # Replace with bw1000 after recording the validated benchmark baseline.
+        golden_platform: dgx_a100
+        enable_lightweight_mode: false
+        gpus_per_node: 8

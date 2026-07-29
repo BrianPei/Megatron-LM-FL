@@ -1,7 +1,18 @@
 name: hygon_tests
 
 on:
-  workflow_dispatch: # Allows manual triggering
+  workflow_dispatch:
+    inputs:
+      run_unit_tests:
+        description: Run the validated BW1000 unit-test matrix
+        required: false
+        type: boolean
+        default: false
+      run_functional_tests:
+        description: Run BW1000 functional and benchmark tests
+        required: false
+        type: boolean
+        default: true
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}-${{ github.actor }}
@@ -12,9 +23,8 @@ jobs:
     uses: ./.github/workflows/all_tests_common.yml
     with:
       platform: hygon
-      run_unit_tests: true
-      # Enable after BW1000 dataset mounts and golden values are validated.
-      run_functional_tests: false
+      run_unit_tests: ${{ inputs.run_unit_tests }}
+      run_functional_tests: ${{ inputs.run_functional_tests }}
 
   all_tests:
     needs: run_tests

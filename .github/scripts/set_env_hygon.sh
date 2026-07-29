@@ -90,6 +90,12 @@ print(f"TransformerEngine-FL import passed: {transformer_engine.__file__}")
 PY
 }
 
+remove_broken_hygon_cupy() {
+  # DTK ships a cupy that imports but has no ndarray attribute. Einops then
+  # selects it as a backend and fails instead of using torch.
+  python3 -m pip uninstall cupy -y
+}
+
 install_hygon_project() {
   cd "$CI_PROJECT_ROOT"
   git config --global --add safe.directory "$CI_PROJECT_ROOT"
@@ -160,10 +166,7 @@ setup_unit_environment() {
   python3 -m pip install multi-storage-client \
     --index-url https://pypi.tuna.tsinghua.edu.cn/simple \
     --no-cache-dir
-  # DTK image ships a cupy that imports but has no ndarray attribute;
-  # einops picks it as a backend and every einops.reduce/rearrange call
-  # raises AttributeError. Removing it lets einops fall back to torch.
-  python3 -m pip uninstall cupy -y
+  remove_broken_hygon_cupy
   verify_hygon_software_stack
   validate_hygon_capacity
   validate_hygon_distributed_runtime
@@ -184,9 +187,11 @@ setup_functional_environment() {
   ci_install_yq
   ci_install_envsubst
   ci_install_uv_compatibility_shim
+  remove_broken_hygon_cupy
   verify_hygon_software_stack
   install_hygon_project
   validate_hygon_capacity
+  validate_hygon_distributed_runtime
 }
 
 setup_build_environment() {
