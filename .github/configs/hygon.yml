@@ -132,6 +132,9 @@ test_matrix:
       # TE-FL FlagGems backend missing these operators.
       - tests/unit_tests/models/test_gpt_model.py::TestGPTWithDynamicInference::test_dynamic_inference_padding_with_fp8
       - tests/unit_tests/models/test_llava_model.py::TestLLaVAModelTokenParallel::test_process_embedding_token_parallel
+      # mamba-ssm CUDA kernels unavailable on BW1000 (AMD/HIP). Also ignored on metax.
+      - tests/unit_tests/models/test_mamba_model.py
+      - tests/unit_tests/models/test_mamba_moe_model.py
 
 
 
