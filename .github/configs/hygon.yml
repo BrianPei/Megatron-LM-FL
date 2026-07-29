@@ -139,6 +139,18 @@ test_matrix:
 
 
       
+      # fusions
+      # TE-FL FlagGems backend missing rmsnorm_bwd_add operator.
+      # Also ignored on metax.
+      - tests/unit_tests/fusions/test_rmsnorm_residual_fusion.py
+
+      
+      # dist_checkpointing
+      # TE-FL doesn't expose remove_sharded_tensors. Also ignored on metax.
+      - tests/unit_tests/dist_checkpointing/test_serialization.py::TestSerialization::test_remove_sharded_tensors
+
+
+
       # pipeline_parallel
       # TE-FL FlagGems te_general_grouped_gemm broadcast shape mismatch.
       - tests/unit_tests/pipeline_parallel/test_fine_grained_activation_offloading.py::test_gpt_fine_grained_activation_offloading_correctness_and_memory
