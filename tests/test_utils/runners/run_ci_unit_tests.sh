@@ -26,11 +26,6 @@ if ! [[ "$CI_NPROC_PER_NODE" =~ ^[1-9][0-9]*$ ]]; then
   echo "::error::CI_NPROC_PER_NODE must be a positive integer"
   exit 1
 fi
-if [ -n "${CI_UNIT_TEST_TIMEOUT_SECONDS:-}" ] && \
-   ! [[ "$CI_UNIT_TEST_TIMEOUT_SECONDS" =~ ^[1-9][0-9]*$ ]]; then
-  echo "::error::CI_UNIT_TEST_TIMEOUT_SECONDS must be a positive integer"
-  exit 1
-fi
 
 python3 -c \
   "import json, os; value = json.loads(os.environ['CI_IGNORED_TESTS']); assert isinstance(value, list) and all(isinstance(item, str) for item in value)"
@@ -143,42 +138,14 @@ PYTEST_ARGS+=(
   addopts="--durations=15 -s -rA"
 )
 
-TEST_COMMAND=(
-  "$PYTHON_BIN"
-  -m
-  torch.distributed.run
-  --nproc_per_node="$CI_NPROC_PER_NODE"
-  -m
-  coverage
-  run
-  --rcfile="$COVERAGE_DIR/.coveragerc"
-  "$PYTEST_BIN"
-  "${PYTEST_ARGS[@]}"
-)
-if [ -n "${CI_UNIT_TEST_TIMEOUT_SECONDS:-}" ]; then
-  if ! command -v timeout >/dev/null 2>&1; then
-    echo "::error::timeout executable is required when CI_UNIT_TEST_TIMEOUT_SECONDS is set"
-    exit 1
-  fi
-  echo "Unit test hard timeout: ${CI_UNIT_TEST_TIMEOUT_SECONDS}s"
-  TEST_COMMAND=(
-    timeout
-    --signal=TERM
-    --kill-after=30s
-    "${CI_UNIT_TEST_TIMEOUT_SECONDS}s"
-    "${TEST_COMMAND[@]}"
-  )
-fi
-
 set +e
-"${TEST_COMMAND[@]}"
+"$PYTHON_BIN" -m torch.distributed.run --nproc_per_node="$CI_NPROC_PER_NODE" \
+  -m coverage run \
+  --rcfile="$COVERAGE_DIR/.coveragerc" \
+  "$PYTEST_BIN" \
+  "${PYTEST_ARGS[@]}"
 test_exit_code=$?
 set -e
-
-if [ -n "${CI_UNIT_TEST_TIMEOUT_SECONDS:-}" ] && \
-   { [ "$test_exit_code" -eq 124 ] || [ "$test_exit_code" -eq 137 ]; }; then
-  echo "::error::Unit test group '$CI_TEST_GROUP' exceeded its ${CI_UNIT_TEST_TIMEOUT_SECONDS}s hard timeout"
-fi
 
 python3 -m coverage combine \
   --rcfile="$COVERAGE_DIR/.coveragerc" \

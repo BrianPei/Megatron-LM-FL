@@ -46,6 +46,11 @@ configure_hygon_runtime() {
 }
 
 configure_hygon_unit_safety() {
+  local python_bin
+  python_bin=$(command -v python3)
+  local timeout_seconds=1800
+  local timeout_wrapper=/tmp/hygon-unit-python-with-timeout
+
   # Abort a unit-test job when one rank stops making collective progress
   # instead of leaving the remaining ranks blocked until the Actions timeout.
   ci_export_env TORCH_NCCL_ASYNC_ERROR_HANDLING 1
@@ -53,9 +58,24 @@ configure_hygon_unit_safety() {
   ci_export_env TORCH_NCCL_HEARTBEAT_TIMEOUT_SEC 180
   ci_export_env TORCH_NCCL_DUMP_ON_TIMEOUT 1
   ci_export_env TORCH_NCCL_TRACE_BUFFER_SIZE 2000
-  # The common runner honors this optional limit. It is shorter than the
-  # workflow timeout so coverage finalization still has time to run.
-  ci_export_env CI_UNIT_TEST_TIMEOUT_SECONDS 1800
+
+  if ! command -v timeout >/dev/null 2>&1; then
+    echo "::error::GNU timeout is required for Hygon unit tests"
+    exit 1
+  fi
+
+  cat > "$timeout_wrapper" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+exec timeout \
+  --signal=TERM \
+  --kill-after=30s \
+  "${timeout_seconds}s" \
+  "$python_bin" "\$@"
+EOF
+  chmod 0755 "$timeout_wrapper"
+  ci_export_env CI_PYTHON_BIN "$timeout_wrapper"
+  echo "Hygon unit-test hard timeout: ${timeout_seconds}s"
 }
 
 # Catch a stale or mis-tagged image before the tests start.
