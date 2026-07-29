@@ -201,7 +201,7 @@ test_matrix:
         golden_platform: dgx_a100
         enable_lightweight_mode: false
       - model: gpt
-        test_case: qwen3_0p6b_mcore_te_tp2_pp2_benchmark
+        test_case: qwen3_0p6b_mcore_te_tp2_pp2_benchmark_hygon
         training_script: pretrain_gpt.py
         n_repeat: 1
         golden_environment: dev
