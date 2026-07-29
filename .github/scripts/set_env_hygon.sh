@@ -131,8 +131,11 @@ validate_hygon_distributed_runtime() {
     --kill-after=15s \
     "${probe_timeout_seconds}s" \
     python3 -u -m torch.distributed.run \
-      --standalone \
+      --nnodes=1 \
       --nproc_per_node="$CI_NPROC_PER_NODE" \
+      --rdzv-backend=c10d \
+      --rdzv-endpoint=127.0.0.1:29500 \
+      --rdzv-id=hygon-preflight \
       "$CI_PROJECT_ROOT/.github/scripts/probe_hygon_distributed.py" ||
     probe_exit_code=$?
 
