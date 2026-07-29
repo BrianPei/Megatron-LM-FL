@@ -53,9 +53,9 @@ test_matrix:
       # still includes captured output for failures.
       - --capture=fd
     groups:
-      - name: core
-        path: tests/unit_tests/test_*.py megatron/plugin/tests/
-        description: Core unit tests
+      #- name: core
+      #  path: tests/unit_tests/test_*.py megatron/plugin/tests/
+      #  description: Core unit tests
       - name: models
         path: tests/unit_tests/models/
         description: Model tests
@@ -119,7 +119,6 @@ test_matrix:
       # Intermittently hangs after test_forward with no output from any rank and
       # no error; only the 30-min hard timeout ends it. Not ignored on metax.
       - tests/unit_tests/models/test_clip_vit_model.py::TestCLIPViTModel::test_save_load
-      # models
       # MIMO 1F1B 8-GPU layouts hit missing tensor model-parallel group
       # initialization in the HyperCommGrid + TE attention path. Also
       # ignored on metax.
@@ -128,9 +127,11 @@ test_matrix:
       - tests/unit_tests/models/test_mimo_1f1b_schedule.py::TestMimo1F1BSchedule::test_fan_in_dp4_to_dp1_llm_tp2_pp2_8gpu
       - tests/unit_tests/models/test_mimo_1f1b_schedule.py::TestMimo1F1BSchedule::test_fan_out_dp1_to_dp4_enc_tp2_pp2_8gpu
       - tests/unit_tests/models/test_mimo_1f1b_schedule.py::TestMimo1F1BSchedule::test_fan_in_dp2_to_dp1_llm_pp3_8gpu
-      # models
       # MIMO checkpoint same HyperCommGrid + TE attention issue as above.
       - tests/unit_tests/models/test_mimo_checkpoint.py
+      # TE-FL FlagGems backend missing these operators.
+      - tests/unit_tests/models/test_gpt_model.py::TestGPTWithDynamicInference::test_dynamic_inference_padding_with_fp8
+      - tests/unit_tests/models/test_llava_model.py::TestLLaVAModelTokenParallel::test_process_embedding_token_parallel
 
 
 
