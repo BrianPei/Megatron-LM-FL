@@ -119,6 +119,8 @@ test_matrix:
       # Metax C500 TE package misses transformer_engine_torch.get_fused_attn_backend.
       - tests/unit_tests/models/test_llava_model.py::TestLLaVAModel::test_forward
       - tests/unit_tests/models/test_llava_model.py::TestLLaVAModel::test_forward_fsdp
+      # world_size (4) not divisible by 8 after Core 0.17.0 upgrade.
+      - tests/unit_tests/models/test_llava_model.py::TestLLaVAModelTokenParallel::test_process_embedding_token_parallel
 
       # 3.transformer
       # TE _extra_state compatibility issue with AbsorbedMLA
@@ -177,6 +179,8 @@ test_matrix:
       - tests/unit_tests/dist_checkpointing/test_layer_wise_optimizer.py::TestLayerWiseOptimizer::test_optimizer_common_state_dict
       # Metax CI image does not install nvidia-resiliency-ext; keep mcore async strategy covered.
       - tests/unit_tests/dist_checkpointing/test_async_save.py::TestAsyncSave::test_get_async_strategy[nvrx]
+      # world_size (4) not divisible by 8 after Core 0.17.0 upgrade.
+      - tests/unit_tests/dist_checkpointing/test_async_save.py::TestAsyncSave::test_async_is_equivalent_to_sync
       # Metax torch-dist checkpointing strategy does not expose remove_sharded_tensors in this image.
       - tests/unit_tests/dist_checkpointing/test_serialization.py::TestSerialization::test_remove_sharded_tensors
 
@@ -195,6 +199,8 @@ test_matrix:
       - tests/unit_tests/distributed/megatron_fsdp/test_mfsdp_fully_shard.py::TestMegatronFsdpFullyShard::test_fully_shard_custom_dtype
       # TE quantized FP8 FSDP path uses FP8 recipes without a C500-compatible support gate.
       - tests/unit_tests/distributed/megatron_fsdp/test_mfsdp_fully_shard.py::TestMegatronFsdpFullyShard::test_fully_shard_te_quantized
+      # DCP mesh requires 4 ranks but runner has 8 after Core 0.17.0 upgrade.
+      - tests/unit_tests/distributed/megatron_fsdp/test_mfsdp_fully_shard.py::TestMegatronFsdpFullyShard::test_dcp_checkpoint_save_and_load
 
       # 7.export
       - tests/unit_tests/export/trtllm/test_distributed_fp8.py
@@ -220,7 +226,8 @@ test_matrix:
       # are skipped by pytest, so keep these historical records commented to let CI run them.
       # core: tp=2,pp=4 or tp=world_size
       # - tests/unit_tests/test_parallel_state.py
-      # - tests/unit_tests/test_hyper_comm_grid.py
+      # grid [2,2,2] needs 8 ranks but world size is 4 after Core 0.17.0.
+      - tests/unit_tests/test_hyper_comm_grid.py::TestHyperCommGrid::test_init_basic
       # models: tp>=4
       # - tests/unit_tests/models/test_t5_model.py
       # - tests/unit_tests/models/test_llava_model.py
@@ -231,7 +238,8 @@ test_matrix:
       # - tests/unit_tests/transformer/moe/test_sequential_mlp.py
       # - tests/unit_tests/transformer/moe/test_token_dispatcher.py
       # tensor_parallel: tp>=4 or tp*pp=8
-      # - tests/unit_tests/tensor_parallel/test_cross_entropy.py
+      # world_size (4) not divisible by 8 after Core 0.17.0 upgrade.
+      - tests/unit_tests/tensor_parallel/test_cross_entropy.py::test_vocab_parallel_cross_entropy
       # - tests/unit_tests/tensor_parallel/test_mappings.py
       # - tests/unit_tests/tensor_parallel/test_data.py
       # - tests/unit_tests/tensor_parallel/test_random.py
@@ -239,7 +247,8 @@ test_matrix:
       # - tests/unit_tests/tensor_parallel/test_tensor_parallel_utils.py
       # - tests/unit_tests/tensor_parallel/test_layers.py
       # pipeline_parallel: pp>=4
-      # - tests/unit_tests/pipeline_parallel/test_schedules.py
+      # world_size (4) not divisible by 8 after Core 0.17.0 upgrade.
+      - tests/unit_tests/pipeline_parallel/test_schedules.py::test_get_forward_backward_func
       # - tests/unit_tests/pipeline_parallel/test_pipeline_layout.py
       # - tests/unit_tests/pipeline_parallel/test_bridge_communicator.py
       # distributed: pp=4
