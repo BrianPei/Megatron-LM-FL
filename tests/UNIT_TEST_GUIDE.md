@@ -32,36 +32,35 @@ Directory layout and naming conventions
 Workflow config and `.github/configs`
 -------------------------------------
 
-Unit-test GitHub workflows are parameterized by small config files under `.github/configs/`.  
-For CUDA-based unit tests the relevant file is:
+Unit-test GitHub workflows are parameterized by platform configs under
+`.github/configs/`, for example `cuda.yml`, `metax.yml`, and `hygon.yml`.
+Each config defines its image, runner labels, container settings, device
+matrix, unit groups, pytest arguments, and platform-specific exclusions.
 
-- `.github/configs/cuda.yml`
-  - Defines:
-    - `ci_image`: Docker image used to run tests.
-    - `runner_labels`: labels for self-hosted runners.
-    - `container_volumes` / `container_options`: how the container is started.
-    - `device_types`: which device types (e.g. `a100`) are used.
-  - The `test_matrix.unit.ignored_tests` section is especially relevant for unit tests:
-    - It is a list of test file paths under `tests/unit_tests/...`.
-    - These paths are passed into the reusable workflow `unit_tests_common.yml` as the `ignored_tests` input.
-    - The workflow then converts this list into `pytest` options of the form `--deselect=<path>`, so those tests are **not** run in CI for that hardware/platform.
+The complete configuration contract and platform setup flow are documented in
+[`CI_TESTING_GUIDE.md`](CI_TESTING_GUIDE.md#platform-configuration-contract).
 
-**How to use `ignored_tests` (when absolutely necessary):**
-
-- Prefer to **fix** flaky tests or use `pytest` markers (`flaky`, `flaky_in_dev`, `internal`, `experimental`) first.
-- If a test is known to be broken or too expensive on a specific platform and must be skipped at the CI-infra level:
-  1. Add its file path (relative to repo root, e.g. `tests/unit_tests/transformer/test_attention.py`) to the `test_matrix.unit.ignored_tests` list in `.github/configs/cuda.yml`.
-  2. Make sure the path matches the actual location of the test file.
-  3. Commit the change so the CI workflow will start skipping it on that platform.
+Use `test_matrix.unit.ignored_tests` only for a narrow, documented platform
+limitation. A complete file path is converted to `--ignore`; a pytest node ID
+containing `::` is converted to `--deselect`. Prefer fixing a test or using an
+appropriate repository marker when the limitation is not platform-specific.
 
 Running unit tests locally
 --------------------------
 
-- **Run a single test file**:
+For a CI-equivalent run, use the configured container, platform setup script,
+and `tests/test_utils/runners/run_ci_unit_tests.sh` as documented in
+[`CI_TESTING_GUIDE.md`](CI_TESTING_GUIDE.md#run-a-unit-test-group-with-ci-parity).
 
-  ```bash
-  torchrun --nproc_per_node=8 -m pytest tests/unit_tests/xxx.py
-  ```
+After that setup succeeds, this shorter command is useful for debugging a
+single file:
+
+```bash
+python3 -m torch.distributed.run --nproc_per_node=8 \
+  -m pytest -v tests/unit_tests/xxx.py -p no:randomly
+```
+
+The direct command does not apply the platform ignore list, group arguments,
+coverage settings, or hard timeout. Run the CI runner before submission.
 
 When in doubt, find a similar existing test in the tree and follow the same style and patterns.
-

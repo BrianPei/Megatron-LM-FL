@@ -1,18 +1,21 @@
 # Megatron-LM Tests
 
+## CI and Local Execution
+
+See [`CI_TESTING_GUIDE.md`](CI_TESTING_GUIDE.md) for the configuration-driven
+GitHub Actions architecture, adding unit/functional/benchmark cases, platform
+integration, and CI-equivalent local container commands.
+
+See [`UNIT_TEST_GUIDE.md`](UNIT_TEST_GUIDE.md) for unit-test naming and
+organization conventions.
+
 ## Updating Functional Test Golden Values
 
-When adding new functional tests, it may be necessary to update the golden values used to verify if the test is
-passing as expected.
+Golden values must come from a complete, reviewed run on the declared target
+environment and hardware. The regular and benchmark formats, local reproduction
+commands, and review requirements are documented in
+[`CI_TESTING_GUIDE.md`](CI_TESTING_GUIDE.md#adding-a-functional-test).
 
-1. Add the new functional test case with the scope set to `mr-github`
-2. Open a PR with the new test. Ensure the label `Run functional tests` is added
-3. Run the PR CI tests
-4. Run the script to download golden values from a Github CI run
-    a. Ensure click, requests, and python-gitlab are installed in your environment
-    b. Ensure a Github access token is set as an environment variable `GITHUB_TOKEN`
-    c. Run the script `python tests/test_utils/python_scripts/download_golden_values.py --source github --pipeline-id <github-workflow-run-id>`
-    d. Optionally pass in `--only-failing` to only download golden values for failing tests only
-    e. Ensure you are only checking-in golden values for tests are you updating
-
-The Github CI infra may not be appropriate for Perf tests. Perf tests may be more appropriate for nightly jobs on other infra.
+Do not refresh golden values solely to make an unexplained regression pass.
+Performance values must be recorded on the target accelerator rather than
+copied from another platform.
