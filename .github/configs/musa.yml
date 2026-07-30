@@ -8,7 +8,7 @@ nproc_per_node: 8
 
 # Runner labels for Moore Threads node
 runner_labels:
-  - mt-8g-cicd-megatron
+  - mt-4g-cicd-megatron
 # CI image for online env
 ci_image: registry.mthreads.com/presale/devtech/flagsclae:0206
 

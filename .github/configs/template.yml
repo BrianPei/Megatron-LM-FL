@@ -14,7 +14,7 @@ runner_labels:
   - Linux
   - X64
   - my-runner-label # Update: change to your runner's labels
-  - gpu-8
+  - gpu-4
 
 # Container volumes (hardware-specific paths)
 container_volumes:
