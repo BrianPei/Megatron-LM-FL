@@ -12,7 +12,7 @@ ci_image: harbor.baai.ac.cn/flagos-dev/megatron-lm-fl:manual-20260717-ascend-dev
 
 # Runner labels for the Ascend node
 runner_labels:
-  - hw-8g-cicd-megatron
+  - hw-4g-cicd-megatron
 
 # Container volumes (hardware-specific paths)
 # NOTE: /usr/local/Ascend/add-ons does not exist on this runner; not mounted.
