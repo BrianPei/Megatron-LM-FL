@@ -205,7 +205,6 @@ test_matrix:
         training_script: pretrain_gpt.py
         n_repeat: 1
         golden_environment: dev
-        # Replace with bw1000 after recording the validated benchmark baseline.
-        golden_platform: dgx_a100
+        golden_platform: bw1000
         enable_lightweight_mode: false
         gpus_per_node: 8
