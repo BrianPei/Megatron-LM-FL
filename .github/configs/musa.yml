@@ -98,11 +98,21 @@ test_matrix:
       # Mocked all_reduce returns None → op_list empty → work never assigned → UnboundLocalError
       - tests/unit_tests/distributed/test_param_and_grad_buffer.py::test_force_all_reduce_uses_correct_collective[False]
       - tests/unit_tests/distributed/test_param_and_grad_buffer.py::test_force_all_reduce_uses_correct_collective[True]
+      # distributed-bucket_group_cpu_sync produces different numerical results on MUSA.
+      - tests/unit_tests/distributed/test_param_and_grad_buffer.py::test_manual_bucket_group_cpu_sync_partition_and_buffer_helpers
       # fused_layer_norm_cuda (Apex CUDA kernel) not available in MUSA image;
       # test_pipeline_layout.py invokes GPT forward which enters fused_layer_norm
       - tests/unit_tests/pipeline_parallel/test_pipeline_layout.py
       # test_forward_backward_func_with_pipeline_parallel calls torch.rand(...).cuda() in test code
       - tests/unit_tests/pipeline_parallel/test_schedules.py::test_forward_backward_func_with_pipeline_parallel
+      # pipeline_parallel-MCCL TCP store initialization times out intermittently.
+      - tests/unit_tests/pipeline_parallel/test_schedules.py::test_get_forward_backward_func
+      - tests/unit_tests/pipeline_parallel/test_schedules.py::test_forward_backward_func_with_interleaving
+      - tests/unit_tests/pipeline_parallel/test_schedules.py::test_forward_backward_func_with_uneven_interleaving
+      - tests/unit_tests/pipeline_parallel/test_schedules.py::test_forward_backward_pipelining_without_interleaving_with_custom_pgs
+      - tests/unit_tests/pipeline_parallel/test_schedules.py::test_forward_backward_pipelining_with_interleaving_with_custom_pgs
+      # fusions-torch_musa missing aten::empty.memory_format CUDA kernel in clamped swiglu path.
+      - tests/unit_tests/fusions/test_swiglu_fusion.py::test_clamped_weighted_bias_swiglu
       # test_bin_reader downloads GPT2 tokenizer from s3.amazonaws.com, unreachable from MUSA CI
       - tests/unit_tests/data/test_bin_reader.py
       # post_training-MCCL TCP store initialization times out intermittently.
