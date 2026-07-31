@@ -137,6 +137,10 @@ test_matrix:
       - tests/unit_tests/fusions/test_swiglu_fusion.py::test_clamped_weighted_bias_swiglu
       # test_bin_reader downloads GPT2 tokenizer from s3.amazonaws.com, unreachable from MUSA CI
       - tests/unit_tests/data/test_bin_reader.py
+      # test_fast_builder expands to 192 distributed cases and repeatedly rebuilds
+      # datasets across eight ranks. The accumulated MCCL barriers eventually
+      # SIGSEGV on MUSA, while the preceding parameter combinations pass.
+      - tests/unit_tests/data/test_builder.py::test_fast_builder
       # post_training-MCCL TCP store initialization times out intermittently.
       - tests/unit_tests/post_training/test_modelopt_module_spec.py::TestModelOptMLAMoE::test_sharded_state_dict_restore
       - tests/unit_tests/post_training/test_modelopt_module_spec.py::TestModelOptLlama4MoE::test_sharded_state_dict_restore
