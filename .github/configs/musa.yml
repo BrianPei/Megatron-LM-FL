@@ -148,6 +148,10 @@ test_matrix:
       # test_bert_model: TE layernorm_fwd reference impl calls tensor.to(odtype) where torch_musa
       # _to() misinterprets DType enum as device ID → "Invalid device string: 'musa:DType.kFloat32'"
       - tests/unit_tests/models/test_bert_model.py::TestBertModel::test_post_process_forward
+      # The heterogeneous constructor parametrization allocates 1.31B-1.49B
+      # parameter full-size models on every rank. On MUSA, repeated model-parallel
+      # teardown can wait 60s in TCPStore/MCCL, causing the models job to time out.
+      - tests/unit_tests/models/test_heterogeneous_gpt_model.py::TestHeterogeneousGPTModel::test_constructor
       # others-ExperimentalFeature logging does not populate log records on MUSA.
       - tests/unit_tests/utils/test_experimental_log_once.py::test_experimental_fn_logs_once
       - tests/unit_tests/utils/test_experimental_log_once.py::test_experimental_cls_logs_once
