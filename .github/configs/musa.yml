@@ -111,6 +111,7 @@ test_matrix:
       - tests/unit_tests/pipeline_parallel/test_schedules.py::test_forward_backward_func_with_uneven_interleaving
       - tests/unit_tests/pipeline_parallel/test_schedules.py::test_forward_backward_pipelining_without_interleaving_with_custom_pgs
       - tests/unit_tests/pipeline_parallel/test_schedules.py::test_forward_backward_pipelining_with_interleaving_with_custom_pgs
+      - tests/unit_tests/pipeline_parallel/test_schedules.py::test_forward_backward_func_without_pipeline_parallel
       # fusions-torch_musa missing aten::empty.memory_format CUDA kernel in clamped swiglu path.
       - tests/unit_tests/fusions/test_swiglu_fusion.py::test_clamped_weighted_bias_swiglu
       # test_bin_reader downloads GPT2 tokenizer from s3.amazonaws.com, unreachable from MUSA CI
