@@ -46,15 +46,33 @@ test_matrix:
       - s5000
     pytest_extra_args: []
     groups:
+      - name: core
+        path: tests/unit_tests/test_*.py
+        description: Core unit tests
       - name: models
         path: tests/unit_tests/models/
         description: Model tests
       - name: distributed
         path: tests/unit_tests/distributed/
         description: Distributed tests
+      - name: dist_checkpointing
+        path: tests/unit_tests/dist_checkpointing/
+        description: Distributed checkpointing tests
       - name: tensor_parallel
         path: tests/unit_tests/tensor_parallel/
         description: Tensor parallel tests
+      - name: pipeline_parallel
+        path: tests/unit_tests/pipeline_parallel/
+        description: Pipeline parallel tests
+      - name: data
+        path: tests/unit_tests/data/
+        description: Data tests
+      - name: fusions
+        path: tests/unit_tests/fusions/
+        description: Fusion tests
+      - name: others
+        path: tests/unit_tests/export/ tests/unit_tests/post_training/ tests/unit_tests/tokenizers/ tests/unit_tests/utils/
+        description: Export, post-training, tokenizer, and utility tests
     # Start with a conservative MUSA smoke set while validating runtime and TE plugin coverage.
     ignored_tests:
       # ── Core tests that genuinely require CUDA/NCCL/Apex/TE GPU paths ──────────
@@ -143,4 +161,20 @@ test_matrix:
       - tests/unit_tests/data/test_preprocess_mmdata.py::test_preprocess_mmdata
 
   functional:
-    train: []
+    train:
+      - model: gpt
+        test_case: qwen3_0p6b_mcore_te_tp1_pp1_s5000
+        training_script: pretrain_gpt.py
+        n_repeat: 1
+        golden_environment: dev
+        golden_platform: s5000
+        enable_lightweight_mode: false
+        gpus_per_node: 8
+      - model: gpt
+        test_case: qwen3_0p6b_mcore_te_tp2_pp2_benchmark_musa
+        training_script: pretrain_gpt.py
+        n_repeat: 1
+        golden_environment: dev
+        golden_platform: s5000
+        enable_lightweight_mode: false
+        gpus_per_node: 8
