@@ -94,6 +94,11 @@ test_matrix:
       # 60s timeouts between destroy/init cycles.  Skip the whole file
       # (same approach as Metax).
       - tests/unit_tests/test_parallel_state.py
+      # These core tests enter MCCL default-process-group collectives that
+      # currently time out while exchanging McclUniqueId on the MUSA image.
+      - tests/unit_tests/test_process_groups_config.py::TestPGConfigDefaultInitialization::test_default_initialization
+      - tests/unit_tests/test_training.py::TestTraining::test_build_train_valid_test_data_iterators
+      - tests/unit_tests/test_training.py::TestSaveGrads::test_save_grads
       # PyTorch 2.5 _coalescing_manager compatibility issue with MUSA torch_musa
       # Mocked all_reduce returns None → op_list empty → work never assigned → UnboundLocalError
       - tests/unit_tests/distributed/test_param_and_grad_buffer.py::test_force_all_reduce_uses_correct_collective[False]
