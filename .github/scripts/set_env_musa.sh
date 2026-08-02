@@ -81,10 +81,8 @@ if hasattr(torch, "musa") and torch.musa.is_available():
 SITEEOF
     ci_export_env PYTHONPATH "/tmp/musa-ci-site:${PYTHONPATH:-}"
 
-    # Shared functional test toolchain (yq, envsubst, uv, pybind11, project install).
-    ci_setup_functional_environment
-    # Re-install with the MUSA-specific pip flag.
-    install_musa_project
+    # Shared functional test toolchain and Python 3.10-compatible project install.
+    ci_setup_functional_environment --ignore-requires-python
     validate_musa_capacity
     ;;
   build)

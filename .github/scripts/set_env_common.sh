@@ -152,7 +152,7 @@ ci_setup_functional_environment() {
   ci_install_envsubst
   ci_install_uv_compatibility_shim
   python3 -m pip install pybind11 --no-cache-dir
-  ci_install_project
+  ci_install_project "$@"
 }
 
 ci_validate_device_capacity() {
@@ -173,5 +173,5 @@ ci_validate_device_capacity() {
 
 ci_install_project() {
   cd "$CI_PROJECT_ROOT"
-  python3 -m pip install -e . --no-deps --no-build-isolation --no-cache-dir
+  python3 -m pip install -e . --no-deps --no-build-isolation --no-cache-dir "$@"
 }
