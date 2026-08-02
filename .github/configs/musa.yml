@@ -124,6 +124,7 @@ test_matrix:
       # McclUniqueId on the MUSA image; keep the other tensor-parallel tests enabled.
       - tests/unit_tests/tensor_parallel/test_cross_entropy.py::test_vocab_parallel_cross_entropy
       - tests/unit_tests/tensor_parallel/test_data.py::test_broadcast_data
+      - tests/unit_tests/tensor_parallel/test_layers.py::test_LinearWithFrozenWeight[1-False]
       - tests/unit_tests/tensor_parallel/test_layers.py::test_LinearWithFrozenWeight[8-True]
       - tests/unit_tests/tensor_parallel/test_mappings.py::test_CopyToModelParallelRegion
       - tests/unit_tests/tensor_parallel/test_mappings.py::test_ReduceFromModelParallelRegion
