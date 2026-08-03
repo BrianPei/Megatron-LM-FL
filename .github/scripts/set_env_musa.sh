@@ -67,67 +67,39 @@ case "$CI_TEST_SUITE" in
   functional)
     configure_musa_runtime
 
-    # torch_musa exposes torch.musa but, unlike torch_npu's transfer_to_npu or
-    # torch_txda's transfer_to_txda, ships no layer that remaps torch.cuda onto
-    # the device.  get_platform() therefore selects PlatformCUDA (initialize.py
-    # asserts torch.cuda.is_available() before distributed init, so it has to
-    # report True) and every one of PlatformCUDA's ~40 torch.cuda.* calls hits a
-    # CPU-only torch build.  Forward the whole namespace instead of chasing them
-    # one at a time: copy each public torch.musa attribute onto its torch.cuda
-    # namesake, so PlatformCUDA transparently runs on MUSA.
-    mkdir -p /tmp/musa-ci-site
-    cat > /tmp/musa-ci-site/sitecustomize.py <<'SITEEOF'
-import torch
-if hasattr(torch, "musa") and torch.musa.is_available():
-    # Only override names that exist on both sides; MUSA-only attributes such as
-    # MUSAGraph must not leak into the torch.cuda namespace.  default_generators
-    # is skipped: it is populated lazily when the device initializes, so copying
-    # it here would capture the empty tuple it holds at interpreter startup.
-    for _name in dir(torch.musa):
-        if _name.startswith("_") or _name == "default_generators":
-            continue
-        if hasattr(torch.cuda, _name):
-            try:
-                setattr(torch.cuda, _name, getattr(torch.musa, _name))
-            except (AttributeError, TypeError):
-                pass
-
-    # Forward default_generators dynamically instead.  A property on the module's
-    # class is a data descriptor, so it takes precedence over the stale tuple in
-    # the module __dict__ and re-reads torch.musa on every access.
-    class _MusaBackedCuda(type(torch.cuda)):
-        @property
-        def default_generators(self):
-            return torch.musa.default_generators
-
-    torch.cuda.__class__ = _MusaBackedCuda
-
-    # The remaining overrides must come after the bulk copy: these are wrappers,
-    # not plain forwards, and the loop would replace them with the raw
-    # torch.musa versions.
-    def _musa_device_index(device=None):
-        if device is None:
-            return torch.musa.current_device()
-        if isinstance(device, (str, torch.device)):
-            index = torch.device(device).index
-            return torch.musa.current_device() if index is None else index
-        return device
-
-    def _musa_device_capability(device=None):
-        properties = torch.musa.get_device_properties(_musa_device_index(device))
-        return properties.major, properties.minor
-
-    torch.cuda.is_available = lambda: True
-    torch.cuda.get_device_properties = (
-        lambda device=None: torch.musa.get_device_properties(_musa_device_index(device))
-    )
-    torch.cuda.get_device_capability = _musa_device_capability
-SITEEOF
-    ci_export_env PYTHONPATH "/tmp/musa-ci-site:${PYTHONPATH:-}"
-
     # Shared functional test toolchain and Python 3.10-compatible project install.
     ci_setup_functional_environment --ignore-requires-python
+
+    # Keep the image-provided torch/torch_musa pair intact. torchada is a
+    # pure-Python compatibility layer that redirects CUDA APIs and device
+    # strings to MUSA -- the equivalent of torch_npu's transfer_to_npu or
+    # torch_txda's transfer_to_txda.  Megatron's training path hardcodes
+    # device="cuda" in ~23 places; those string literals reach the C++
+    # dispatcher, where this torch build registers kernels under
+    # PrivateUse1 and not CUDA, so no Python-level torch.cuda patch can
+    # cover them.
+    python3 -m pip install \
+      torchada==0.1.40 \
+      --no-deps \
+      --no-cache-dir
     validate_musa_capacity
+
+    # Written after the project install so the megatron import below is
+    # never evaluated while pip is still building the package.
+    mkdir -p /tmp/musa-ci-site
+    cat > /tmp/musa-ci-site/sitecustomize.py <<'SITEEOF'
+import torchada  # noqa: F401
+import torch
+
+from megatron.plugin.platform import get_platform
+
+
+# torchada intentionally leaves this probe unchanged for platform detection.
+# Select and cache MUSA first, then satisfy Megatron's legacy CUDA assertion.
+if get_platform().device_name() == "musa":
+    torch.cuda.is_available = torch.musa.is_available
+SITEEOF
+    ci_export_env PYTHONPATH "/tmp/musa-ci-site:${PYTHONPATH:-}"
     ;;
   build)
     setup_build_environment
