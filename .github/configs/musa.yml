@@ -121,6 +121,7 @@ test_matrix:
       # test_forward_backward_func_with_pipeline_parallel calls torch.rand(...).cuda() in test code
       - tests/unit_tests/pipeline_parallel/test_schedules.py::test_forward_backward_func_with_pipeline_parallel
       # pipeline_parallel-MCCL TCP store initialization times out intermittently.
+      - tests/unit_tests/pipeline_parallel/test_schedules.py::test_forward_backward_no_pipelining_with_custom_pgs
       - tests/unit_tests/pipeline_parallel/test_schedules.py::test_get_forward_backward_func
       - tests/unit_tests/pipeline_parallel/test_schedules.py::test_forward_backward_func_with_interleaving
       - tests/unit_tests/pipeline_parallel/test_schedules.py::test_forward_backward_func_with_uneven_interleaving
