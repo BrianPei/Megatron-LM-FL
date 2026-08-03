@@ -80,15 +80,27 @@ case "$CI_TEST_SUITE" in
 import torch
 if hasattr(torch, "musa") and torch.musa.is_available():
     # Only override names that exist on both sides; MUSA-only attributes such as
-    # MUSAGraph must not leak into the torch.cuda namespace.
+    # MUSAGraph must not leak into the torch.cuda namespace.  default_generators
+    # is skipped: it is populated lazily when the device initializes, so copying
+    # it here would capture the empty tuple it holds at interpreter startup.
     for _name in dir(torch.musa):
-        if _name.startswith("_"):
+        if _name.startswith("_") or _name == "default_generators":
             continue
         if hasattr(torch.cuda, _name):
             try:
                 setattr(torch.cuda, _name, getattr(torch.musa, _name))
             except (AttributeError, TypeError):
                 pass
+
+    # Forward default_generators dynamically instead.  A property on the module's
+    # class is a data descriptor, so it takes precedence over the stale tuple in
+    # the module __dict__ and re-reads torch.musa on every access.
+    class _MusaBackedCuda(type(torch.cuda)):
+        @property
+        def default_generators(self):
+            return torch.musa.default_generators
+
+    torch.cuda.__class__ = _MusaBackedCuda
 
     # The remaining overrides must come after the bulk copy: these are wrappers,
     # not plain forwards, and the loop would replace them with the raw
