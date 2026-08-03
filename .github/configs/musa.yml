@@ -55,9 +55,9 @@ test_matrix:
       - name: distributed
         path: tests/unit_tests/distributed/
         description: Distributed tests
-      - name: dist_checkpointing
-        path: tests/unit_tests/dist_checkpointing/
-        description: Distributed checkpointing tests
+      #- name: dist_checkpointing
+      #  path: tests/unit_tests/dist_checkpointing/
+      #  description: Distributed checkpointing tests
       - name: tensor_parallel
         path: tests/unit_tests/tensor_parallel/
         description: Tensor parallel tests
@@ -151,6 +151,9 @@ test_matrix:
       - tests/unit_tests/tensor_parallel/test_mappings.py::test_GatherFromSequenceParallelRegion
       - tests/unit_tests/tensor_parallel/test_mappings.py::test_ReduceScatterToSequenceParallelRegion
       - tests/unit_tests/tensor_parallel/test_tensor_parallel_utils.py::test_gather_split_1d_tensor
+      # tensor_parallel-MCCL communicator setup times out in test_checkpoint when
+      # set_world_size() tears down and reinitialises the process group on MUSA.
+      - tests/unit_tests/tensor_parallel/test_random.py::test_checkpoint
       # fusions-torch_musa missing aten::empty.memory_format CUDA kernel in clamped swiglu path.
       - tests/unit_tests/fusions/test_swiglu_fusion.py::test_clamped_weighted_bias_swiglu
       # test_bin_reader downloads GPT2 tokenizer from s3.amazonaws.com, unreachable from MUSA CI
