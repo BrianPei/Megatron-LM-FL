@@ -76,8 +76,24 @@ case "$CI_TEST_SUITE" in
     cat > /tmp/musa-ci-site/sitecustomize.py <<'SITEEOF'
 import torch
 if hasattr(torch, "musa") and torch.musa.is_available():
+    def _musa_device_index(device=None):
+        if device is None:
+            return torch.musa.current_device()
+        if isinstance(device, (str, torch.device)):
+            index = torch.device(device).index
+            return torch.musa.current_device() if index is None else index
+        return device
+
+    def _musa_device_capability(device=None):
+        properties = torch.musa.get_device_properties(_musa_device_index(device))
+        return properties.major, properties.minor
+
     torch.cuda.is_available = lambda: True
     torch.cuda.device_count = torch.musa.device_count
+    torch.cuda.get_device_properties = (
+        lambda device=None: torch.musa.get_device_properties(_musa_device_index(device))
+    )
+    torch.cuda.get_device_capability = _musa_device_capability
 SITEEOF
     ci_export_env PYTHONPATH "/tmp/musa-ci-site:${PYTHONPATH:-}"
 
