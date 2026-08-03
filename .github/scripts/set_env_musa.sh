@@ -10,6 +10,27 @@ configure_musa_runtime() {
   ci_export_env TORCHDYNAMO_DISABLE 1
   ci_export_env TORCH_COMPILE_DISABLE 1
   ci_export_env LD_LIBRARY_PATH "/usr/local/musa-4.3.4/lib:${LD_LIBRARY_PATH:-}"
+
+  # Assign a deterministic, group-unique MASTER_PORT so concurrent unit-test
+  # matrix jobs on the same 8-GPU runner do not race on torchrun's default
+  # port 29500.  CI_TEST_GROUP is only set for unit jobs; functional tests
+  # manage their own port via _run_training.sh (MASTER_PORT=${MASTER_PORT:-6000}).
+  if [[ -n "${CI_TEST_GROUP:-}" ]]; then
+    local _port
+    case "$CI_TEST_GROUP" in
+      core)               _port=29600 ;;
+      models)             _port=29601 ;;
+      distributed)        _port=29602 ;;
+      dist_checkpointing) _port=29603 ;;
+      tensor_parallel)    _port=29604 ;;
+      pipeline_parallel)  _port=29605 ;;
+      data)               _port=29606 ;;
+      fusions)            _port=29607 ;;
+      others)             _port=29608 ;;
+      *)                  _port=29500 ;;
+    esac
+    ci_export_env MASTER_PORT "${_port}"
+  fi
 }
 
 validate_musa_capacity() {
