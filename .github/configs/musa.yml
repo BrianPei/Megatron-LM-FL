@@ -162,6 +162,15 @@ test_matrix:
       # datasets across eight ranks. The accumulated MCCL barriers eventually
       # SIGSEGV on MUSA, while the preceding parameter combinations pass.
       - tests/unit_tests/data/test_builder.py::test_fast_builder
+      # data-Rank0 stalls acquiring the MUSA device while nine concurrent unit
+      # groups contend for the same eight cards, so it never publishes the
+      # McclUniqueId; ranks 1-7 then exhaust the 60s c10d store timeout on every
+      # subsequent process-group rebuild. Group-unique MASTER_PORT (29606 here)
+      # rules out cross-group store collision -- this is card contention.
+      - tests/unit_tests/data/test_builder.py::test_builder
+      - tests/unit_tests/data/test_fim_dataset.py
+      - tests/unit_tests/data/test_gpt_dataset.py::test_mock_gpt_dataset
+      - tests/unit_tests/data/test_multimodal_dataset.py::test_mock_multimodal_dataset
       # post_training-MCCL TCP store initialization times out intermittently.
       - tests/unit_tests/post_training/test_modelopt_module_spec.py::TestModelOptMLAMoE::test_sharded_state_dict_restore
       - tests/unit_tests/post_training/test_modelopt_module_spec.py::TestModelOptLlama4MoE::test_sharded_state_dict_restore
