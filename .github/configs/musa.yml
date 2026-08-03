@@ -115,6 +115,14 @@ test_matrix:
       # This MoE expert reconfiguration crashes rank 5 in the MUSA runtime;
       # the preceding source/destination layouts remain enabled.
       - tests/unit_tests/dist_checkpointing/models/test_moe_experts.py::TestExpertLayerReconfiguration::test_parallel_reconfiguration_e2e[True-tp-ep-dp-pp-tp-ep-dp-pp-sequential-False-src_tp_pp_ep_etp2-dest_tp_pp_ep_etp2-False]
+      # dist_checkpointing-MCCL communicator setup times out on every test in
+      # these two files: rank0 hangs in init_process_group during the model-
+      # parallel reconfiguration teardown/reinit cycle, causing ranks 1-7 to
+      # wait 60 s per test and the whole group to deadlock.  Same pattern as
+      # MetaX (ZeroDivisionError there, MCCL timeout here); both platforms
+      # ignore the files entirely.
+      - tests/unit_tests/dist_checkpointing/models/test_bert_model.py
+      - tests/unit_tests/dist_checkpointing/models/test_gpt_model.py
       # fused_layer_norm_cuda (Apex CUDA kernel) not available in MUSA image;
       # test_pipeline_layout.py invokes GPT forward which enters fused_layer_norm
       - tests/unit_tests/pipeline_parallel/test_pipeline_layout.py
