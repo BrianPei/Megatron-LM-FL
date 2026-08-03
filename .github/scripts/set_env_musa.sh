@@ -90,6 +90,8 @@ if hasattr(torch, "musa") and torch.musa.is_available():
 
     torch.cuda.is_available = lambda: True
     torch.cuda.device_count = torch.musa.device_count
+    torch.cuda.set_device = torch.musa.set_device
+    torch.cuda.synchronize = torch.musa.synchronize
     torch.cuda.get_device_properties = (
         lambda device=None: torch.musa.get_device_properties(_musa_device_index(device))
     )
