@@ -67,15 +67,32 @@ case "$CI_TEST_SUITE" in
   functional)
     configure_musa_runtime
 
-    # MUSA uses its own device backend (torch_musa), so torch.cuda.is_available()
-    # returns False by default.  initialize_megatron asserts it is True before
-    # distributed init even runs.  Patch torch.cuda via sitecustomize so the
-    # assertion sees what it expects — the real MUSA device count is still
-    # available through torch.musa.
+    # torch_musa exposes torch.musa but, unlike torch_npu's transfer_to_npu or
+    # torch_txda's transfer_to_txda, ships no layer that remaps torch.cuda onto
+    # the device.  get_platform() therefore selects PlatformCUDA (initialize.py
+    # asserts torch.cuda.is_available() before distributed init, so it has to
+    # report True) and every one of PlatformCUDA's ~40 torch.cuda.* calls hits a
+    # CPU-only torch build.  Forward the whole namespace instead of chasing them
+    # one at a time: copy each public torch.musa attribute onto its torch.cuda
+    # namesake, so PlatformCUDA transparently runs on MUSA.
     mkdir -p /tmp/musa-ci-site
     cat > /tmp/musa-ci-site/sitecustomize.py <<'SITEEOF'
 import torch
 if hasattr(torch, "musa") and torch.musa.is_available():
+    # Only override names that exist on both sides; MUSA-only attributes such as
+    # MUSAGraph must not leak into the torch.cuda namespace.
+    for _name in dir(torch.musa):
+        if _name.startswith("_"):
+            continue
+        if hasattr(torch.cuda, _name):
+            try:
+                setattr(torch.cuda, _name, getattr(torch.musa, _name))
+            except (AttributeError, TypeError):
+                pass
+
+    # The remaining overrides must come after the bulk copy: these are wrappers,
+    # not plain forwards, and the loop would replace them with the raw
+    # torch.musa versions.
     def _musa_device_index(device=None):
         if device is None:
             return torch.musa.current_device()
@@ -89,9 +106,6 @@ if hasattr(torch, "musa") and torch.musa.is_available():
         return properties.major, properties.minor
 
     torch.cuda.is_available = lambda: True
-    torch.cuda.device_count = torch.musa.device_count
-    torch.cuda.set_device = torch.musa.set_device
-    torch.cuda.synchronize = torch.musa.synchronize
     torch.cuda.get_device_properties = (
         lambda device=None: torch.musa.get_device_properties(_musa_device_index(device))
     )
