@@ -1,7 +1,7 @@
 hardware_name: hygon
 display_name: 'Hygon Tests'
 setup_script: .github/scripts/set_env_hygon.sh
-nproc_per_node: 4
+nproc_per_node: 8
 checkout_fetch_depth: 1
 
 # Built from the documented DTK image with FlagGems, TransformerEngine-FL, and
@@ -9,7 +9,7 @@ checkout_fetch_depth: 1
 ci_image: harbor.baai.ac.cn/flagos-dev/megatron-lm-fl:manual-20260728-hygon-dev
 
 runner_labels:
-  - hg-4g-cicd-megatron
+  - hg-8g-cicd-megatron
 
 # The DTK PyTorch package loads driver-side runtime libraries from /opt/hyhal.
 # Functional tests use the persistent CI assets extracted on the BW1000 host.
@@ -126,8 +126,9 @@ test_matrix:
       # Intermittently hangs after test_forward with no output from any rank and
       # no error; only the 30-min hard timeout ends it. Not ignored on metax.
       - tests/unit_tests/models/test_clip_vit_model.py::TestCLIPViTModel::test_save_load
-      # These MIMO layouts require 8 ranks, while Hygon CI runs 4 processes.
-      # They are also ignored on metax.
+      # These MIMO 8-rank layouts hit missing tensor model-parallel group
+      # initialization in the HyperCommGrid + TE attention path. They are also
+      # ignored on metax.
       - tests/unit_tests/models/test_mimo_1f1b_schedule.py::TestMimo1F1BSchedule::test_encoder_tp2_llm_tp2_pp3_8gpu
       - tests/unit_tests/models/test_mimo_1f1b_schedule.py::TestMimo1F1BSchedule::test_full_pp_8gpu
       - tests/unit_tests/models/test_mimo_1f1b_schedule.py::TestMimo1F1BSchedule::test_fan_in_dp4_to_dp1_llm_tp2_pp2_8gpu
@@ -174,16 +175,19 @@ test_matrix:
       - tests/unit_tests/pipeline_parallel/test_fine_grained_activation_offloading.py::test_gpt_fine_grained_activation_offloading_correctness_and_memory
       - tests/unit_tests/pipeline_parallel/test_fine_grained_activation_offloading.py::test_fine_grained_activation_offload_with_ep_a2a_overlap_compatibility
 
-      # others — all also ignored on metax.
+      # others
       # TE-FL missing fused_amax_and_scale_update_after_reduction.
+      # These three tests are also ignored on metax.
       - tests/unit_tests/export/trtllm/test_distributed_fp8.py
       - tests/unit_tests/export/trtllm/test_single_device_fp8.py
       - tests/unit_tests/export/trtllm/test_trtllm_helper.py
+      # The distributed TRT-LLM converter errors during setup on BW1000.
+      - tests/unit_tests/export/trtllm/test_trtllm_distributed_gpu_converter.py
       # ModelOpt not available on BW1000.
       - tests/unit_tests/post_training/test_modelopt_model_builder.py::test_model_provider_switches_to_modelopt_builder
-      # MambaSSM unavailable.
-      - tests/unit_tests/post_training/test_modelopt_module_spec.py::TestModelOptMambaModel::test_inference
-      - tests/unit_tests/post_training/test_modelopt_module_spec.py::TestModelOptMambaModel::test_sharded_state_dict_restore
+      # The GPT checkpoint restore blocks at rank-synchronized temporary
+      # directory setup until the Hygon unit-test hard timeout terminates it.
+      - tests/unit_tests/post_training/test_modelopt_module_spec.py
       # tokenizers.Encoding has no 'copy' attribute in this image.
       - tests/unit_tests/tokenizers/test_tokenizer.py
 
