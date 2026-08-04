@@ -49,21 +49,50 @@ install_musa_compatibility_layer() {
     --no-cache-dir
 
   # Create this only after installing the project so pip cannot import Megatron
-  # through sitecustomize while it is still building editable metadata.
-  mkdir -p /tmp/musa-ci-site
-  cat > /tmp/musa-ci-site/sitecustomize.py <<'SITEEOF'
+  # through the compatibility layer while it is still building editable metadata.
+  local site_dir=/tmp/musa-ci-site
+  mkdir -p "$site_dir"
+
+  if [ "${CI_TEST_SUITE:-}" = "unit" ]; then
+    # coverage must start before torch is imported. Loading the compatibility
+    # layer from sitecustomize imports torch too early and breaks coverage's
+    # module scan on the MUSA torch build.
+    rm -f "$site_dir/sitecustomize.py"
+    cat > "$site_dir/musa_ci_pytest.py" <<'PYTESTEOF'
+import contextlib
+import io
+
+
+def pytest_configure(config):
+    with contextlib.redirect_stdout(io.StringIO()):
+        import torchada  # noqa: F401
+        import torch
+        from megatron.plugin.platform import get_platform
+
+        is_musa = get_platform().device_name() == "musa"
+
+    if is_musa:
+        torch.cuda.is_available = torch.musa.is_available
+PYTESTEOF
+    ci_export_env PYTEST_ADDOPTS "${PYTEST_ADDOPTS:-} -p musa_ci_pytest"
+  else
+    cat > "$site_dir/sitecustomize.py" <<'SITEEOF'
+import contextlib
+import io
+
 import torchada  # noqa: F401
 import torch
 
-from megatron.plugin.platform import get_platform
+with contextlib.redirect_stdout(io.StringIO()):
+    from megatron.plugin.platform import get_platform
+    is_musa = get_platform().device_name() == "musa"
 
-
-# torchada intentionally leaves this probe unchanged for platform detection.
-# Select and cache MUSA first, then satisfy Megatron's legacy CUDA assertion.
-if get_platform().device_name() == "musa":
+if is_musa:
     torch.cuda.is_available = torch.musa.is_available
 SITEEOF
-  ci_export_env PYTHONPATH "/tmp/musa-ci-site:${PYTHONPATH:-}"
+  fi
+
+  ci_export_env PYTHONPATH "$site_dir:${PYTHONPATH:-}"
 }
 
 setup_unit_environment() {
