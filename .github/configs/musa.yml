@@ -96,6 +96,17 @@ test_matrix:
       - tests/unit_tests/test_training.py::TestTraining::test_build_train_valid_test_data_iterators
       - tests/unit_tests/test_training.py::TestTraining::test_closed_formula_vocab_size_with_padding
       - tests/unit_tests/test_training.py::TestSaveGrads::test_save_grads
+      # These mocked HyperCommGrid tests still call dist.get_rank() without a
+      # default process group. The real NCCL integration class skips on MUSA.
+      - tests/unit_tests/test_hyper_comm_grid.py::TestHyperCommGrid::test_create_pg_single_dim
+      - tests/unit_tests/test_hyper_comm_grid.py::TestHyperCommGrid::test_create_pg_multiple_dims
+      - tests/unit_tests/test_hyper_comm_grid.py::TestHyperCommGrid::test_create_pg_with_options
+      - tests/unit_tests/test_hyper_comm_grid.py::TestHyperCommGrid::test_create_pg_duplicate_error
+      - tests/unit_tests/test_hyper_comm_grid.py::TestHyperCommGrid::test_get_pg_success
+      - tests/unit_tests/test_hyper_comm_grid.py::TestHyperCommGrid::test_get_pg_multiple_dims
+      - tests/unit_tests/test_hyper_comm_grid.py::TestHyperCommGrid::test_end_to_end_workflow
+      # torch.cuda.nvtx is not provided by the MUSA PyTorch build.
+      - tests/unit_tests/test_utils.py::test_nvtx_range
       # PyTorch 2.5 _coalescing_manager compatibility issue with MUSA torch_musa
       # Mocked all_reduce returns None → op_list empty → work never assigned → UnboundLocalError
       - tests/unit_tests/distributed/test_param_and_grad_buffer.py::test_force_all_reduce_uses_correct_collective[False]
@@ -122,6 +133,10 @@ test_matrix:
       # fused_layer_norm_cuda (Apex CUDA kernel) not available in MUSA image;
       # test_pipeline_layout.py invokes GPT forward which enters fused_layer_norm
       - tests/unit_tests/pipeline_parallel/test_pipeline_layout.py
+      # These communicator suites explicitly initialize NCCL process groups.
+      - tests/unit_tests/pipeline_parallel/test_bridge_communicator.py
+      - tests/unit_tests/pipeline_parallel/test_multimodule_communicator.py
+      - tests/unit_tests/pipeline_parallel/test_multimodule_schedules.py
       # test_forward_backward_func_with_pipeline_parallel calls torch.rand(...).cuda() in test code
       - tests/unit_tests/pipeline_parallel/test_schedules.py::test_forward_backward_func_with_pipeline_parallel
       # pipeline_parallel-MCCL TCP store initialization times out intermittently.
@@ -147,6 +162,9 @@ test_matrix:
       - tests/unit_tests/tensor_parallel/test_mappings.py::test_GatherFromSequenceParallelRegion
       - tests/unit_tests/tensor_parallel/test_mappings.py::test_ReduceScatterToSequenceParallelRegion
       - tests/unit_tests/tensor_parallel/test_tensor_parallel_utils.py::test_gather_split_1d_tensor
+      # MUSA does not provide CUDA graph RNG replay semantics.
+      - tests/unit_tests/tensor_parallel/test_random.py::test_double_fork_cuda_rng_states_tracker
+      - tests/unit_tests/tensor_parallel/test_random.py::test_convert_cuda_rng_state
       # tensor_parallel-MCCL communicator setup times out in test_checkpoint when
       # set_world_size() tears down and reinitialises the process group on MUSA.
       - tests/unit_tests/tensor_parallel/test_random.py::test_checkpoint
@@ -167,12 +185,12 @@ test_matrix:
       - tests/unit_tests/data/test_fim_dataset.py
       - tests/unit_tests/data/test_gpt_dataset.py::test_mock_gpt_dataset
       - tests/unit_tests/data/test_multimodal_dataset.py::test_mock_multimodal_dataset
-      # post_training-MCCL TCP store initialization times out intermittently.
-      - tests/unit_tests/post_training/test_modelopt_module_spec.py::TestModelOptMLAMoE::test_sharded_state_dict_restore
-      - tests/unit_tests/post_training/test_modelopt_module_spec.py::TestModelOptLlama4MoE::test_sharded_state_dict_restore
-      - tests/unit_tests/post_training/test_modelopt_module_spec.py::TestModelOptGPTModel::test_sharded_state_dict_restore
-      # TestModelOptMambaModel requires mamba-ssm (CUDA-compiled SSM library) not present in MUSA image
-      - tests/unit_tests/post_training/test_modelopt_module_spec.py::TestModelOptMambaModel
+      # TRT-LLM FP8 export and ModelOpt inference require CUDA-backed TE/ModelOpt.
+      - tests/unit_tests/export/trtllm/test_distributed_fp8.py
+      - tests/unit_tests/export/trtllm/test_single_device_fp8.py
+      - tests/unit_tests/export/trtllm/test_trtllm_distributed_gpu_converter.py
+      - tests/unit_tests/post_training/test_modelopt_module_spec.py
+      - tests/unit_tests/post_training/test_modelopt_model_builder.py::test_model_provider_switches_to_modelopt_builder
       # test_checkpointing: _load_base_checkpoint → read_metadata uses device='cuda' tensor
       - tests/unit_tests/test_checkpointing.py
       # test_bert_model: TE layernorm_fwd reference impl calls tensor.to(odtype) where torch_musa
@@ -182,11 +200,18 @@ test_matrix:
       # parameter full-size models on every rank. On MUSA, repeated model-parallel
       # teardown can wait 60s in TCPStore/MCCL, causing the models job to time out.
       - tests/unit_tests/models/test_heterogeneous_gpt_model.py::TestHeterogeneousGPTModel::test_constructor
+      # These model paths directly require CUDA/NCCL or CUDA-backed TE internals.
+      - tests/unit_tests/models/test_gpt_model.py::TestGPTWithFusedOps
+      - tests/unit_tests/models/test_gpt_model.py::test_gpt_with_te_activation_func
+      - tests/unit_tests/models/test_gpt_model.py::TestGPTModelWithCustomPG::test_gpt_model_with_custom_pg
+      - tests/unit_tests/models/test_mimo_1f1b_schedule.py
+      - tests/unit_tests/models/test_mimo_checkpoint.py
+      - tests/unit_tests/models/test_mimo_submodules.py
       # others-ExperimentalFeature logging does not populate log records on MUSA.
       - tests/unit_tests/utils/test_experimental_log_once.py::test_experimental_fn_logs_once
       - tests/unit_tests/utils/test_experimental_log_once.py::test_experimental_cls_logs_once
-      # others-Attempts to download gpt2 tokenizer from huggingface.co, unreachable.
-      - tests/unit_tests/tokenizers/test_tokenizer.py::test_megatron_tokenizer
+      # The MUSA unit image does not contain the /opt/data tokenizer fixture set.
+      - tests/unit_tests/tokenizers/test_tokenizer.py
       # data-Attempts to download gpt2 tokenizer from huggingface.co, unreachable.
       - tests/unit_tests/data/test_preprocess_mmdata.py::test_preprocess_mmdata
 

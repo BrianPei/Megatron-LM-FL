@@ -39,6 +39,32 @@ validate_musa_capacity() {
   ci_validate_device_capacity "$device_count"
 }
 
+install_musa_compatibility_layer() {
+  # Keep the image-provided torch/torch_musa pair intact while redirecting
+  # legacy CUDA APIs and device strings used by Megatron tests to MUSA.
+  python3 -m pip install \
+    torchada==0.1.40 \
+    --no-deps \
+    --no-cache-dir
+
+  # Create this only after installing the project so pip cannot import Megatron
+  # through sitecustomize while it is still building editable metadata.
+  mkdir -p /tmp/musa-ci-site
+  cat > /tmp/musa-ci-site/sitecustomize.py <<'SITEEOF'
+import torchada  # noqa: F401
+import torch
+
+from megatron.plugin.platform import get_platform
+
+
+# torchada intentionally leaves this probe unchanged for platform detection.
+# Select and cache MUSA first, then satisfy Megatron's legacy CUDA assertion.
+if get_platform().device_name() == "musa":
+    torch.cuda.is_available = torch.musa.is_available
+SITEEOF
+  ci_export_env PYTHONPATH "/tmp/musa-ci-site:${PYTHONPATH:-}"
+}
+
 setup_unit_environment() {
   ci_activate_python_environment
   configure_musa_runtime
@@ -61,6 +87,7 @@ setup_unit_environment() {
 
   echo "Skipping NVIDIA CUPTI and Emerging-Optimizers dependencies on MUSA."
   ci_install_project --ignore-requires-python
+  install_musa_compatibility_layer
   validate_musa_capacity
 }
 
@@ -81,37 +108,8 @@ case "$CI_TEST_SUITE" in
 
     # Shared functional test toolchain and Python 3.10-compatible project install.
     ci_setup_functional_environment --ignore-requires-python
-
-    # Keep the image-provided torch/torch_musa pair intact. torchada is a
-    # pure-Python compatibility layer that redirects CUDA APIs and device
-    # strings to MUSA -- the equivalent of torch_npu's transfer_to_npu or
-    # torch_txda's transfer_to_txda.  Megatron's training path hardcodes
-    # device="cuda" in ~23 places; those string literals reach the C++
-    # dispatcher, where this torch build registers kernels under
-    # PrivateUse1 and not CUDA, so no Python-level torch.cuda patch can
-    # cover them.
-    python3 -m pip install \
-      torchada==0.1.40 \
-      --no-deps \
-      --no-cache-dir
+    install_musa_compatibility_layer
     validate_musa_capacity
-
-    # Written after the project install so the megatron import below is
-    # never evaluated while pip is still building the package.
-    mkdir -p /tmp/musa-ci-site
-    cat > /tmp/musa-ci-site/sitecustomize.py <<'SITEEOF'
-import torchada  # noqa: F401
-import torch
-
-from megatron.plugin.platform import get_platform
-
-
-# torchada intentionally leaves this probe unchanged for platform detection.
-# Select and cache MUSA first, then satisfy Megatron's legacy CUDA assertion.
-if get_platform().device_name() == "musa":
-    torch.cuda.is_available = torch.musa.is_available
-SITEEOF
-    ci_export_env PYTHONPATH "/tmp/musa-ci-site:${PYTHONPATH:-}"
     ;;
   build)
     setup_build_environment
