@@ -1,0 +1,79 @@
+# KunLunXin Hardware Configuration for Megatron-LM-FL
+# This file defines CI/CD settings for KunLunXin P800-based testing.
+
+hardware_name: kunlunxin
+display_name: 'KunLunXin Tests'
+setup_script: .github/scripts/set_env_kunlunxin.sh
+nproc_per_node: 8
+
+# CI image for KunLunXin P800 environment
+ci_image: harbor.baai.ac.cn/flagos-dev/megatron-lm-fl:manual-20260804-kunlunxin-dev
+
+# Runner labels for the KunLunXin node
+runner_labels:
+  - kl-8g-cicd-megatron
+
+# Container volumes (hardware-specific paths)
+container_volumes:
+  - /home/flagscale_cicd/flask/static:/workspace/report
+  - /home/flagscale_cicd/flask/config:/workspace/config
+  - /home/flagscale_cicd/docker/docker_build/docker_data:/home/gitlab-runner/data
+  - /home/flagscale_cicd/docker/docker_build/docker_tokenizers:/home/gitlab-runner/tokenizers
+  - /home/flagscale_cicd/docker/docker_build/docker_data/Megatron-LM/datasets:/opt/data/datasets
+  - /home/flagscale_cicd/docker/docker_build/docker_tokenizers/Megatron-LM/tokenizers:/opt/data/tokenizers
+  # Mount KunLunXin XPU driver runtime libraries and tools.
+  - /usr/local/xpu:/usr/local/xpu
+
+# Container options (hardware-specific settings)
+container_options: >-
+  --privileged
+  --shm-size=64G
+  --hostname megatron_cicd
+  --user root
+  --ipc=host
+  --net=host
+  --ulimit nofile=1048576:1048576
+
+# Device types to run tests on
+device_types:
+  - p800
+
+# Test matrix configuration
+test_matrix:
+  unit:
+    devices:
+      - p800
+    pytest_extra_args: []
+    groups:
+      - name: core
+        path: tests/unit_tests/test_*.py megatron/plugin/tests/
+        description: Core unit tests
+      - name: models
+        path: tests/unit_tests/models/
+        description: Model tests
+      - name: distributed
+        path: tests/unit_tests/distributed/
+        description: Distributed tests
+      - name: dist_checkpointing
+        path: tests/unit_tests/dist_checkpointing/
+        description: Distributed checkpointing tests
+      - name: tensor_parallel
+        path: tests/unit_tests/tensor_parallel/
+        description: Tensor parallel tests
+      - name: pipeline_parallel
+        path: tests/unit_tests/pipeline_parallel/
+        description: Pipeline parallel tests
+      - name: data
+        path: tests/unit_tests/data/
+        description: Data tests
+      - name: fusions
+        path: tests/unit_tests/fusions/
+        description: Fusion tests
+      - name: others
+        path: tests/unit_tests/export/ tests/unit_tests/post_training/ tests/unit_tests/tokenizers/ tests/unit_tests/utils/
+        description: Export, post-training, tokenizer, and utility tests
+    # Start with an empty ignore list; populate as tests fail on the first CI run.
+    ignored_tests: []
+
+  functional:
+    train: []
