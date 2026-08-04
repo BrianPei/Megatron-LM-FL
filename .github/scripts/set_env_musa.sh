@@ -35,7 +35,8 @@ configure_musa_runtime() {
 
 validate_musa_capacity() {
   local device_count
-  device_count=$(python3 -c "import torch; print(torch.musa.device_count())")
+  device_count=$(python3 -c "import torch; print(torch.musa.device_count())" |
+    awk '/^[0-9]+$/ { count = $0 } END { if (count == "") exit 1; print count }')
   ci_validate_device_capacity "$device_count"
 }
 
