@@ -11,13 +11,9 @@ from megatron.core.distributed import DistributedDataParallel, DistributedDataPa
 from megatron.core.models.gpt.gpt_layer_specs import (
     get_gpt_layer_with_transformer_engine_submodules,
 )
-from megatron.plugin.platform import get_platform
 from megatron.core.transformer import TransformerConfig
 from megatron.core.transformer.moe.moe_layer import MoELayer
 from tests.unit_tests.test_utilities import Utils
-
-cur_platform = get_platform()
-DEVICE = cur_platform.device()
 
 
 class TestMoEModel(torch.nn.Module):
@@ -52,7 +48,7 @@ class TestMoEModel(torch.nn.Module):
         super().__init__()
         self.layers = torch.nn.ModuleList(
             [
-                MoELayer(transformer_config, submodules.mlp.submodules).to(DEVICE)
+                MoELayer(transformer_config, submodules.mlp.submodules).cuda()
                 for _ in range(num_layers)
             ]
         )

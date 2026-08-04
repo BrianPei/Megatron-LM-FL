@@ -6,10 +6,7 @@ from megatron.core.models.gpt.gpt_layer_specs import get_gpt_layer_with_transfor
 from megatron.core.models.vision.clip_vit_model import CLIPViTModel, get_num_image_embeddings
 from megatron.core.tensor_parallel.random import model_parallel_cuda_manual_seed
 from megatron.core.transformer.transformer_config import TransformerConfig
-from megatron.plugin.platform import get_platform
 from tests.unit_tests.test_utilities import Utils
-
-cur_platform = get_platform()
 
 
 class TestCLIPViTModel:
@@ -45,12 +42,9 @@ class TestCLIPViTModel:
         assert self.model.decoder.input_tensor.shape == torch.Size(expected_shape)
 
     def test_forward(self):
-        if cur_platform.device_name() != 'cuda':
-            pytest.skip("CLIP ViT forward test requires CUDA (TE layernorm op not supported on musa)")
-        device = cur_platform.device()
-        self.model.to(device)
+        self.model.cuda()
 
-        img = torch.zeros((2, 3, 336, 336)).to(device)
+        img = torch.zeros((2, 3, 336, 336)).cuda()
 
         out = self.model.forward(img)
         assert out.shape == torch.Size([2, 577, 64])
@@ -59,7 +53,7 @@ class TestCLIPViTModel:
         path = tmp_path / "model.pt"
         torch.save(self.model.state_dict(), path)
 
-        self.model.load_state_dict(torch.load(path, map_location="cpu"))
+        self.model.load_state_dict(torch.load(path))
 
 
 @pytest.mark.internal

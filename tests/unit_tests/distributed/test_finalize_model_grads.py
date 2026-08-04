@@ -16,11 +16,7 @@ from megatron.core.models.gpt.gpt_layer_specs import get_gpt_layer_with_transfor
 from megatron.core.models.gpt.gpt_model import GPTModel
 from megatron.core.tensor_parallel.random import model_parallel_cuda_manual_seed
 from megatron.core.transformer.transformer_config import TransformerConfig
-from megatron.plugin.platform import get_platform
 from tests.unit_tests.test_utilities import Utils
-
-cur_platform = get_platform()
-DEVICE = cur_platform.device()
 
 
 class TestAllReduceLNGrads:
@@ -62,7 +58,7 @@ class TestAllReduceLNGrads:
         model_parallel_cuda_manual_seed(123)
 
         self.init_model()
-        self.model.to(DEVICE)
+        self.model.cuda()
         self.model.ddp_config = DistributedDataParallelConfig()
 
         for param in self.model.parameters():
@@ -86,7 +82,7 @@ class TestAllReduceLNGrads:
         model_parallel_cuda_manual_seed(123)
 
         self.init_model(share_embeddings)
-        self.model.to(DEVICE)
+        self.model.cuda()
         self.model.ddp_config = DistributedDataParallelConfig()
 
         for param in self.model.parameters():

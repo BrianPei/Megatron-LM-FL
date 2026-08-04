@@ -4,10 +4,6 @@ import pytest
 import torch
 
 from megatron.core.fusions.fused_bias_dropout import _bias_dropout_add_func, get_bias_dropout_add
-from megatron.plugin.platform import get_platform
-
-cur_platform = get_platform()
-DEVICE = cur_platform.device()
 
 # ---------------------------------------------------------------------------
 # Existing test: fused vs. unfused parity (same dtype)
@@ -18,7 +14,7 @@ DEVICE = cur_platform.device()
 @pytest.mark.parametrize("training", [True, False])
 def test_bias_dropout_add(dtype, training):
     torch.manual_seed(42)
-    device = DEVICE
+    device = "cuda"
     B, H = 16, 64
 
     # Initialize inputs
@@ -73,7 +69,7 @@ def test_bias_dropout_add(dtype, training):
 class TestFp32ResidualPreservation:
     """Tests that _bias_dropout_add_func preserves fp32 residual dtype."""
 
-    device = DEVICE
+    device = "cuda"
     B, H = 16, 64
 
     # -- helpers --------------------------------------------------------
@@ -245,7 +241,7 @@ class TestFp32ResidualStreamAcrossLayers:
     """Simulates what happens across multiple transformer layers to ensure
     the fp32 residual stream is not degraded."""
 
-    device = DEVICE
+    device = "cuda"
 
     def test_residual_stays_fp32_across_simulated_layers(self):
         """Simulate N layers of bias-dropout-add with bf16 x and fp32 residual.

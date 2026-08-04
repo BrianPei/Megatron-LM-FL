@@ -21,12 +21,9 @@ from megatron.core.models.gpt.gpt_layer_specs import (
 from megatron.core.optimizer import OptimizerConfig, get_megatron_optimizer
 from megatron.core.transformer import TransformerConfig
 from megatron.core.transformer.moe.moe_layer import MoELayer
-from megatron.plugin.platform import get_platform
 from tests.unit_tests.test_utilities import Utils
 
-cur_platform = get_platform()
 success_string = "hello,world"
-CUDA_ONLY_PARAM_NORM_REASON = "Parameter norm tests call CUDA-only training utility paths."
 
 
 @util.experimental_cls(introduced_with_version="0.1.0")
@@ -92,7 +89,7 @@ def test_experimental_cls_exception_static():
 def test_global_memory_buffer():
     global_memory_buffer = util.GlobalMemoryBuffer()
     obtained_tensor = global_memory_buffer.get_tensor((3, 2), torch.float32, "test_tensor")
-    expected_tensor = torch.empty((3, 2), dtype=torch.float32, device=cur_platform.current_device())
+    expected_tensor = torch.empty((3, 2), dtype=torch.float32, device=torch.cuda.current_device())
     assert obtained_tensor.shape == expected_tensor.shape
 
 
@@ -124,7 +121,7 @@ def _init_distributed(world, rank):
     Utils.initialize_distributed()
     assert torch.distributed.is_initialized() == True
     assert torch.distributed.get_rank() == rank
-    assert cur_platform.device_count() == world
+    assert torch.cuda.device_count() == world
     torch.distributed.barrier()
 
 
@@ -153,18 +150,12 @@ def test_nvtx_range(msg, suffix):
     _call_nvtx_range()
     assert execution_tracker['ranges']
 
-    if cur_platform.device_name() != 'cuda':
-        return
-
     # Reset tracker
     execution_tracker['ranges'] = False
 
     # Test with NVTX enabled
-    try:
-        util.configure_nvtx_profiling(True)
-        _call_nvtx_range()
-    finally:
-        util.configure_nvtx_profiling(False)
+    util.configure_nvtx_profiling(True)
+    _call_nvtx_range()
     assert execution_tracker['ranges']
 
 
@@ -197,28 +188,18 @@ def test_nvtx_decorator(monkeypatch):
     nvtx_decorated_function_with_message()
     assert all(execution_tracker.values())
 
-    if cur_platform.device_name() != 'cuda':
-        return
-
     # Reset tracker
     execution_tracker = {'decorated': False, 'decorated_with_message': False}
 
     # Test with NVTX enabled
-    try:
-        util.configure_nvtx_profiling(True)
-        nvtx_decorated_function()
-        nvtx_decorated_function_with_message()
-    finally:
-        util.configure_nvtx_profiling(False)
+    util.configure_nvtx_profiling(True)
+    nvtx_decorated_function()
+    nvtx_decorated_function_with_message()
     assert all(execution_tracker.values())
 
 
 @pytest.mark.flaky
 @pytest.mark.flaky_in_dev
-@pytest.mark.skipif(
-    cur_platform.device_name() != 'cuda',
-    reason="check_param_hashes_across_dp_replicas moves hashes with .cuda(), requires CUDA",
-)
 def test_check_param_hashes_across_dp_replicas():
     world = int(os.getenv('WORLD_SIZE', '1'))
     rank = int(os.getenv('RANK', '0'))
@@ -226,7 +207,7 @@ def test_check_param_hashes_across_dp_replicas():
     # Setup.
     _init_distributed(world, rank)
     Utils.initialize_model_parallel()
-    model = torch.nn.Linear(100, 100, bias=False, device=cur_platform.device())
+    model = torch.nn.Linear(100, 100, bias=False, device='cuda')
 
     # First check case where all replicas agree.
     model.weight.data.fill_(1.0)
@@ -245,10 +226,6 @@ def test_check_param_hashes_across_dp_replicas():
 
 @pytest.mark.flaky
 @pytest.mark.flaky_in_dev
-@pytest.mark.skipif(
-    cur_platform.device_name() != 'cuda',
-    reason="check_param_hashes_across_dp_replicas moves hashes with .cuda(), requires CUDA",
-)
 def test_cross_check_param_hashes_across_dp_replicas():
     world = int(os.getenv('WORLD_SIZE', '1'))
     rank = int(os.getenv('RANK', '0'))
@@ -256,7 +233,7 @@ def test_cross_check_param_hashes_across_dp_replicas():
     # Setup.
     _init_distributed(world, rank)
     Utils.initialize_model_parallel()
-    model = torch.nn.Linear(100, 100, bias=False, device=cur_platform.device())
+    model = torch.nn.Linear(100, 100, bias=False, device='cuda')
 
     # First check case where all replicas agree.
     model.weight.data.fill_(1.0)
@@ -275,7 +252,6 @@ def test_cross_check_param_hashes_across_dp_replicas():
 @pytest.mark.flaky
 @pytest.mark.flaky_in_dev
 @pytest.mark.internal
-@pytest.mark.skipif(cur_platform.device_name() != 'cuda', reason=CUDA_ONLY_PARAM_NORM_REASON)
 def test_param_norm_linear(use_distributed_optimizer: bool):
     world = int(os.getenv('WORLD_SIZE', '1'))
     rank = int(os.getenv('RANK', '0'))
@@ -283,7 +259,7 @@ def test_param_norm_linear(use_distributed_optimizer: bool):
     # Setup: distributed, model, mock_args.
     _init_distributed(world, rank)
     Utils.initialize_model_parallel()
-    model = torch.nn.Linear(100, 100, bias=False, dtype=torch.bfloat16, device=cur_platform.device())
+    model = torch.nn.Linear(100, 100, bias=False, dtype=torch.bfloat16, device='cuda')
     model.requires_grad_(True)
     model.weight.data.fill_(1.0)
     ddp_config = DistributedDataParallelConfig(use_distributed_optimizer=use_distributed_optimizer)
@@ -328,7 +304,6 @@ def test_param_norm_linear(use_distributed_optimizer: bool):
 @pytest.mark.flaky
 @pytest.mark.flaky_in_dev
 @pytest.mark.internal
-@pytest.mark.skipif(cur_platform.device_name() != 'cuda', reason=CUDA_ONLY_PARAM_NORM_REASON)
 def test_param_norm_moe(use_distributed_optimizer: bool):
     world = int(os.getenv('WORLD_SIZE', '1'))
     rank = int(os.getenv('RANK', '0'))
@@ -355,7 +330,7 @@ def test_param_norm_moe(use_distributed_optimizer: bool):
         get_gpt_layer_with_transformer_engine_submodules(
             num_experts=2, moe_grouped_gemm=True
         ).mlp.submodules,
-    ).to(device=cur_platform.device())
+    ).to(device='cuda')
     model.requires_grad_(True)
     # Initialize the model with all 1.0 for weights.
     for param in model.parameters():
@@ -394,10 +369,6 @@ def test_param_norm_moe(use_distributed_optimizer: bool):
 
 @pytest.mark.flaky
 @pytest.mark.flaky_in_dev
-@pytest.mark.skipif(
-    cur_platform.device_name() != 'cuda',
-    reason="StragglerDetector uses CUDA/NCCL-backed distributed timing paths.",
-)
 def test_straggler_detector():
     world = int(os.getenv('WORLD_SIZE', '1'))
     rank = int(os.getenv('RANK', '0'))
@@ -426,8 +397,8 @@ def test_straggler_detector():
         M = 20
         K = 30
         N = 40
-        mat1 = torch.randn(M, K, device=cur_platform.device())
-        mat2 = torch.randn(K, N, device=cur_platform.device())
+        mat1 = torch.randn(M, K, device='cuda')
+        mat2 = torch.randn(K, N, device='cuda')
         # batch_data.
         with stimer(bdata=True):
             time.sleep(s)
@@ -459,8 +430,8 @@ def test_straggler_detector():
         N = 20
         P = 30
         M = 40
-        mat1 = torch.randn(N, P, device=cur_platform.device())
-        mat2 = torch.randn(P, M, device=cur_platform.device())
+        mat1 = torch.randn(N, P, device='cuda')
+        mat2 = torch.randn(P, M, device='cuda')
         tfp = (N * M) * (2 * P - 1)  # Theoretical.
         iter = 10  # Mock.
         # batch_data.

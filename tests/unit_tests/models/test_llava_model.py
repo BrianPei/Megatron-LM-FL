@@ -19,12 +19,8 @@ from megatron.core.transformer.spec_utils import ModuleSpec
 from megatron.core.transformer.transformer_config import TransformerConfig
 from megatron.core.transformer.transformer_layer import TransformerLayer
 from megatron.core.utils import is_te_min_version
-from megatron.plugin.platform import get_platform
 from megatron.training.global_vars import set_args
 from tests.unit_tests.test_utilities import Utils
-
-cur_platform = get_platform()
-CUDA_ONLY_REASON = "LLaVA model test calls CUDA-only tensor APIs."
 
 
 class TestLLaVAModel:
@@ -97,7 +93,6 @@ class TestLLaVAModel:
         assert self.model.vision_model.decoder.input_tensor.shape == expected_shape
 
     @pytest.mark.internal
-    @pytest.mark.skipif(cur_platform.device_name() != "cuda", reason=CUDA_ONLY_REASON)
     def test_preprocess_data(self):
         self.model.cuda()
 
@@ -286,7 +281,6 @@ class TestLLaVAModel:
         assert torch.allclose(loss_mask[4], expected_loss_mask)
 
     @pytest.mark.internal
-    @pytest.mark.skipif(cur_platform.device_name() != "cuda", reason=CUDA_ONLY_REASON)
     def test_forward(self):
         self.model.cuda()
 
@@ -411,7 +405,6 @@ class TestLLaVAModel:
             )
 
     @pytest.mark.internal
-    @pytest.mark.skipif(cur_platform.device_name() != "cuda", reason=CUDA_ONLY_REASON)
     def test_forward_fsdp(self):
         """Test FSDP workaround for text-only data.
 
@@ -459,7 +452,7 @@ class TestLLaVAModel:
         path = tmp_path / "model.pt"
         torch.save(self.model.state_dict(), path)
 
-        self.model.load_state_dict(torch.load(path, map_location="cpu"))
+        self.model.load_state_dict(torch.load(path))
 
     @pytest.mark.internal
     def test_freeze(self):
@@ -709,7 +702,6 @@ class TestLLaVAModelTokenParallel:
         Utils.destroy_model_parallel()
 
     @pytest.mark.internal
-    @pytest.mark.skipif(cur_platform.device_name() != "cuda", reason=CUDA_ONLY_REASON)
     @pytest.mark.parametrize(
         "cp_size,tp_size,sequence_parallel,padding",
         [(1, 8, True, True), (2, 4, False, True), (2, 4, True, False), (2, 4, True, True)],

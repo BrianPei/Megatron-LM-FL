@@ -1,6 +1,5 @@
 import os
 import random
-import shutil
 import sys
 import tempfile
 from dataclasses import dataclass
@@ -9,8 +8,6 @@ from typing import Any, Dict
 
 import nltk
 import pytest
-
-from megatron.core import msc_utils
 
 try:
     import boto3
@@ -75,9 +72,7 @@ class _LocalClient(S3Client):
 
     def download_file(self, Bucket: str, Key: str, Filename: str) -> None:
         os.makedirs(os.path.dirname(Filename), exist_ok=True)
-        source = os.path.join("/", Bucket, Key)
-        if os.path.abspath(source) != os.path.abspath(Filename):
-            shutil.copyfile(source, Filename)
+        os.system(f"cp {os.path.join('/', Bucket, Key)} {Filename}")
         assert os.path.exists(Filename)
 
     def upload_file(self, Filename: str, Bucket: str, Key: str) -> None:
@@ -129,8 +124,7 @@ setattr(exceptions, "ClientError", _LocalClientError)
 def _msc_download_file(remote_path, local_path):
     remote_path = remote_path.removeprefix(MSC_PREFIX + "default")
     os.makedirs(os.path.dirname(local_path), exist_ok=True)
-    if os.path.abspath(remote_path) != os.path.abspath(local_path):
-        shutil.copyfile(remote_path, local_path)
+    os.system(f"cp {remote_path} {local_path}")
 
 
 def _msc_resolve_storage_client(path):
@@ -146,20 +140,6 @@ def _msc_resolve_storage_client(path):
 setattr(msc, "open", open)
 setattr(msc, "download_file", _msc_download_file)
 setattr(msc, "resolve_storage_client", _msc_resolve_storage_client)
-
-
-@pytest.fixture(autouse=True)
-def enable_mock_msc():
-    """Keep msc_utils in sync when this test installs a dummy multistorageclient module."""
-    previous_msc = msc_utils.msc
-    previous_feature_state = msc_utils.MultiStorageClientFeature.__getstate__()
-    msc_utils.msc = msc
-    msc_utils.MultiStorageClientFeature.enable()
-    try:
-        yield
-    finally:
-        msc_utils.msc = previous_msc
-        msc_utils.MultiStorageClientFeature.__setstate__(previous_feature_state)
 
 
 @pytest.mark.flaky

@@ -130,7 +130,7 @@ jobs:
           [[ -z "${DATA_CACHE_PATH}" || "${DATA_CACHE_PATH}" == "null" ]] && DATA_CACHE_PATH='/tmp/data_cache'
           [[ -z "${CHECKPOINT_LOAD_PATH}" || "${CHECKPOINT_LOAD_PATH}" == "null" ]] && CHECKPOINT_LOAD_PATH='/tmp/checkpoints'
           [[ -z "${TENSORBOARD_SUBPATH}" || "${TENSORBOARD_SUBPATH}" == "null" ]] && TENSORBOARD_SUBPATH='tensorboard'
-          [[ -z "${GPUS_PER_NODE}" || "${GPUS_PER_NODE}" == "null" ]] && GPUS_PER_NODE=''
+          [[ -z "${GPUS_PER_NODE}" || "${GPUS_PER_NODE}" == "null" ]] && GPUS_PER_NODE='${{ inputs.nproc_per_node }}'
 
           echo "Running functional test: ${MODEL}/${TEST_CASE}"
           echo "Training script: ${TRAINING_SCRIPT}"
@@ -138,7 +138,7 @@ jobs:
           echo "Lightweight mode: ${ENABLE_LIGHTWEIGHT_MODE}"
           echo "Data path: ${DATA_PATH}"
           echo "Checkpoint load path: ${CHECKPOINT_LOAD_PATH}"
-          echo "GPUs per node: ${GPUS_PER_NODE:-default}"
+          echo "GPUs per node: ${GPUS_PER_NODE}"
 
           export PYTHONPATH=${{ github.workspace }}:${PYTHONPATH:-}
 

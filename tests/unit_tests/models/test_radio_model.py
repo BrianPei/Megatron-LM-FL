@@ -6,10 +6,7 @@ from megatron.core.models.gpt.gpt_layer_specs import get_gpt_layer_with_transfor
 from megatron.core.models.vision.radio import RADIOViTModel
 from megatron.core.tensor_parallel.random import model_parallel_cuda_manual_seed
 from megatron.core.transformer.transformer_config import TransformerConfig
-from megatron.plugin.platform import get_platform
 from tests.unit_tests.test_utilities import Utils
-
-cur_platform = get_platform()
 
 
 class TestRADIOViTModel:
@@ -49,10 +46,6 @@ class TestRADIOViTModel:
 
         assert self.model.decoder.input_tensor.shape == torch.Size(expected_shape)
 
-    @pytest.mark.skipif(
-        cur_platform.device_name() != "cuda",
-        reason="RADIO ViT forward test calls CUDA-only tensor APIs.",
-    )
     def test_forward(self):
         self.model.cuda()
 
@@ -65,4 +58,4 @@ class TestRADIOViTModel:
         path = tmp_path / "model.pt"
         torch.save(self.model.state_dict(), path)
 
-        self.model.load_state_dict(torch.load(path, map_location="cpu"))
+        self.model.load_state_dict(torch.load(path))

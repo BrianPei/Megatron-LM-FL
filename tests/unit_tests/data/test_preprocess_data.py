@@ -1,7 +1,6 @@
 # Copyright (c) 2022, NVIDIA CORPORATION. All rights reserved.
 
 import json
-import fcntl
 import os
 import runpy
 import sys
@@ -27,39 +26,6 @@ __LOCAL_BERT_VOCAB = "/home/gitlab-runner/data/bert_data/vocab.txt"
 __LOCAL_GPT2_MERGE = "/home/gitlab-runner/data/gpt3_data/gpt2-merges.txt"
 
 __LOCAL_GPT2_VOCAB = "/home/gitlab-runner/data/gpt3_data/gpt2-vocab.json"
-
-__OPT_DATA_BERT_VOCAB = "/opt/data/tokenizers/bert/vocab.txt"
-
-__OPT_DATA_GPT2_MERGE = "/opt/data/tokenizers/megatron/gpt2-merges.txt"
-
-__OPT_DATA_GPT2_VOCAB = "/opt/data/tokenizers/megatron/gpt2-vocab.json"
-
-os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
-
-
-def _first_existing_path(*paths):
-    for path in paths:
-        if os.path.exists(path):
-            return path
-    return None
-
-
-def _download_once(url, filename):
-    cache_dir = os.path.join(tempfile.gettempdir(), "megatron_unit_test_assets")
-    os.makedirs(cache_dir, exist_ok=True)
-    path = os.path.join(cache_dir, filename)
-    lock_path = path + ".lock"
-
-    with open(lock_path, "w", encoding="utf-8") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
-        if not os.path.exists(path):
-            response = requests.get(url, timeout=60)
-            response.raise_for_status()
-            tmp_path = f"{path}.{os.getpid()}.tmp"
-            with open(tmp_path, "wb") as writer:
-                writer.write(response.content)
-            os.replace(tmp_path, path)
-    return path
 
 
 def dummy_jsonl(odir):
@@ -198,95 +164,34 @@ def do_test_preprocess_data(temp_dir, extra_args=[]):
 
 
 def gpt2_vocab(odir):
-    local_path = _first_existing_path(__LOCAL_GPT2_VOCAB, __OPT_DATA_GPT2_VOCAB)
-    if local_path is not None:
-        return local_path
-    return local_gpt2_tokenizer(odir)[1]
+    if os.path.exists(__LOCAL_GPT2_VOCAB):
+        return __LOCAL_GPT2_VOCAB
+    path = os.path.join(odir, "vocab.json")
+    with open(path, "wb") as writer:
+        writer.write(requests.get(MEGATRON_CONFIG_MAP['GPT2BPETokenizer']['vocab']).content)
+    return path
 
 
 def gpt2_merge(odir):
-    local_path = _first_existing_path(__LOCAL_GPT2_MERGE, __OPT_DATA_GPT2_MERGE)
-    if local_path is not None:
-        return local_path
-    return local_gpt2_tokenizer(odir)[2]
-
-
-def _gpt2_byte_encoder():
-    byte_values = (
-        list(range(ord("!"), ord("~") + 1))
-        + list(range(161, 173))
-        + list(range(174, 256))
-    )
-    unicode_values = byte_values[:]
-    next_unicode = 0
-    for byte in range(256):
-        if byte not in byte_values:
-            byte_values.append(byte)
-            unicode_values.append(256 + next_unicode)
-            next_unicode += 1
-    return dict(zip(byte_values, [chr(value) for value in unicode_values]))
-
-
-def local_gpt2_tokenizer(odir):
-    tokenizer_dir = os.path.join(odir, "gpt2_tokenizer")
-    os.makedirs(tokenizer_dir, exist_ok=True)
-
-    vocab_file = os.path.join(tokenizer_dir, "vocab.json")
-    merges_file = os.path.join(tokenizer_dir, "merges.txt")
-    byte_encoder = _gpt2_byte_encoder()
-    vocab = {token: index for index, token in enumerate(byte_encoder.values())}
-    vocab["<|endoftext|>"] = len(vocab)
-
-    with open(vocab_file, "w", encoding="utf-8") as writer:
-        json.dump(vocab, writer)
-
-    with open(merges_file, "w", encoding="utf-8") as writer:
-        writer.write("#version: 0.2\n")
-
-    with open(os.path.join(tokenizer_dir, "config.json"), "w", encoding="utf-8") as writer:
-        json.dump({"model_type": "gpt2"}, writer)
-
-    with open(
-        os.path.join(tokenizer_dir, "tokenizer_config.json"), "w", encoding="utf-8"
-    ) as writer:
-        json.dump(
-            {
-                "model_max_length": 1024,
-                "tokenizer_class": "GPT2Tokenizer",
-                "bos_token": "<|endoftext|>",
-                "eos_token": "<|endoftext|>",
-                "unk_token": "<|endoftext|>",
-            },
-            writer,
-        )
-
-    with open(
-        os.path.join(tokenizer_dir, "special_tokens_map.json"), "w", encoding="utf-8"
-    ) as writer:
-        json.dump(
-            {
-                "bos_token": "<|endoftext|>",
-                "eos_token": "<|endoftext|>",
-                "unk_token": "<|endoftext|>",
-            },
-            writer,
-        )
-
-    return tokenizer_dir, vocab_file, merges_file
+    if os.path.exists(__LOCAL_GPT2_MERGE):
+        return __LOCAL_GPT2_MERGE
+    path = os.path.join(odir, "merge.txt")
+    with open(path, "wb") as writer:
+        writer.write(requests.get(MEGATRON_CONFIG_MAP['GPT2BPETokenizer']['merges_file']).content)
+    return path
 
 
 def test_preprocess_data_gpt():
     with tempfile.TemporaryDirectory() as temp_dir:
-        tokenizer_dir, vocab_file, merges_file = local_gpt2_tokenizer(temp_dir)
 
         # gpt specific args
         gpt_args = [
             "--tokenizer-type",
             "GPT2BPETokenizer",
             "--vocab-file",
-            gpt2_vocab(temp_dir) or vocab_file,
+            "/opt/data/tokenizers/megatron/gpt2-vocab.json",
             "--merge-file",
-            gpt2_merge(temp_dir) or merges_file,
+            "/opt/data/tokenizers/megatron/gpt2-merges.txt",
             "--append-eod",
             "--workers",
             "10",
@@ -294,38 +199,24 @@ def test_preprocess_data_gpt():
             "1",
         ]
 
-        original_tokenizer_name = MEGATRON_CONFIG_MAP["GPT2BPETokenizer"][
-            "tokenizer_name"
-        ]
-        MEGATRON_CONFIG_MAP["GPT2BPETokenizer"]["tokenizer_name"] = tokenizer_dir
-        try:
-            do_test_preprocess_data(temp_dir, extra_args=gpt_args)
-        finally:
-            MEGATRON_CONFIG_MAP["GPT2BPETokenizer"][
-                "tokenizer_name"
-            ] = original_tokenizer_name
+        do_test_preprocess_data(temp_dir, extra_args=gpt_args)
 
 
 def test_preprocess_data_gpt_optimal_workers():
     with tempfile.TemporaryDirectory() as temp_dir:
-        tokenizer_dir, _, _ = local_gpt2_tokenizer(temp_dir)
-        input_path = os.path.join(temp_dir, "optimal_workers.jsonl")
-        with open(input_path, "w") as writer:
-            for i in range(1002):
-                writer.write(json.dumps({"text": f"document {i}"}) + "\n")
 
         # gpt specific args
         gpt_args = [
             "--input",
-            input_path,
+            "/opt/data/datasets/dclm/dclm.jsonl",
             "--output-prefix",
             f"{temp_dir}/optimal_workers",
             "--tokenizer-type",
             "GPT2BPETokenizer",
             "--vocab-file",
-            gpt2_vocab(temp_dir),
+            "/opt/data/tokenizers/megatron/gpt2-vocab.json",
             "--merge-file",
-            gpt2_merge(temp_dir),
+            "/opt/data/tokenizers/megatron/gpt2-merges.txt",
             "--append-eod",
             "--workers",
             "2",
@@ -339,111 +230,33 @@ def test_preprocess_data_gpt_optimal_workers():
             "--max-documents",
             "1002",
         ]
-        preprocess_data_path = os.path.abspath(
-            os.path.join(os.path.dirname(__file__), "../../../tools/preprocess_data.py")
-        )
-        original_tokenizer_name = MEGATRON_CONFIG_MAP["GPT2BPETokenizer"][
-            "tokenizer_name"
-        ]
-        MEGATRON_CONFIG_MAP["GPT2BPETokenizer"]["tokenizer_name"] = tokenizer_dir
-        try:
-            sys.argv = [preprocess_data_path] + gpt_args
-            runpy.run_path(preprocess_data_path, run_name="__main__")
-        finally:
-            MEGATRON_CONFIG_MAP["GPT2BPETokenizer"][
-                "tokenizer_name"
-            ] = original_tokenizer_name
+        sys.argv = ["/opt/megatron-lm/tools/preprocess_data.py"] + gpt_args
+        runpy.run_path("/opt/megatron-lm/tools/preprocess_data.py", run_name="__main__")
 
 
 def bert_vocab(odir):
-    local_path = _first_existing_path(__LOCAL_BERT_VOCAB, __OPT_DATA_BERT_VOCAB)
-    if local_path is not None:
-        return local_path
-    return _download_once(__HUGGINGFACE_BERT_BASE_UNCASED_VOCAB, "bert-base-uncased-vocab.txt")
-
-
-def local_bert_tokenizer(odir):
-    tokenizer_dir = os.path.join(odir, "bert_tokenizer")
-    os.makedirs(tokenizer_dir, exist_ok=True)
-
-    vocab_file = os.path.join(tokenizer_dir, "vocab.txt")
-    vocab_tokens = [
-        "[PAD]",
-        "[UNK]",
-        "[CLS]",
-        "[SEP]",
-        "[MASK]",
-        "text",
-        "document",
-        "test",
-        "numbers",
-        "ascending",
-        "import",
-        "def",
-        "with",
-        "for",
-        "in",
-        "range",
-        "json",
-        "line",
-        ".",
-        ",",
-        ":",
-        "(",
-        ")",
-        "[",
-        "]",
-        "{",
-        "}",
-        "_",
-        "-",
-    ] + [str(i) for i in range(1003)]
-    with open(vocab_file, "w", encoding="utf-8") as writer:
-        writer.write("\n".join(vocab_tokens))
-
-    with open(os.path.join(tokenizer_dir, "config.json"), "w", encoding="utf-8") as writer:
-        json.dump({"model_type": "bert"}, writer)
-
-    with open(
-        os.path.join(tokenizer_dir, "tokenizer_config.json"), "w", encoding="utf-8"
-    ) as writer:
-        json.dump(
-            {"do_lower_case": True, "model_max_length": 512, "tokenizer_class": "BertTokenizer"},
-            writer,
-        )
-
-    with open(
-        os.path.join(tokenizer_dir, "special_tokens_map.json"), "w", encoding="utf-8"
-    ) as writer:
-        json.dump(
-            {
-                "unk_token": "[UNK]",
-                "sep_token": "[SEP]",
-                "pad_token": "[PAD]",
-                "cls_token": "[CLS]",
-                "mask_token": "[MASK]",
-            },
-            writer,
-        )
-
-    return tokenizer_dir, vocab_file
+    if os.path.exists(__LOCAL_BERT_VOCAB):
+        return __LOCAL_BERT_VOCAB
+    path = os.path.join(odir, "vocab.txt")
+    with open(path, "wb") as writer:
+        writer.write(requests.get(__HUGGINGFACE_BERT_BASE_UNCASED_VOCAB).content)
+    return path
 
 
 @pytest.mark.flaky
 @pytest.mark.flaky_in_dev
 def test_preprocess_data_bert():
     with tempfile.TemporaryDirectory() as temp_dir:
-        tokenizer_dir, vocab_file = local_bert_tokenizer(temp_dir)
 
         # bert specific args
         bert_args = [
             "--tokenizer-type",
             "BertWordPieceLowerCase",
             "--vocab-file",
-            vocab_file,
-            "--tokenizer-hf-no-use-fast",
+            "/opt/data/tokenizers/megatron/gpt2-vocab.json",
+            "--split-sentences",
             "--workers",
-            "2",
+            "10",
             "--log-interval",
             "1",
             "--partitions",
@@ -451,16 +264,7 @@ def test_preprocess_data_bert():
             "--keep-sequential-samples",
         ]
 
-        original_tokenizer_name = MEGATRON_CONFIG_MAP["BertWordPieceLowerCase"][
-            "tokenizer_name"
-        ]
-        MEGATRON_CONFIG_MAP["BertWordPieceLowerCase"]["tokenizer_name"] = tokenizer_dir
-        try:
-            do_test_preprocess_data(temp_dir, extra_args=bert_args)
-        finally:
-            MEGATRON_CONFIG_MAP["BertWordPieceLowerCase"][
-                "tokenizer_name"
-            ] = original_tokenizer_name
+        do_test_preprocess_data(temp_dir, extra_args=bert_args)
 
 
 if __name__ == "__main__":

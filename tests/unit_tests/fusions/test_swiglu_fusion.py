@@ -5,10 +5,6 @@ import torch
 import torch.nn.functional as F
 
 from megatron.core.fusions.fused_bias_swiglu import bias_swiglu_impl, weighted_bias_swiglu_impl
-from megatron.plugin.platform import get_platform
-
-cur_platform = get_platform()
-DEVICE = cur_platform.device()
 
 
 @pytest.mark.parametrize("input_dtype", [torch.bfloat16, torch.float32])
@@ -20,11 +16,11 @@ def test_weighted_bias_swiglu(input_dtype):
     else:
         raise ValueError(f"Invalid input dtype: {input_dtype}")
 
-    x = torch.randn(16, 64, dtype=input_dtype, device=DEVICE)
+    x = torch.randn(16, 64, dtype=input_dtype, device="cuda")
     x.requires_grad = True
-    weights = torch.randn(16, 1, dtype=torch.float32, device=DEVICE)
+    weights = torch.randn(16, 1, dtype=torch.float32, device="cuda")
     weights.requires_grad = True
-    bwd_input = torch.randn(16, 32, dtype=input_dtype, device=DEVICE)
+    bwd_input = torch.randn(16, 32, dtype=input_dtype, device="cuda")
 
     y = bias_swiglu_impl(x, None) * weights
     y = y.to(input_dtype)

@@ -39,15 +39,6 @@ validate_musa_capacity() {
   ci_validate_device_capacity "$device_count"
 }
 
-install_musa_project() {
-  cd "$CI_PROJECT_ROOT"
-  python3 -m pip install -e . \
-    --no-deps \
-    --no-build-isolation \
-    --no-cache-dir \
-    --ignore-requires-python
-}
-
 setup_unit_environment() {
   ci_activate_python_environment
   configure_musa_runtime
@@ -69,14 +60,14 @@ setup_unit_environment() {
   python3 -m pip install fastapi uvicorn --no-cache-dir
 
   echo "Skipping NVIDIA CUPTI and Emerging-Optimizers dependencies on MUSA."
-  install_musa_project
+  ci_install_project --ignore-requires-python
   validate_musa_capacity
 }
 
 setup_build_environment() {
   ci_activate_python_environment
   configure_musa_runtime
-  install_musa_project
+  ci_install_project --ignore-requires-python
   validate_musa_capacity
 }
 

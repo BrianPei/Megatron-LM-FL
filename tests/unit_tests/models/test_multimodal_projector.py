@@ -1,7 +1,6 @@
 # Copyright (c) 2025, NVIDIA CORPORATION. All rights reserved.
 
 
-import pytest
 import torch
 
 from megatron.core.models.gpt.gpt_layer_specs import get_mlp_module_spec
@@ -10,10 +9,7 @@ from megatron.core.tensor_parallel.layers import ColumnParallelLinear
 from megatron.core.tensor_parallel.random import model_parallel_cuda_manual_seed
 from megatron.core.transformer.mlp import MLPSubmodules
 from megatron.core.transformer.transformer_config import TransformerConfig
-from megatron.plugin.platform import get_platform
 from tests.unit_tests.test_utilities import Utils
-
-cur_platform = get_platform()
 
 
 class TestMultimodalProjector:
@@ -53,10 +49,6 @@ class TestMultimodalProjector:
         num_weights = sum([p.numel() for p in self.affine.parameters()])
         assert num_weights == 65600
 
-    @pytest.mark.skipif(
-        cur_platform.device_name() != "cuda",
-        reason="Multimodal projector forward test calls CUDA-only tensor APIs.",
-    )
     def test_forward(self):
         self.mlp.cuda()
         self.affine.cuda()
@@ -75,9 +67,9 @@ class TestMultimodalProjector:
         path = tmp_path / "mlp.pt"
         torch.save(self.mlp.state_dict(), path)
 
-        self.mlp.load_state_dict(torch.load(path, map_location="cpu"))
+        self.mlp.load_state_dict(torch.load(path))
 
         path = tmp_path / "affine.pt"
         torch.save(self.affine.state_dict(), path)
 
-        self.affine.load_state_dict(torch.load(path, map_location="cpu"))
+        self.affine.load_state_dict(torch.load(path))

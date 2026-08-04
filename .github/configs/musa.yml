@@ -40,8 +40,6 @@ device_types:
 # Test matrix configuration
 test_matrix:
   unit:
-    devices:
-      - s5000
     pytest_extra_args: []
     groups:
       - name: core
@@ -201,7 +199,6 @@ test_matrix:
         golden_environment: dev
         golden_platform: s5000
         enable_lightweight_mode: false
-        gpus_per_node: 8
       - model: gpt
         test_case: qwen3_0p6b_mcore_te_tp2_pp2_benchmark_musa
         training_script: pretrain_gpt.py
@@ -209,4 +206,3 @@ test_matrix:
         golden_environment: dev
         golden_platform: s5000
         enable_lightweight_mode: false
-        gpus_per_node: 8
