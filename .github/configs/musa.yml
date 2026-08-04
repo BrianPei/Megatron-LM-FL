@@ -151,6 +151,11 @@ test_matrix:
       # fused_layer_norm_cuda (Apex CUDA kernel) not available in MUSA image;
       # test_pipeline_layout.py invokes GPT forward which enters fused_layer_norm
       - tests/unit_tests/pipeline_parallel/test_pipeline_layout.py
+      # TE-FL's reference layernorm path passes its DType enum through
+      # torch_musa as a device ID (for example musa:DType.kBFloat16). The first
+      # rank failure desynchronizes the remaining ranks and poisons later tests.
+      - tests/unit_tests/pipeline_parallel/test_fine_grained_activation_offloading.py::test_gpt_fine_grained_activation_offloading_correctness_and_memory
+      - tests/unit_tests/pipeline_parallel/test_fine_grained_activation_offloading.py::test_fine_grained_activation_offload_with_ep_a2a_overlap_compatibility
       # These communicator suites explicitly initialize NCCL process groups.
       - tests/unit_tests/pipeline_parallel/test_bridge_communicator.py
       - tests/unit_tests/pipeline_parallel/test_multimodule_communicator.py
