@@ -73,12 +73,22 @@ test_matrix:
         description: Export, post-training, tokenizer, and utility tests
     # Start with an empty ignore list; populate as tests fail on the first CI run.
     ignored_tests:
-      # core-KunLunXin uses FlagCx, not NCCL; nccl_allocator.so is never built.
+
+      #core
+      # KunLunXin uses FlagCx, not NCCL; nccl_allocator.so is never built.
       - tests/unit_tests/test_nccl_allocator.py
-      # core - the test asserts master weights stay bit-identical to the FP32
+      # the test asserts master weights stay bit-identical to the FP32
       # FusedAdam reference after 1000 steps, which only holds for the CUDA
       # kernel. ascend and metax ignore this case for the same reason.
       - tests/unit_tests/test_optimizer.py::test_precision_aware_fused_adam
+      # multi_tensor_adam_param_remainder is NOT IMPLEMENTED in XMLIR
+      # (error code=4); TE-FL reference.torch fallback also fails.
+      # metax ignores this case for the same reason.
+      - tests/unit_tests/test_optimizer.py::test_distrib_optimizer_save_load_with_non_tensor_state
+      # multi_tensor_sgd signature mismatch between TE-FL and XMLIR;
+      # the reference.torch fallback expects 8 args but gets 11. ascend
+      # ignores all SGD parametrizations of this test for the same reason.
+      - tests/unit_tests/test_optimizer_cpu_offloading.py::test_multi_device_hybrid_optimizer
 
   functional:
     train: []
