@@ -33,7 +33,6 @@ jobs:
       device_types: ${{ steps.config.outputs.device_types }}
       setup_script: ${{ steps.config.outputs.setup_script }}
       preflight_script: ${{ steps.config.outputs.preflight_script }}
-      preflight_nproc_per_node: ${{ steps.config.outputs.preflight_nproc_per_node }}
       unit_nproc_per_node: ${{ steps.config.outputs.unit_nproc_per_node }}
       train_test_matrix: ${{ steps.config.outputs.train_test_matrix }}
       unit_test_groups: ${{ steps.config.outputs.unit_test_groups }}
@@ -87,19 +86,13 @@ jobs:
 
           # Optional platform health checks run outside environment setup.
           PREFLIGHT_SCRIPT=$(yq '.preflight.script // ""' "$CONFIG_FILE")
-          PREFLIGHT_NPROC_PER_NODE=$(yq '.preflight.nproc_per_node // ""' "$CONFIG_FILE")
           if [ -n "$PREFLIGHT_SCRIPT" ]; then
             if [[ "$PREFLIGHT_SCRIPT" = /* || "$PREFLIGHT_SCRIPT" == *".."* ]]; then
               echo "::error::preflight.script must be a repository-relative path"
               exit 1
             fi
-            if ! [[ "$PREFLIGHT_NPROC_PER_NODE" =~ ^[1-9][0-9]*$ ]]; then
-              echo "::error::preflight.nproc_per_node must be a positive integer"
-              exit 1
-            fi
           fi
           echo "preflight_script=$PREFLIGHT_SCRIPT" >> $GITHUB_OUTPUT
-          echo "preflight_nproc_per_node=$PREFLIGHT_NPROC_PER_NODE" >> $GITHUB_OUTPUT
 
           # Read test matrix for training
           TRAIN_MATRIX=$(yq '.test_matrix.functional.train // [] | tojson(0)' "$CONFIG_FILE")
@@ -119,7 +112,8 @@ jobs:
             echo "::error::test_matrix.unit.groups must contain at least one group when unit tests are enabled"
             exit 1
           fi
-          if [ "${{ inputs.run_unit_tests }}" = "true" ] && ! [[ "$UNIT_NPROC_PER_NODE" =~ ^[1-9][0-9]*$ ]]; then
+          if { [ "${{ inputs.run_unit_tests }}" = "true" ] || [ -n "$PREFLIGHT_SCRIPT" ]; } && \
+             ! [[ "$UNIT_NPROC_PER_NODE" =~ ^[1-9][0-9]*$ ]]; then
             echo "::error::test_matrix.unit.nproc_per_node must be a positive integer"
             exit 1
           fi
@@ -158,7 +152,7 @@ jobs:
         working-directory: ${{ github.workspace }}
         env:
           CI_TEST_SUITE: build
-          CI_NPROC_PER_NODE: ${{ needs.checkout_and_config.outputs.preflight_nproc_per_node }}
+          CI_NPROC_PER_NODE: ${{ needs.checkout_and_config.outputs.unit_nproc_per_node }}
         run: |
           set -euo pipefail
 
@@ -180,7 +174,7 @@ jobs:
       - name: Run platform preflight
         working-directory: ${{ github.workspace }}
         env:
-          CI_NPROC_PER_NODE: ${{ needs.checkout_and_config.outputs.preflight_nproc_per_node }}
+          CI_NPROC_PER_NODE: ${{ needs.checkout_and_config.outputs.unit_nproc_per_node }}
         run: bash "$GITHUB_WORKSPACE/${{ needs.checkout_and_config.outputs.preflight_script }}"
         timeout-minutes: 5
 

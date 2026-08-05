@@ -7,7 +7,6 @@ setup_script: .github/scripts/set_env_my_hardware.sh
 # and before the configured unit/functional test jobs.
 # preflight:
 #   script: .github/scripts/run_my_hardware_preflight.sh
-#   nproc_per_node: 8
 
 # Docker image for this hardware (change image tag if needed)
 ci_image: harbor.baai.ac.cn/flagscale/megatron-lm-fl:my-hardware-image

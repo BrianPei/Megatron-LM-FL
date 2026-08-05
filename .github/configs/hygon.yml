@@ -1,10 +1,8 @@
 hardware_name: hygon
 display_name: 'Hygon Tests'
 setup_script: .github/scripts/set_env_hygon.sh
-checkout_fetch_depth: 1
 preflight:
   script: .github/scripts/run_hygon_preflight.sh
-  nproc_per_node: 8
 
 # Built from the documented DTK image with FlagGems, TransformerEngine-FL, and
 # the test dependencies preinstalled, so CI setup only installs this project.
@@ -189,6 +187,10 @@ test_matrix:
       - tests/unit_tests/dist_checkpointing/models/test_moe_experts.py
       # TE-FL missing fused_amax_and_scale_update_after_reduction operator.
       - tests/unit_tests/dist_checkpointing/test_async_save.py::TestAsyncSave::test_get_async_strategy[nvrx]
+      # The TE-FL MLP checkpoint reconfiguration path fails before all ranks
+      # reach the next process-group transition and then deadlocks the group.
+      # MetaX has the same image-level incompatibility.
+      - tests/unit_tests/dist_checkpointing/models/test_mlp_glu.py
       # Every BERT parametrization that ran failed, including the local-spec
       # combination that never touches TE, so this is the BERT sharded-state-dict
       # path rather than a TE-FL operator gap. The (1,1)->(2,2) reconfiguration
@@ -199,6 +201,11 @@ test_matrix:
       # weight and shares the sharded-state-dict path.
       - tests/unit_tests/dist_checkpointing/models/test_bert_model.py
       - tests/unit_tests/dist_checkpointing/models/test_gpt_model.py
+
+      # tensor_parallel
+      # This cross-entropy case fails on the BW1000 backend before its
+      # process-group cleanup, causing following cases to diverge by rank.
+      - tests/unit_tests/tensor_parallel/test_cross_entropy.py::test_vocab_parallel_cross_entropy
 
       # pipeline_parallel
       # TE-FL FlagGems te_general_grouped_gemm broadcast shape mismatch.
