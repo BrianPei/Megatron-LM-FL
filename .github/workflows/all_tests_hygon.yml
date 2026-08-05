@@ -25,56 +25,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  hygon_preflight:
-    name: hygon_preflight
-    runs-on:
-      - hg-8g-cicd-megatron
-    container:
-      image: harbor.baai.ac.cn/flagos-dev/megatron-lm-fl:manual-20260728-hygon-dev
-      volumes:
-        - /opt/hyhal:/opt/hyhal
-      options: >-
-        --ipc=host
-        --shm-size=500g
-        --hostname megatron_cicd
-        --add-host megatron_cicd:127.0.0.1
-        --user root
-        --ulimit nofile=65535:65535
-        --env DTK_HOME=/opt/dtk
-        --env GEMS_VENDOR=amd
-        --env ROCM_PATH=/opt/dtk
-        --env HIP_PATH=/opt/dtk/hip
-        --env HSA_PATH=/opt/dtk/hsa
-        --env HIP_CLANG_PATH=/opt/dtk/llvm/bin
-        --env DEVICE_LIB_PATH=/opt/dtk/amdgcn/bitcode
-        --env PATH=/opt/dtk/bin:/opt/dtk/hip/bin:/opt/dtk/llvm/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-        --env LD_LIBRARY_PATH=/opt/hyhal/lib/criu:/opt/hyhal/lib/rocprofiler:/opt/hyhal/lib:/opt/dtk/hip/lib:/opt/dtk/lib:/opt/dtk/llvm/lib:/opt/dtk/dcc/lib:/opt/dtk/aillvm/lib:/opt/dtk/hsa/lib
-        --device=/dev/kfd
-        --device=/dev/mkfd
-        --device=/dev/dri
-        --group-add video
-        --cap-add=SYS_PTRACE
-        --security-opt seccomp=unconfined
-    steps:
-      - name: Checkout source code
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
-
-      - name: Setup Hygon runtime
-        env:
-          CI_TEST_SUITE: build
-          CI_NPROC_PER_NODE: 8
-        run: bash .github/scripts/set_env_hygon.sh
-
-      - name: Run Hygon distributed preflight
-        env:
-          CI_NPROC_PER_NODE: 8
-        run: bash .github/scripts/run_hygon_preflight.sh
-        timeout-minutes: 5
-
   run_tests:
-    needs: hygon_preflight
     uses: ./.github/workflows/all_tests_common.yml
     with:
       platform: hygon

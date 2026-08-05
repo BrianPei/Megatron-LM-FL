@@ -32,6 +32,8 @@ jobs:
       container_options: ${{ steps.config.outputs.container_options }}
       device_types: ${{ steps.config.outputs.device_types }}
       setup_script: ${{ steps.config.outputs.setup_script }}
+      preflight_script: ${{ steps.config.outputs.preflight_script }}
+      preflight_nproc_per_node: ${{ steps.config.outputs.preflight_nproc_per_node }}
       unit_nproc_per_node: ${{ steps.config.outputs.unit_nproc_per_node }}
       train_test_matrix: ${{ steps.config.outputs.train_test_matrix }}
       unit_test_groups: ${{ steps.config.outputs.unit_test_groups }}
@@ -83,6 +85,22 @@ jobs:
           fi
           echo "setup_script=$SETUP_SCRIPT" >> $GITHUB_OUTPUT
 
+          # Optional platform health checks run outside environment setup.
+          PREFLIGHT_SCRIPT=$(yq '.preflight.script // ""' "$CONFIG_FILE")
+          PREFLIGHT_NPROC_PER_NODE=$(yq '.preflight.nproc_per_node // ""' "$CONFIG_FILE")
+          if [ -n "$PREFLIGHT_SCRIPT" ]; then
+            if [[ "$PREFLIGHT_SCRIPT" = /* || "$PREFLIGHT_SCRIPT" == *".."* ]]; then
+              echo "::error::preflight.script must be a repository-relative path"
+              exit 1
+            fi
+            if ! [[ "$PREFLIGHT_NPROC_PER_NODE" =~ ^[1-9][0-9]*$ ]]; then
+              echo "::error::preflight.nproc_per_node must be a positive integer"
+              exit 1
+            fi
+          fi
+          echo "preflight_script=$PREFLIGHT_SCRIPT" >> $GITHUB_OUTPUT
+          echo "preflight_nproc_per_node=$PREFLIGHT_NPROC_PER_NODE" >> $GITHUB_OUTPUT
+
           # Read test matrix for training
           TRAIN_MATRIX=$(yq '.test_matrix.functional.train // [] | tojson(0)' "$CONFIG_FILE")
           if [ "${{ inputs.run_functional_tests }}" = "true" ] && [ "$TRAIN_MATRIX" = "[]" ]; then
@@ -115,13 +133,69 @@ jobs:
     needs: 
       - checkout_and_config
     uses: ./.github/workflows/lint_common.yml
-          
+
+  preflight:
+    name: preflight
+    if: >-
+      always() &&
+      (inputs.run_unit_tests || inputs.run_functional_tests) &&
+      needs.checkout_and_config.result == 'success' &&
+      needs.checkout_and_config.outputs.preflight_script != ''
+    needs:
+      - checkout_and_config
+    runs-on: ${{ fromJson(needs.checkout_and_config.outputs.runs_on) }}
+    container:
+      image: ${{ needs.checkout_and_config.outputs.ci_image }}
+      volumes: ${{ fromJson(needs.checkout_and_config.outputs.container_volumes) }}
+      options: ${{ needs.checkout_and_config.outputs.container_options }}
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Setup platform environment
+        working-directory: ${{ github.workspace }}
+        env:
+          CI_TEST_SUITE: build
+          CI_NPROC_PER_NODE: ${{ needs.checkout_and_config.outputs.preflight_nproc_per_node }}
+        run: |
+          set -euo pipefail
+
+          SETUP_SCRIPT='${{ needs.checkout_and_config.outputs.setup_script }}'
+          PREFLIGHT_SCRIPT='${{ needs.checkout_and_config.outputs.preflight_script }}'
+          for script in "$SETUP_SCRIPT" "$PREFLIGHT_SCRIPT"; do
+            if [[ "$script" = /* || "$script" == *".."* ]]; then
+              echo "::error::CI script paths must be repository-relative"
+              exit 1
+            fi
+            if [ ! -f "$GITHUB_WORKSPACE/$script" ]; then
+              echo "::error::CI script not found: $script"
+              exit 1
+            fi
+          done
+
+          bash "$GITHUB_WORKSPACE/$SETUP_SCRIPT"
+
+      - name: Run platform preflight
+        working-directory: ${{ github.workspace }}
+        env:
+          CI_NPROC_PER_NODE: ${{ needs.checkout_and_config.outputs.preflight_nproc_per_node }}
+        run: bash "$GITHUB_WORKSPACE/${{ needs.checkout_and_config.outputs.preflight_script }}"
+        timeout-minutes: 5
+
   unit_tests:
     name: unit_tests
-    if: inputs.run_unit_tests
+    if: >-
+      always() &&
+      inputs.run_unit_tests &&
+      needs.checkout_and_config.result == 'success' &&
+      needs.lint.result == 'success' &&
+      (needs.preflight.result == 'success' || needs.preflight.result == 'skipped')
     needs: 
       - checkout_and_config
       - lint
+      - preflight
     strategy:
       fail-fast: false
       matrix:
@@ -162,10 +236,12 @@ jobs:
       inputs.run_functional_tests &&
       needs.checkout_and_config.result == 'success' &&
       needs.lint.result == 'success' &&
+      (needs.preflight.result == 'success' || needs.preflight.result == 'skipped') &&
       (inputs.run_unit_tests == false || needs.unit_tests_complete.result == 'success')
     needs:
       - checkout_and_config
       - lint
+      - preflight
       - unit_tests_complete
     strategy:
       fail-fast: false
@@ -204,6 +280,7 @@ jobs:
     needs:
       - checkout_and_config
       - lint
+      - preflight
       - unit_tests_complete
       - functional_tests_complete
     runs-on: ubuntu-latest
@@ -217,6 +294,12 @@ jobs:
           if [ "${{ needs.lint.result }}" != "success" ] && \
             [ "${{ needs.lint.result }}" != "skipped" ]; then
             echo "❌ Lint failed"
+            failed=true
+          fi
+
+          if [ "${{ needs.preflight.result }}" != "success" ] && \
+            [ "${{ needs.preflight.result }}" != "skipped" ]; then
+            echo "❌ Platform preflight failed or cancelled: ${{ needs.preflight.result }}"
             failed=true
           fi
 

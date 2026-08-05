@@ -2,6 +2,9 @@ hardware_name: hygon
 display_name: 'Hygon Tests'
 setup_script: .github/scripts/set_env_hygon.sh
 checkout_fetch_depth: 1
+preflight:
+  script: .github/scripts/run_hygon_preflight.sh
+  nproc_per_node: 8
 
 # Built from the documented DTK image with FlagGems, TransformerEngine-FL, and
 # the test dependencies preinstalled, so CI setup only installs this project.
