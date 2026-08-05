@@ -5,7 +5,6 @@
 hardware_name: ascend
 display_name: 'Ascend Tests'
 setup_script: .github/scripts/set_env_ascend.sh
-nproc_per_node: 8
 
 # CI image for the Ascend environment (built and pushed 2026-07-17, validated on Ascend 910C)
 ci_image: harbor.baai.ac.cn/flagos-dev/megatron-lm-fl:manual-20260717-ascend-dev
@@ -51,6 +50,7 @@ device_types:
 # Test matrix configuration
 test_matrix:
   unit:
+    nproc_per_node: 8
     devices:
       - 910c
     # Keep executing collected tests after an import/collection error so one
@@ -341,7 +341,7 @@ test_matrix:
         golden_platform: 910c
         enable_lightweight_mode: false
         data_cache_path: /tmp/megatron-data-cache
-        gpus_per_node: 8
+        gpus_per_node: 1
       - model: gpt
         test_case: qwen3_0p6b_mcore_te_tp2_pp2_benchmark_ascend
         training_script: pretrain_gpt.py
@@ -350,4 +350,4 @@ test_matrix:
         golden_platform: 910c
         enable_lightweight_mode: false
         data_cache_path: /tmp/megatron-data-cache
-        gpus_per_node: 8
+        gpus_per_node: 4

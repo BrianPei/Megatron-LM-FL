@@ -4,7 +4,6 @@
 hardware_name: musa
 display_name: 'S5000 Tests'
 setup_script: .github/scripts/set_env_musa.sh
-nproc_per_node: 8
 
 # Runner labels for Moore Threads node
 runner_labels:
@@ -40,6 +39,7 @@ device_types:
 # Test matrix configuration
 test_matrix:
   unit:
+    nproc_per_node: 8
     pytest_extra_args: []
     groups:
       - name: core
@@ -204,11 +204,9 @@ test_matrix:
       # datasets across eight ranks. The accumulated MCCL barriers eventually
       # SIGSEGV on MUSA, while the preceding parameter combinations pass.
       - tests/unit_tests/data/test_builder.py::test_fast_builder
-      # data-Rank0 stalls acquiring the MUSA device while nine concurrent unit
-      # groups contend for the same eight cards, so it never publishes the
-      # McclUniqueId; ranks 1-7 then exhaust the 60s c10d store timeout on every
-      # subsequent process-group rebuild. Group-unique MASTER_PORT (29606 here)
-      # rules out cross-group store collision -- this is card contention.
+      # Rank 0 can stall acquiring the MUSA device and never publish the
+      # McclUniqueId; ranks 1-7 then exhaust the c10d store timeout on every
+      # subsequent process-group rebuild.
       - tests/unit_tests/data/test_builder.py::test_builder
       - tests/unit_tests/data/test_fim_dataset.py
       - tests/unit_tests/data/test_gpt_dataset.py::test_mock_gpt_dataset
@@ -260,6 +258,7 @@ test_matrix:
         golden_environment: dev
         golden_platform: s5000
         enable_lightweight_mode: false
+        gpus_per_node: 1
       - model: gpt
         test_case: qwen3_0p6b_mcore_te_tp2_pp2_benchmark_musa
         training_script: pretrain_gpt.py
@@ -267,3 +266,4 @@ test_matrix:
         golden_environment: dev
         golden_platform: s5000
         enable_lightweight_mode: false
+        gpus_per_node: 4

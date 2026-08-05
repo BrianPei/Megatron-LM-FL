@@ -93,8 +93,6 @@ jobs:
         working-directory: ${{ github.workspace }}
         env:
           CI_TEST_SUITE: unit
-          CI_PLATFORM: ${{ inputs.platform }}
-          CI_DEVICE: ${{ inputs.device }}
           CI_TEST_GROUP: ${{ matrix.test_group.name }}
           CI_NPROC_PER_NODE: ${{ inputs.nproc_per_node }}
         run: |
