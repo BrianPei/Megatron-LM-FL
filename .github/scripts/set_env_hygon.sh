@@ -139,34 +139,6 @@ PY
   ci_validate_device_capacity "$device_count"
 }
 
-validate_hygon_distributed_runtime() {
-  local probe_timeout_seconds=180
-  local probe_exit_code=0
-
-  echo "Running the Hygon device and RCCL preflight."
-  timeout \
-    --signal=TERM \
-    --kill-after=15s \
-    "${probe_timeout_seconds}s" \
-    python3 -u -m torch.distributed.run \
-      --nnodes=1 \
-      --nproc_per_node="$CI_NPROC_PER_NODE" \
-      --rdzv-backend=c10d \
-      --rdzv-endpoint=127.0.0.1:29500 \
-      --rdzv-id=hygon-preflight \
-      "$CI_PROJECT_ROOT/.github/scripts/probe_hygon_distributed.py" ||
-    probe_exit_code=$?
-
-  if [ "$probe_exit_code" -ne 0 ]; then
-    if [ "$probe_exit_code" -eq 124 ] || [ "$probe_exit_code" -eq 137 ]; then
-      echo "::error::Hygon distributed preflight timed out. The host device or KFD state must be recovered before rerunning CI."
-    else
-      echo "::error::Hygon distributed preflight failed with exit code $probe_exit_code."
-    fi
-    return "$probe_exit_code"
-  fi
-}
-
 setup_unit_environment() {
   ci_activate_python_environment
   configure_hygon_runtime
@@ -181,7 +153,6 @@ setup_unit_environment() {
   remove_broken_hygon_cupy
   verify_hygon_software_stack
   validate_hygon_capacity
-  validate_hygon_distributed_runtime
   install_hygon_project
 }
 
@@ -204,7 +175,6 @@ setup_functional_environment() {
   verify_hygon_software_stack
   install_hygon_project
   validate_hygon_capacity
-  validate_hygon_distributed_runtime
 }
 
 setup_build_environment() {

@@ -1,7 +1,6 @@
 hardware_name: hygon
 display_name: 'Hygon Tests'
 setup_script: .github/scripts/set_env_hygon.sh
-nproc_per_node: 8
 checkout_fetch_depth: 1
 
 # Built from the documented DTK image with FlagGems, TransformerEngine-FL, and
@@ -46,6 +45,7 @@ device_types:
 
 test_matrix:
   unit:
+    nproc_per_node: 8
     pytest_extra_args:
       - --continue-on-collection-errors
       # Keep successful multi-rank stdout out of the live Actions log. Pytest
@@ -236,6 +236,7 @@ test_matrix:
         # Bootstrap the first BW1000 result against an existing golden file.
         golden_platform: dgx_a100
         enable_lightweight_mode: false
+        gpus_per_node: 1
       - model: gpt
         test_case: qwen3_0p6b_mcore_te_tp2_pp2_benchmark_hygon
         training_script: pretrain_gpt.py
@@ -243,3 +244,4 @@ test_matrix:
         golden_environment: dev
         golden_platform: bw1000
         enable_lightweight_mode: false
+        gpus_per_node: 4
