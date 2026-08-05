@@ -22,6 +22,7 @@ container_options: >-
   --ipc=host
   --shm-size=500g
   --hostname megatron_cicd
+  --add-host megatron_cicd:127.0.0.1
   --user root
   --ulimit nofile=65535:65535
   --env DTK_HOME=/opt/dtk
