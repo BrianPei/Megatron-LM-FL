@@ -1,5 +1,5 @@
 # KunLunXin Hardware Configuration for Megatron-LM-FL
-# This file defines CI/CD settings for KunLunXin P800-based testing.
+# This file defines CI/CD settings for KunLunXin P800-based testing..
 
 hardware_name: kunlunxin
 display_name: 'KunLunXin Tests'
