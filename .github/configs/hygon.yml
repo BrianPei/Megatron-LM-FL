@@ -52,10 +52,9 @@ test_matrix:
       # Keep successful multi-rank stdout out of the live Actions log. Pytest
       # still includes captured output for failures.
       - --capture=fd
-      # Override the repository-wide "-x" only for Hygon so collection can
-      # report every unsupported case without changing other platforms.
-      - -o
-      - 'addopts=--durations=15 -s -rA'
+      # Do not replay captured output for every passing parametrization. With
+      # eight ranks, pytest's default -rA report exceeds the Actions log limit.
+      - -rfE
     groups:
       - name: core
         path: tests/unit_tests/test_*.py megatron/plugin/tests/
