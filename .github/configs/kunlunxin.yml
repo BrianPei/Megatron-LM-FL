@@ -31,7 +31,6 @@ container_options: >-
   --hostname megatron_cicd
   --user root
   --ipc=host
-  --net=host
   --ulimit nofile=1048576:1048576
 
 # Device types to run tests on
