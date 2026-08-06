@@ -107,10 +107,18 @@ test_matrix:
       - tests/unit_tests/test_hyper_comm_grid.py::TestHyperCommGrid::test_end_to_end_workflow
       # torch.cuda.nvtx is not provided by the MUSA PyTorch build.
       - tests/unit_tests/test_utils.py::test_nvtx_range
-      # core-test_cross_check_param_hashes_across_dp_replicas hangs on MUSA with only 1/8 ranks
-      # completing (PASSED) while the other 7 ranks stall in MCCL collective communication;
-      # likely deadlock due to rank execution path divergence or SeqNum mismatch.
+      # core-test_utils.py flaky tests that hang on MUSA MCCL collective communication.
+      # test_check/cross_check_param_hashes call torch.distributed.all_gather() which deadlocks
+      # with partial ranks stalling while others complete. test_param_norm_* use DistributedDataParallel
+      # and may trigger similar MCCL synchronization issues. test_straggler_detector is inherently flaky.
+      # Align with Ascend's conservative approach: skip all @pytest.mark.flaky tests in test_utils.py.
+      - tests/unit_tests/test_utils.py::test_check_param_hashes_across_dp_replicas
       - tests/unit_tests/test_utils.py::test_cross_check_param_hashes_across_dp_replicas
+      - tests/unit_tests/test_utils.py::test_param_norm_linear[False]
+      - tests/unit_tests/test_utils.py::test_param_norm_linear[True]
+      - tests/unit_tests/test_utils.py::test_param_norm_moe[False]
+      - tests/unit_tests/test_utils.py::test_param_norm_moe[True]
+      - tests/unit_tests/test_utils.py::test_straggler_detector
       # PyTorch 2.5 _coalescing_manager compatibility issue with MUSA torch_musa
       # Mocked all_reduce returns None → op_list empty → work never assigned → UnboundLocalError
       - tests/unit_tests/distributed/test_param_and_grad_buffer.py::test_force_all_reduce_uses_correct_collective[False]
@@ -286,6 +294,9 @@ test_matrix:
       # test_mamba_model: mamba-ssm CUDA extension is not available in the MUSA image;
       # setup_method raises ImportError before any test body runs.
       - tests/unit_tests/models/test_mamba_model.py
+      # test_mamba_moe_model: GroupedGEMM kernels require compute capability >= 8.0 (Ampere or newer);
+      # Moore Threads S5000 does not meet this requirement.
+      - tests/unit_tests/models/test_mamba_moe_model.py
       # others-ExperimentalFeature logging does not populate log records on MUSA.
       - tests/unit_tests/utils/test_experimental_log_once.py::test_experimental_fn_logs_once
       - tests/unit_tests/utils/test_experimental_log_once.py::test_experimental_cls_logs_once
