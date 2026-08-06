@@ -96,6 +96,10 @@ test_matrix:
       # straggler-detector teardown crashes the FlagCx communicator during
       # pytest session shutdown. ascend and metax also ignore this case.
       - tests/unit_tests/test_utils.py::test_straggler_detector
+      # core-XMLIR mock intercepts torch.cuda.utilization() and loads
+      # /usr/local/xcudart/lib/libxpunvidia-ml.so.1 (NVML shim) which is
+      # absent in the CI image; ascend ignores this for the same reason.
+      - megatron/plugin/tests/test_platform.py::TestAllRegisteredPlatformsContract::test_utilization_returns_numeric
 
       #models
       # Hangs during DDP initialization allocating 1.3B params per rank on XPU.
