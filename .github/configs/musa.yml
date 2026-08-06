@@ -105,6 +105,10 @@ test_matrix:
       - tests/unit_tests/test_hyper_comm_grid.py::TestHyperCommGrid::test_get_pg_success
       - tests/unit_tests/test_hyper_comm_grid.py::TestHyperCommGrid::test_get_pg_multiple_dims
       - tests/unit_tests/test_hyper_comm_grid.py::TestHyperCommGrid::test_end_to_end_workflow
+      # TestHyperCommGridIntegration requires torch.distributed.ProcessGroupNCCL which
+      # does not exist in MUSA PyTorch (uses MCCL backend without ProcessGroupNCCL class).
+      # Metax/Ascend torch builds expose ProcessGroupNCCL compatibility class; MUSA does not.
+      - tests/unit_tests/test_hyper_comm_grid.py::TestHyperCommGridIntegration
       # torch.cuda.nvtx is not provided by the MUSA PyTorch build.
       - tests/unit_tests/test_utils.py::test_nvtx_range
       # core-test_utils.py flaky tests that hang on MUSA MCCL collective communication.
