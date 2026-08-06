@@ -130,6 +130,8 @@ test_matrix:
       # FSDP tests enter CUDA-specific runtime paths in the current MUSA image.
       - tests/unit_tests/distributed/megatron_fsdp/test_mcore_fully_sharded_data_parallel.py
       - tests/unit_tests/distributed/megatron_fsdp/test_mfsdp_fully_shard.py
+      # test_torch_fully_sharded_parallel: HAVE_FSDP=False (torch.distributed.fsdp.fully_shard unavailable in torch_musa 2.1)
+      - tests/unit_tests/distributed/test_torch_fully_sharded_parallel.py
       # These checkpointing paths require CUDA-backed TE or optimizer APIs.
       - tests/unit_tests/dist_checkpointing/models/test_mamba.py
       - tests/unit_tests/dist_checkpointing/models/test_mlp_glu.py::TestParallelMLPWithGLU::test_oom_is_handled
