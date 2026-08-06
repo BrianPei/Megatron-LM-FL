@@ -47,11 +47,11 @@ setup_unit_environment() {
   activate_kunlunxin_python_environment
   # data preprocessing tests fork multiprocessing workers whose initializer
   # calls nltk.load('tokenizers/punkt/PY3/english.pickle'); pre-download the
-  # punkt model via curl (uses the CI proxy) instead of the interactive
-  # nltk.downloader which prompts for retry and fails with EOFError.
+  # punkt model via curl from a domestic GitHub mirror (raw.gitmirror.com)
+  # to avoid the raw.githubusercontent.com connectivity issue in CI.
   mkdir -p /usr/local/share/nltk_data/tokenizers
   curl -fsSL \
-    "https://raw.githubusercontent.com/nltk/nltk_data/gh-pages/packages/tokenizers/punkt.zip" \
+    "https://raw.gitmirror.com/nltk/nltk_data/gh-pages/packages/tokenizers/punkt.zip" \
     -o /tmp/punkt.zip && \
   unzip -o /tmp/punkt.zip -d /usr/local/share/nltk_data/tokenizers/
   ci_install_project
