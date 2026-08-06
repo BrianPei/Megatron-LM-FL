@@ -121,8 +121,10 @@ test_matrix:
       - tests/unit_tests/distributed/megatron_fsdp/test_mfsdp_fully_shard.py::TestMegatronFsdpFullyShard::test_dcp_checkpoint_save_and_load
       # all TE-FL missing quantize (FP8) operator. Also on metax.
       - tests/unit_tests/distributed/test_param_and_grad_buffer.py::test_manual_bucket_group_cpu_sync_partition_and_buffer_helpers
-      - tests/unit_tests/distributed/megatron_fsdp/test_mcore_fully_sharded_data_parallel.py::TestFullyShardedDataParallel::test_fsdp_user_buffer_registration
       - tests/unit_tests/distributed/megatron_fsdp/test_mcore_fully_sharded_data_parallel.py::TestMegatronFSDPE2E::test_compatible_with_nd_parallel
+      # The remaining TestFullyShardedDataParallel methods all initialize the
+      # same unsupported BW1000 FSDP communicator in class setup.
+      - tests/unit_tests/distributed/megatron_fsdp/test_mcore_fully_sharded_data_parallel.py::TestFullyShardedDataParallel
       - tests/unit_tests/distributed/megatron_fsdp/test_mfsdp_fully_shard.py::TestMegatronFsdpFullyShard::test_fully_shard_custom_dtype
       - tests/unit_tests/distributed/megatron_fsdp/test_mfsdp_fully_shard.py::TestMegatronFsdpFullyShard::test_fully_shard_te_quantized
 
@@ -181,6 +183,12 @@ test_matrix:
       # TE-FL FlagGems backend missing these operators.
       - tests/unit_tests/models/test_gpt_model.py::TestGPTWithDynamicInference::test_dynamic_inference_padding_with_fp8
       - tests/unit_tests/models/test_llava_model.py::TestLLaVAModelTokenParallel::test_process_embedding_token_parallel
+      # TE operation-based GPT setup waits for an RCCL communicator on BW1000;
+      # the class fails before its forward test can run.
+      - tests/unit_tests/models/test_gpt_model.py::TestGPTWithFusedOps
+      # The TE activation-function parametrizations use the same model-parallel
+      # setup and leave the remaining ranks blocked on BW1000.
+      - tests/unit_tests/models/test_gpt_model.py::test_gpt_with_te_activation_func
       # mamba-ssm CUDA kernels unavailable on BW1000 (AMD/HIP). Also ignored on metax.
       - tests/unit_tests/models/test_mamba_model.py
       - tests/unit_tests/models/test_mamba_moe_model.py
@@ -193,6 +201,9 @@ test_matrix:
       # the fp32 weight-grad check at 1e-6 tolerance fails on some ranks
       # (inputs are unseeded randn, so it depends on the draw).
       - tests/unit_tests/fusions/test_weighted_squared_relu_fusion.py::test_weighted_squared_relu_fusion
+      # The conflict test initializes a model-parallel group and times out
+      # waiting for the BW1000 NCCL unique id before exercising the warning.
+      - tests/unit_tests/fusions/test_mla_yarn_rope_apply.py::TestApplyRotaryPosEmbMlaFusionConflict::test_mla_rotary_interleaved_with_apply_rope_fusion_emits_warning_and_uses_unfused
 
 
       # dist_checkpointing
