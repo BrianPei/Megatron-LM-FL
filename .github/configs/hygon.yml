@@ -1,8 +1,6 @@
 hardware_name: hygon
 display_name: 'Hygon Tests'
 setup_script: .github/scripts/set_env_hygon.sh
-preflight:
-  script: .github/scripts/run_hygon_preflight.sh
 
 # Built from the documented DTK image with FlagGems, TransformerEngine-FL, and
 # the test dependencies preinstalled, so CI setup only installs this project.
