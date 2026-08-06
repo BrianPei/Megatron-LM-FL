@@ -189,6 +189,10 @@ test_matrix:
       # The TE activation-function parametrizations use the same model-parallel
       # setup and leave the remaining ranks blocked on BW1000.
       - tests/unit_tests/models/test_gpt_model.py::test_gpt_with_te_activation_func
+      # Both classes initialize model parallelism in setup_method; the Hygon
+      # RCCL bootstrap errors before their model assertions can run.
+      - tests/unit_tests/models/test_gpt_model_quantization.py::TestGPTModelTEQuantizationConfig
+      - tests/unit_tests/models/test_heterogeneous_gpt_model.py::TestHeterogeneousGPTModel
       # mamba-ssm CUDA kernels unavailable on BW1000 (AMD/HIP). Also ignored on metax.
       - tests/unit_tests/models/test_mamba_model.py
       - tests/unit_tests/models/test_mamba_moe_model.py
