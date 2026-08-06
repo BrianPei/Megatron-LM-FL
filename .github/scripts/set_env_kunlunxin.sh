@@ -5,6 +5,26 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/set_env_common.sh"
 
+# Override the common install helper: pyproject.toml declares
+# requires-python>=3.12, but the KunLunXin torch environment ships
+# Python 3.10. --ignore-requires-python bypasses that version gate;
+# the code runs correctly with the XPU stack on 3.10.
+ci_install_project() {
+  cd "$CI_PROJECT_ROOT"
+  python3 -m pip install -e . --no-deps --no-build-isolation \
+      --no-cache-dir --ignore-requires-python
+}
+
+activate_kunlunxin_python_environment() {
+  # The KunLunXin CI image installs conda under /root/miniconda, not
+  # /opt/conda, so the common ci_activate_python_environment() guard
+  # never fires. Activate the PyTorch/XPU environment directly.
+  source /root/miniconda/etc/profile.d/conda.sh
+  conda activate python310_torch29_cuda
+  ci_export_env PATH "$PATH"
+  echo "Python: $(command -v python3) ($(python3 --version 2>&1))"
+}
+
 configure_kunlunxin_runtime() {
   # KunLunXin P800 uses XMLIR to expose XPU as a CUDA-compatible device.
   # FlagCx is the collective communication library (KunLunXin's equivalent
@@ -24,14 +44,14 @@ validate_kunlunxin_capacity() {
 }
 
 setup_unit_environment() {
-  ci_activate_python_environment
+  activate_kunlunxin_python_environment
   ci_install_project
   configure_kunlunxin_runtime
   validate_kunlunxin_capacity
 }
 
 setup_build_environment() {
-  ci_activate_python_environment
+  activate_kunlunxin_python_environment
   ci_install_project
   configure_kunlunxin_runtime
   validate_kunlunxin_capacity
