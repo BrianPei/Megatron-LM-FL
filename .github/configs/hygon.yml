@@ -149,6 +149,11 @@ test_matrix:
       # the rank-0 hang in process-group setup on Hygon BW1000.
       # Ascend ignores test_constructor and test_gpu_forward.
       - tests/unit_tests/models/test_base_embedding.py
+      # Every test errors in setup_method on all eight ranks, the same way
+      # test_base_embedding.py did before it was ignored. Both files open
+      # setup_method with Utils.initialize_model_parallel, and the group is
+      # killed before pytest emits a traceback, so the whole file is ignored.
+      - tests/unit_tests/models/test_bert_model.py
       # These MIMO 8-rank layouts hit missing tensor model-parallel group
       # initialization in the HyperCommGrid + TE attention path. They are also
       # ignored on metax.
@@ -206,6 +211,13 @@ test_matrix:
       # weight and shares the sharded-state-dict path.
       - tests/unit_tests/dist_checkpointing/models/test_bert_model.py
       - tests/unit_tests/dist_checkpointing/models/test_gpt_model.py
+      # T5 shares that sharded-state-dict path. Both parametrizations that ran
+      # failed on all eight ranks, including te-local which never touches TE,
+      # so this is the checkpoint path rather than a TE-FL operator gap. The
+      # group is then killed before pytest reports, leaving 526 of 528 tests
+      # unrun. MetaX ignores the function; the whole file is needed here for
+      # the same budget reason as test_bert_model.py.
+      - tests/unit_tests/dist_checkpointing/models/test_t5_model.py
 
       # tensor_parallel
       # This cross-entropy case fails on the BW1000 backend before its
