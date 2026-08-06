@@ -106,6 +106,10 @@ test_matrix:
       # TE-FL broadcast shape mismatch ([] vs [1]).
       - tests/unit_tests/test_utils.py::test_param_norm_linear
       - tests/unit_tests/test_utils.py::test_param_norm_moe
+      # HyperCommGrid mocks new_subgroups_by_enumeration but
+      # hyper_comm_grid.py:161 calls dist.get_rank() which requires an
+      # active process group; 7 of 8 Hygon ranks fail.
+      - tests/unit_tests/test_hyper_comm_grid.py
 
 
       # distributed
@@ -141,6 +145,10 @@ test_matrix:
       # Intermittently hangs after test_forward with no output from any rank and
       # no error; only the 30-min hard timeout ends it. Not ignored on metax.
       - tests/unit_tests/models/test_clip_vit_model.py::TestCLIPViTModel::test_save_load
+      # Hangs during RCCL communicator bootstrap; all tests in this file trigger
+      # the rank-0 hang in process-group setup on Hygon BW1000.
+      # Ascend ignores test_constructor and test_gpu_forward.
+      - tests/unit_tests/models/test_base_embedding.py
       # These MIMO 8-rank layouts hit missing tensor model-parallel group
       # initialization in the HyperCommGrid + TE attention path. They are also
       # ignored on metax.
