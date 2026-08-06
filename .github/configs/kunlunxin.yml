@@ -157,6 +157,63 @@ test_matrix:
       # Gloo backend fails to connect across ranks on XPU; metax ignores
       # the entire file for the same reason.
       - tests/unit_tests/dist_checkpointing/test_optimizer.py
+      # VPP checkpoint reconfiguration tests use a sub-world Gloo
+      # process group that fails to initialize on XPU; metax and ascend also ignore
+      # this file for the same reason.
+      - tests/unit_tests/dist_checkpointing/test_pipeline_parallel_layout.py
+      # test_empty_load calls torch.distributed.barrier() inside
+      # its context manager; XMLIR intercepts it as an XCCL ALLREDUCE which deadlocks
+      # after prior rank failures, triggering the 600s watchdog andaborting the
+      # entire test session.
+      - tests/unit_tests/dist_checkpointing/test_serialization.py::TestSerialization::test_empty_load
+    
+      
+      # pipeline_parallel
+      # pipeline_parallel-test_send_backward_recv_backward triggers an XCCL
+      # ALLREDUCE deadlock in bridge_communicator._communicate_shapes() under
+      # FlagCX; the Watchdog fires after 600s and aborts the entire session,
+      # preventing all remaining123 tests from running.
+      - tests/unit_tests/pipeline_parallel/test_bridge_communicator.py::TestBridgeCommunicator::test_send_backward_recv_backward
+
+
+      # data
+      # initialize_distributed() opens a second TCPStore on the same
+      # MASTER_ADDR:MASTER_PORT that torchrun already holds; rank 0 never
+      # publishes ncclUniqueId and other ranks exhaust the 60s store timeout,
+      # causing all204 parametrized cases to each block 60s and trip the
+      # 60-min CI hard timeout. Hygon ignores these files for the same reason.
+      - tests/unit_tests/data/test_builder.py
+
+
+      # fusions
+      # MLA YaRN RoPE fused kernel is CUDA/Triton-only; on XPU the fused
+      # apply returns zero tensors, causing float division by zero in the tolerance
+      # check. ascend and metax also ignore this file.
+      - tests/unit_tests/fusions/test_mla_yarn_rope_apply.py
+      # TE-FL on KunLunXin does not implement rmsnorm_bwd_add (fused
+      # RMSNorm backward + residual add); only rmsnorm_bwd is available.
+      # ascend and metax also ignore this file for the same reason.
+      - tests/unit_tests/fusions/test_rmsnorm_residual_fusion.py
+
+
+      # others 
+      #FP8 execution requires device compute capability >= 8.9 (NVIDIA H100/
+      # RTX4090); XPU does not meet this requirement. ascend and metax also ignore.
+      - tests/unit_tests/export/trtllm/test_distributed_fp8.py
+      - tests/unit_tests/export/trtllm/test_single_device_fp8.py
+      # modelopt_gpt_mamba_builder is not registered on XPU; model_provider
+      # module lacks the attribute. ascend and metax also ignore this case.
+      - tests/unit_tests/post_training/test_modelopt_model_builder.py::test_model_provider_switches_to_modelopt_builder
+      # mamba-ssm CUDA extension is not installed in the KunLunXin image;
+      # fixture setup instantiating MambaStack fails with ImportError.
+      # ascend ignores the entire TestModelOptMambaModel class for the same reason.
+      - tests/unit_tests/post_training/test_modelopt_module_spec.py::TestModelOptMambaModel
+      # tokenizer files at /opt/data/tokenizers/ are absent or not in the
+      # HuggingFace repo_name format required by AutoTokenizer >= 4.x.
+      # ascend and metax also ignore this entire file.
+      - tests/unit_tests/tokenizers/test_tokenizer.py
+    
+
 
   functional:
     train: []
