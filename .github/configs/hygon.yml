@@ -99,6 +99,10 @@ test_matrix:
       - tests/unit_tests/test_nccl_allocator.py
       # TE-FL precision-aware fused Adam pathway not supported on BW1000.
       - tests/unit_tests/test_optimizer.py::test_precision_aware_fused_adam
+      # Every 8-rank custom device-mesh parametrization fails on BW1000 and
+      # leaves the following ranks in the same group until torchrun kills the
+      # job. Keep the scalar optimizer coverage enabled.
+      - tests/unit_tests/test_optimizer.py::test_get_megatron_optimizer_with_custom_process_groups
       # TE-FL multi_tensor_sgd API version mismatch (8 args vs 11).
       - tests/unit_tests/test_optimizer_cpu_offloading.py::test_multi_device_hybrid_optimizer
       # BW1000 CPU offload overlap exceeds CUDA tolerance.
@@ -149,6 +153,9 @@ test_matrix:
       # the rank-0 hang in process-group setup on Hygon BW1000.
       # Ascend ignores test_constructor and test_gpu_forward.
       - tests/unit_tests/models/test_base_embedding.py
+      # All class tests initialize a model-parallel group in setup_method; the
+      # first setup errors on BW1000 and the remaining ranks are then killed.
+      - tests/unit_tests/models/test_clip_vit_model.py::TestCLIPViTModel
       # Every test errors in setup_method on all eight ranks, the same way
       # test_base_embedding.py did before it was ignored. Both files open
       # setup_method with Utils.initialize_model_parallel, and the group is
@@ -197,6 +204,9 @@ test_matrix:
       - tests/unit_tests/dist_checkpointing/models/test_moe_experts.py
       # TE-FL missing fused_amax_and_scale_update_after_reduction operator.
       - tests/unit_tests/dist_checkpointing/test_async_save.py::TestAsyncSave::test_get_async_strategy[nvrx]
+      # All four async save/load parametrizations fail on BW1000 before the
+      # checkpoint group reaches teardown and the job exits with 137.
+      - tests/unit_tests/dist_checkpointing/test_async_save.py::TestAsyncSave::test_async_is_equivalent_to_sync
       # The TE-FL MLP checkpoint reconfiguration path fails before all ranks
       # reach the next process-group transition and then deadlocks the group.
       # MetaX has the same image-level incompatibility.
@@ -223,6 +233,10 @@ test_matrix:
       # This cross-entropy case fails on the BW1000 backend before its
       # process-group cleanup, causing following cases to diverge by rank.
       - tests/unit_tests/tensor_parallel/test_cross_entropy.py::test_vocab_parallel_cross_entropy
+      # These tests initialize additional model-parallel groups under torchrun;
+      # RCCL fails during that bootstrap on BW1000 and cascades to all ranks.
+      - tests/unit_tests/tensor_parallel/test_data.py::test_broadcast_data
+      - tests/unit_tests/tensor_parallel/test_initialization.py::Test::test_embedding_init
 
       # pipeline_parallel
       # TE-FL FlagGems te_general_grouped_gemm broadcast shape mismatch.
