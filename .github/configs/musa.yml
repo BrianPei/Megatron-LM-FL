@@ -107,9 +107,10 @@ test_matrix:
       - tests/unit_tests/test_hyper_comm_grid.py::TestHyperCommGrid::test_end_to_end_workflow
       # torch.cuda.nvtx is not provided by the MUSA PyTorch build.
       - tests/unit_tests/test_utils.py::test_nvtx_range
-      # core-test_check_param_hashes_across_dp_replicas hangs on MUSA when checking parameter
-      # hash consistency across DP replicas; likely MCCL collective communication timeout or deadlock.
-      - tests/unit_tests/test_utils.py::test_check_param_hashes_across_dp_replicas
+      # core-test_cross_check_param_hashes_across_dp_replicas hangs on MUSA with only 1/8 ranks
+      # completing (PASSED) while the other 7 ranks stall in MCCL collective communication;
+      # likely deadlock due to rank execution path divergence or SeqNum mismatch.
+      - tests/unit_tests/test_utils.py::test_cross_check_param_hashes_across_dp_replicas
       # PyTorch 2.5 _coalescing_manager compatibility issue with MUSA torch_musa
       # Mocked all_reduce returns None → op_list empty → work never assigned → UnboundLocalError
       - tests/unit_tests/distributed/test_param_and_grad_buffer.py::test_force_all_reduce_uses_correct_collective[False]
