@@ -143,6 +143,10 @@ test_matrix:
       - tests/unit_tests/data/test_fim_dataset.py
       - tests/unit_tests/data/test_gpt_dataset.py
       - tests/unit_tests/data/test_multimodal_dataset.py
+      # Downloads the GPT-2 vocabulary and merge file from an external URL
+      # without a timeout or retry. The Hygon runner's connection was cut
+      # mid-response, so this test is not deterministic CI coverage here.
+      - tests/unit_tests/data/test_preprocess_mmdata.py::test_preprocess_mmdata
 
 
       # models
@@ -161,6 +165,9 @@ test_matrix:
       # setup_method with Utils.initialize_model_parallel, and the group is
       # killed before pytest emits a traceback, so the whole file is ignored.
       - tests/unit_tests/models/test_bert_model.py
+      # The model-parallel setup in TestGPTModel fails on BW1000 before the
+      # class tests run and leaves the remaining ranks blocked.
+      - tests/unit_tests/models/test_gpt_model.py::TestGPTModel
       # These MIMO 8-rank layouts hit missing tensor model-parallel group
       # initialization in the HyperCommGrid + TE attention path. They are also
       # ignored on metax.
@@ -228,6 +235,9 @@ test_matrix:
       # unrun. MetaX ignores the function; the whole file is needed here for
       # the same budget reason as test_bert_model.py.
       - tests/unit_tests/dist_checkpointing/models/test_t5_model.py
+      # CheckpointableProtocol initializes a fresh process group in setup and
+      # both tests error on BW1000 before the group can be torn down.
+      - tests/unit_tests/dist_checkpointing/test_checkpointable.py::TestCheckpointableProtocol
 
       # tensor_parallel
       # This cross-entropy case fails on the BW1000 backend before its
