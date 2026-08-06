@@ -46,9 +46,14 @@ validate_kunlunxin_capacity() {
 setup_unit_environment() {
   activate_kunlunxin_python_environment
   # data preprocessing tests fork multiprocessing workers whose initializer
-  # calls nltk.load('tokenizers/punkt/PY3/english.pickle'); pre-download it
-  # so every worker can find the model without hitting LookupError.
-  python3 -m nltk.downloader punkt -d /usr/local/share/nltk_data
+  # calls nltk.load('tokenizers/punkt/PY3/english.pickle'); pre-download the
+  # punkt model via curl (uses the CI proxy) instead of the interactive
+  # nltk.downloader which prompts for retry and fails with EOFError.
+  mkdir -p /usr/local/share/nltk_data/tokenizers
+  curl -fsSL \
+    "https://raw.githubusercontent.com/nltk/nltk_data/gh-pages/packages/tokenizers/punkt.zip" \
+    -o /tmp/punkt.zip && \
+  unzip -o /tmp/punkt.zip -d /usr/local/share/nltk_data/tokenizers/
   ci_install_project
   configure_kunlunxin_runtime
   validate_kunlunxin_capacity
