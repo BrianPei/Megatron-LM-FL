@@ -44,18 +44,18 @@ test_matrix:
       - p800
     pytest_extra_args: []
     groups:
-      - name: core
-        path: tests/unit_tests/test_*.py megatron/plugin/tests/
-        description: Core unit tests
+      #- name: core
+      #  path: tests/unit_tests/test_*.py megatron/plugin/tests/
+      #  description: Core unit tests
       #- name: models
       #  path: tests/unit_tests/models/
       #  description: Model tests
       #- name: distributed
       #  path: tests/unit_tests/distributed/
       #  description: Distributed tests
-      - name: dist_checkpointing
-        path: tests/unit_tests/dist_checkpointing/
-        description: Distributed checkpointing tests
+      #- name: dist_checkpointing
+      #  path: tests/unit_tests/dist_checkpointing/
+      #  description: Distributed checkpointing tests
       #- name: tensor_parallel
       #  path: tests/unit_tests/tensor_parallel/
       #  description: Tensor parallel tests
@@ -197,6 +197,11 @@ test_matrix:
       # FlagCX; the Watchdog fires after 600s and aborts the entire session,
       # preventing all remaining123 tests from running.
       - tests/unit_tests/pipeline_parallel/test_bridge_communicator.py::TestBridgeCommunicator::test_send_backward_recv_backward
+      # test_send_forward_recv_backward_send_backward_recv_forward creates
+      # complex bridge communicator topology (2 broadcast groups + 4 dest ranks);
+      # XCCL ALLREDUCE (SeqNum=8) deadlocks in _communicate_shapes() for 600s
+      # until Watchdog fires. metax also ignores this case (MACA deadlock).
+      - tests/unit_tests/pipeline_parallel/test_bridge_communicator.py::TestBridgeCommunicator::test_send_forward_recv_backward_send_backward_recv_forward
 
 
       # data

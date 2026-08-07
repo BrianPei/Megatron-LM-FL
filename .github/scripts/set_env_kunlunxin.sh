@@ -54,6 +54,8 @@ setup_unit_environment() {
     "https://raw.gitmirror.com/nltk/nltk_data/gh-pages/packages/tokenizers/punkt.zip" \
     -o /tmp/punkt.zip && \
   unzip -o /tmp/punkt.zip -d /usr/local/share/nltk_data/tokenizers/
+  # Export NLTK_DATA so multiprocessing workers inherit the search path.
+  ci_export_env NLTK_DATA /usr/local/share/nltk_data
   ci_install_project
   configure_kunlunxin_runtime
   validate_kunlunxin_capacity
