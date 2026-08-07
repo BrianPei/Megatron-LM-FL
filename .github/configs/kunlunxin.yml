@@ -204,6 +204,18 @@ test_matrix:
       # handles these topologies). Ignoring the entire file to avoid burning
       # 10+ minutes per new failure and losing the rest of the test session.
       - tests/unit_tests/pipeline_parallel/test_bridge_communicator.py
+      # test_gpt_fine_grained_activation_offloading_correctness_and_memory hangs
+      # after printing the Activation Offload Summary table: the test body
+      # completes (forward/backward passes finish, offload stats print) but
+      # pytest never reports PASSED/FAILED and never proceeds to the next test.
+      # The hang occurs during teardown, likely in destroy_process_group() or
+      # a barrier(), blocking 30+ minutes until manual termination. All
+      # parametrized variants (offload_modules0/1/2) exhibit the same symptom.
+      # Metax ignores this for "flaky fine-grained activation offload paths";
+      # Ascend ignores it because "the pytest session never reports a summary"
+      # (identical to the symptom observed here).
+      - tests/unit_tests/pipeline_parallel/test_fine_grained_activation_offloading.py::test_gpt_fine_grained_activation_offloading_correctness_and_memory
+      - tests/unit_tests/pipeline_parallel/test_fine_grained_activation_offloading.py::test_fine_grained_activation_offload_with_ep_a2a_overlap_compatibility
 
 
       # data
