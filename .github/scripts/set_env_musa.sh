@@ -75,17 +75,12 @@ PYTESTEOF
     ci_export_env PYTEST_ADDOPTS "${PYTEST_ADDOPTS:-} -p musa_ci_pytest"
   else
     cat > "$site_dir/sitecustomize.py" <<'SITEEOF'
-import contextlib
-import io
-
 import torchada  # noqa: F401
 import torch
 
-with contextlib.redirect_stdout(io.StringIO()):
-    from megatron.plugin.platform import get_platform
-    is_musa = get_platform().device_name() == "musa"
+from megatron.plugin.platform import get_platform
 
-if is_musa:
+if get_platform().device_name() == "musa":
     torch.cuda.is_available = torch.musa.is_available
 SITEEOF
   fi
