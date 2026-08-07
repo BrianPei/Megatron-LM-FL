@@ -45,17 +45,6 @@ validate_kunlunxin_capacity() {
 
 setup_unit_environment() {
   activate_kunlunxin_python_environment
-  # data preprocessing tests fork multiprocessing workers whose initializer
-  # calls nltk.load('tokenizers/punkt/PY3/english.pickle'); pre-download the
-  # punkt model via curl from a domestic GitHub mirror (raw.gitmirror.com)
-  # to avoid the raw.githubusercontent.com connectivity issue in CI.
-  mkdir -p /usr/local/share/nltk_data/tokenizers
-  curl -fsSL \
-    "https://raw.gitmirror.com/nltk/nltk_data/gh-pages/packages/tokenizers/punkt.zip" \
-    -o /tmp/punkt.zip && \
-  unzip -o /tmp/punkt.zip -d /usr/local/share/nltk_data/tokenizers/
-  # Export NLTK_DATA so multiprocessing workers inherit the search path.
-  ci_export_env NLTK_DATA /usr/local/share/nltk_data
   ci_install_project
   configure_kunlunxin_runtime
   validate_kunlunxin_capacity

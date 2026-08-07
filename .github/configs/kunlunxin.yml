@@ -202,9 +202,19 @@ test_matrix:
       # XCCL ALLREDUCE (SeqNum=8) deadlocks in _communicate_shapes() for 600s
       # until Watchdog fires. metax also ignores this case (MACA deadlock).
       - tests/unit_tests/pipeline_parallel/test_bridge_communicator.py::TestBridgeCommunicator::test_send_forward_recv_backward_send_backward_recv_forward
+      # _avg_params() all_reduces transformer block params over the dp=8 group;
+      # ranks desynchronize (some reach teardown's barrier in destroy_all_grids
+      # while others are still inside the all_reduce) and XCCL deadlocks on
+      # SeqNum=7 for 600s until the Watchdog aborts the session. metax also
+      # ignores this case (invalid device pointer during the same all_reduce).
+      - tests/unit_tests/pipeline_parallel/test_bridge_communicator.py::TestBridgeCommunicator::test_bridge_communicator_with_transformer_blocks
 
 
       # data
+      # test_bin_reader requires multi-storage-client (optional dependency for
+      # S3/OSS remote storage), which is not installed in the kunlunxin image.
+      # metax also ignores this test for the same reason.
+      - tests/unit_tests/data/test_bin_reader.py
       # initialize_distributed() opens a second TCPStore on the same
       # MASTER_ADDR:MASTER_PORT that torchrun already holds; rank 0 never
       # publishes ncclUniqueId and other ranks exhaust the 60s store timeout,
@@ -224,6 +234,13 @@ test_matrix:
       - tests/unit_tests/data/test_multimodal_dataset.py
       - tests/unit_tests/data/test_builder.py
       - tests/unit_tests/data/test_preprocess_mmdata.py
+      # test_preprocess_data_gpt_optimal_workers hardcodes /opt/megatron-lm/tools/
+      # instead of using the actual working directory; test_preprocess_data_bert
+      # fails on BERT tokenizer sentence boundary assertion (expects "[SEP] [CLS]"
+      # between sentences but the tokenizer merges them into one). metax and ascend
+      # both ignore the entire file for these reasons.
+      - tests/unit_tests/data/test_preprocess_data.py::test_preprocess_data_gpt_optimal_workers
+      - tests/unit_tests/data/test_preprocess_data.py::test_preprocess_data_bert
 
       # fusions
       # MLA YaRN RoPE fused kernel is CUDA/Triton-only; on XPU the fused
