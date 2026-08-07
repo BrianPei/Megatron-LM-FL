@@ -222,6 +222,10 @@ test_matrix:
       # "the pytest session never reports a summary".
       - tests/unit_tests/pipeline_parallel/test_fine_grained_activation_offloading.py::test_gpt_fine_grained_activation_offloading_correctness_and_memory
       - tests/unit_tests/pipeline_parallel/test_fine_grained_activation_offloading.py::test_fine_grained_activation_offload_with_ep_a2a_overlap_compatibility
+      # teardown_class deadlocks in destroy_model_parallel → barrier(), XCCL
+      # ALLREDUCE SeqNum=12 times out after 600s. Metax and Ascend also ignore.
+      - tests/unit_tests/pipeline_parallel/test_multimodule_schedules.py::TestMultimoduleSchedules::test_single_encoder_8gpu
+      - tests/unit_tests/pipeline_parallel/test_multimodule_schedules.py::TestMultimoduleSchedules::test_dual_encoder_8gpu
 
 
       # data
