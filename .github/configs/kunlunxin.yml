@@ -1,5 +1,5 @@
 # KunLunXin Hardware Configuration for Megatron-LM-FL
-# This file defines CI/CD settings for KunLunXin P800-based testing..
+# This file defines CI/CD settings for KunLunXin P800-based testing.
 
 hardware_name: kunlunxin
 display_name: 'KunLunXin Tests'
@@ -40,8 +40,6 @@ device_types:
 # Test matrix configuration
 test_matrix:
   unit:
-    devices:
-      - p800
     pytest_extra_args: []
     groups:
       - name: core
@@ -71,7 +69,6 @@ test_matrix:
       - name: others
         path: tests/unit_tests/export/ tests/unit_tests/post_training/ tests/unit_tests/tokenizers/ tests/unit_tests/utils/
         description: Export, post-training, tokenizer, and utility tests
-    # Start with an empty ignore list; populate as tests fail on the first CI run.
     ignored_tests:
 
       #core
@@ -107,22 +104,14 @@ test_matrix:
       # metax and ascend are not affected as their communication libraries
       # handle teardown without memory corruption.
       - tests/unit_tests/test_parallel_state.py::test_get_tensor_model_parallel_src_rank
-      # XCCL/FlagCX process group teardown corrupts memory during
-      # test_get_tensor_model_parallel_src_rank; the subsequent pytest
-      # reset_env_vars fixture calls os.environ.update() on the corrupted
-      # heap and triggers SIGSEGV (exitcode -11), killing the entire session.
-      # metax and ascend are not affected as their communication libraries
-      # handle teardown without memory corruption.
-      - tests/unit_tests/test_parallel_state.py::test_get_tensor_model_parallel_src_rank
-
       #models
       # Hangs during DDP initialization allocating 1.3B params per rank on XPU.
       - tests/unit_tests/models/test_heterogeneous_gpt_model.py
       # Hangs during distributed init (FlagCx communicator setup) on XPU.
-      - tests/unit_tests/models/test_base_embedding.py::test_constructor
+      - tests/unit_tests/models/test_base_embedding.py::TestBaseEmbedding::test_constructor
       # SIGSEGV in XMLIR during FlagCx distributed init (setup_method →
       # initialize_model_parallel). ascend also ignores this case.
-      - tests/unit_tests/models/test_base_embedding.py::test_gpu_forward
+      - tests/unit_tests/models/test_base_embedding.py::TestBaseEmbedding::test_gpu_forward
       # All 8-GPU MIMO schedules and checkpoint hang during DDP initialization
       # (FlagCx) on XPU. ascend and metax also ignore these.
       - tests/unit_tests/models/test_mimo_1f1b_schedule.py
@@ -182,15 +171,10 @@ test_matrix:
       - tests/unit_tests/dist_checkpointing/test_pipeline_parallel_layout.py
       # test_empty_load calls torch.distributed.barrier() inside
       # its context manager; XMLIR intercepts it as an XCCL ALLREDUCE which deadlocks
-      # after prior rank failures, triggering the 600s watchdog andaborting the
+      # after prior rank failures, triggering the 600s watchdog and aborting the
       # entire test session.
       - tests/unit_tests/dist_checkpointing/test_serialization.py::TestSerialization::test_empty_load
-      # test_remove_sharded_tensors triggers an XCCL
-      # ALLREDUCE deadlock (SeqNum=1324); all 8 ranks block for 10 minutes
-      # until the Watchdog fires and terminates the session with exitcode 1.
-      # metax also ignores this case for the same reason (MACA deadlock).
-      - tests/unit_tests/dist_checkpointing/test_serialization.py::TestSerialization::test_remove_sharded_tensors
-      
+
       # pipeline_parallel
       # All bridge_communicator tests with complex topologies (multi-grid, 2D
       # fan-in/fan-out, transformer blocks) trigger XCCL/FlagCX collective
@@ -236,7 +220,7 @@ test_matrix:
       # initialize_distributed() opens a second TCPStore on the same
       # MASTER_ADDR:MASTER_PORT that torchrun already holds; rank 0 never
       # publishes ncclUniqueId and other ranks exhaust the 60s store timeout,
-      # causing all204 parametrized cases to each block 60s and trip the
+      # causing all 204 parametrized cases to each block 60s and trip the
       # 60-min CI hard timeout. Hygon ignores these files for the same reason.
       - tests/unit_tests/data/test_builder.py
       # All distributed dataset tests timeout on TCPStore initialization
@@ -250,7 +234,6 @@ test_matrix:
       - tests/unit_tests/data/test_fim_dataset.py
       - tests/unit_tests/data/test_gpt_dataset.py
       - tests/unit_tests/data/test_multimodal_dataset.py
-      - tests/unit_tests/data/test_builder.py
       - tests/unit_tests/data/test_preprocess_mmdata.py
       # test_preprocess_data_gpt_optimal_workers hardcodes /opt/megatron-lm/tools/
       # instead of using the actual working directory; test_preprocess_data_bert
@@ -271,8 +254,8 @@ test_matrix:
       - tests/unit_tests/fusions/test_rmsnorm_residual_fusion.py
 
 
-      # others 
-      #FP8 execution requires device compute capability >= 8.9 (NVIDIA H100/
+      # others
+      # FP8 execution requires device compute capability >= 8.9 (NVIDIA H100/
       # RTX4090); XPU does not meet this requirement. ascend and metax also ignore.
       - tests/unit_tests/export/trtllm/test_distributed_fp8.py
       - tests/unit_tests/export/trtllm/test_single_device_fp8.py
@@ -287,10 +270,5 @@ test_matrix:
       # HuggingFace repo_name format required by AutoTokenizer >= 4.x.
       # ascend and metax also ignore this entire file.
       - tests/unit_tests/tokenizers/test_tokenizer.py
-
-
-    
-
-
   functional:
     train: []
