@@ -125,6 +125,11 @@ test_matrix:
       # The remaining TestFullyShardedDataParallel methods all initialize the
       # same unsupported BW1000 FSDP communicator in class setup.
       - tests/unit_tests/distributed/megatron_fsdp/test_mcore_fully_sharded_data_parallel.py::TestFullyShardedDataParallel
+      # The test file documents that this entry point leaves corrupted NCCL
+      # state behind. On BW1000 its four parametrizations fail together and
+      # the following DDP tests only report cascading process-group errors.
+      # MetaX and Ascend also exclude this method.
+      - tests/unit_tests/distributed/megatron_fsdp/test_mfsdp_fully_shard.py::TestMegatronFsdpFullyShard::test_fully_shard_ez
       - tests/unit_tests/distributed/megatron_fsdp/test_mfsdp_fully_shard.py::TestMegatronFsdpFullyShard::test_fully_shard_custom_dtype
       - tests/unit_tests/distributed/megatron_fsdp/test_mfsdp_fully_shard.py::TestMegatronFsdpFullyShard::test_fully_shard_te_quantized
 
