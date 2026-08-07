@@ -117,22 +117,22 @@ test_matrix:
 
 
       # distributed
-      # Rank-dependent failures deadlock in KFD/futex during next PG init.
-      - tests/unit_tests/distributed/megatron_fsdp/test_mfsdp_fully_shard.py::TestMegatronFsdpFullyShard::test_dcp_checkpoint_save_and_load
+      # This file explicitly documents that it leaves corrupted NCCL state and
+      # must run in an isolated bucket. All executable methods are already
+      # unsupported on BW1000, while test_fully_shard is unconditionally
+      # skipped upstream, so ignoring the file removes no Hygon coverage.
+      - tests/unit_tests/distributed/megatron_fsdp/test_mfsdp_fully_shard.py
+      # Class setup creates model-parallel groups before the dp_size=2 case can
+      # skip on an 8-rank job. BW1000 intermittently fails that RCCL bootstrap;
+      # later distributed tests then enter different process-group sequences.
+      # MetaX excludes this file for the same distributed-test boundary.
+      - tests/unit_tests/distributed/test_distributed_data_parallel.py
       # all TE-FL missing quantize (FP8) operator. Also on metax.
       - tests/unit_tests/distributed/test_param_and_grad_buffer.py::test_manual_bucket_group_cpu_sync_partition_and_buffer_helpers
       - tests/unit_tests/distributed/megatron_fsdp/test_mcore_fully_sharded_data_parallel.py::TestMegatronFSDPE2E::test_compatible_with_nd_parallel
       # The remaining TestFullyShardedDataParallel methods all initialize the
       # same unsupported BW1000 FSDP communicator in class setup.
       - tests/unit_tests/distributed/megatron_fsdp/test_mcore_fully_sharded_data_parallel.py::TestFullyShardedDataParallel
-      # The test file documents that this entry point leaves corrupted NCCL
-      # state behind. On BW1000 its four parametrizations fail together and
-      # the following DDP tests only report cascading process-group errors.
-      # MetaX and Ascend also exclude this method.
-      - tests/unit_tests/distributed/megatron_fsdp/test_mfsdp_fully_shard.py::TestMegatronFsdpFullyShard::test_fully_shard_ez
-      - tests/unit_tests/distributed/megatron_fsdp/test_mfsdp_fully_shard.py::TestMegatronFsdpFullyShard::test_fully_shard_custom_dtype
-      - tests/unit_tests/distributed/megatron_fsdp/test_mfsdp_fully_shard.py::TestMegatronFsdpFullyShard::test_fully_shard_te_quantized
-
       # data
       # Hardcoded /opt/data and /opt/megatron-lm paths, plus a vocab download
       # with no timeout that hangs the rank group. Also ignored on cuda/metax.
