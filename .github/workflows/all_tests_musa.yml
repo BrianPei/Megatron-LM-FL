@@ -2,7 +2,7 @@ name: s5000_tests
 
 on:
   push:
-    branches: ["main", "dev", "dev-musa", "functional-Musa"]
+    branches: ["main", "dev", "dev-musa"]
   pull_request:
     branches: ["main"]
   workflow_dispatch: # Allows manual triggering
