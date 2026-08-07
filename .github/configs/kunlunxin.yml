@@ -192,22 +192,18 @@ test_matrix:
       - tests/unit_tests/dist_checkpointing/test_serialization.py::TestSerialization::test_remove_sharded_tensors
       
       # pipeline_parallel
-      # pipeline_parallel-test_send_backward_recv_backward triggers an XCCL
-      # ALLREDUCE deadlock in bridge_communicator._communicate_shapes() under
-      # FlagCX; the Watchdog fires after 600s and aborts the entire session,
-      # preventing all remaining123 tests from running.
-      - tests/unit_tests/pipeline_parallel/test_bridge_communicator.py::TestBridgeCommunicator::test_send_backward_recv_backward
-      # test_send_forward_recv_backward_send_backward_recv_forward creates
-      # complex bridge communicator topology (2 broadcast groups + 4 dest ranks);
-      # XCCL ALLREDUCE (SeqNum=8) deadlocks in _communicate_shapes() for 600s
-      # until Watchdog fires. metax also ignores this case (MACA deadlock).
-      - tests/unit_tests/pipeline_parallel/test_bridge_communicator.py::TestBridgeCommunicator::test_send_forward_recv_backward_send_backward_recv_forward
-      # _avg_params() all_reduces transformer block params over the dp=8 group;
-      # ranks desynchronize (some reach teardown's barrier in destroy_all_grids
-      # while others are still inside the all_reduce) and XCCL deadlocks on
-      # SeqNum=7 for 600s until the Watchdog aborts the session. metax also
-      # ignores this case (invalid device pointer during the same all_reduce).
-      - tests/unit_tests/pipeline_parallel/test_bridge_communicator.py::TestBridgeCommunicator::test_bridge_communicator_with_transformer_blocks
+      # All bridge_communicator tests with complex topologies (multi-grid, 2D
+      # fan-in/fan-out, transformer blocks) trigger XCCL/FlagCX collective
+      # deadlocks. Four cases identified: test_send_backward_recv_backward,
+      # test_send_forward_recv_backward_send_backward_recv_forward (ALLREDUCE
+      # SeqNum=8 in _communicate_shapes()), test_bridge_communicator_with_
+      # transformer_blocks (rank desync: some in teardown barrier, others in
+      # all_reduce), and test_2d_fan_in_fwd_bwd (ALLREDUCE SeqNum=32). Each
+      # blocks 600s until Watchdog aborts the session, killing ~100+ unrun
+      # tests. Metax ignores 2 of these cases; ascend ignores none (HCCL
+      # handles these topologies). Ignoring the entire file to avoid burning
+      # 10+ minutes per new failure and losing the rest of the test session.
+      - tests/unit_tests/pipeline_parallel/test_bridge_communicator.py
 
 
       # data
