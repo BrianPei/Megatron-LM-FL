@@ -280,6 +280,11 @@ test_matrix:
       - tests/unit_tests/models/test_mimo_submodules.py
       # test_base_embedding: test_gpu_forward triggers the same TE layernorm_fwd DType-as-device-ID
       # bug as test_bert_model (torch_musa _to() misinterprets DType enum as device string).
+      # test_constructor is the first test in the models group that initializes a distributed
+      # process group.  On MUSA rank0 binds the TCP store but ranks 1-7 repeatedly fail the
+      # socket handshake (60 s timeout), and every subsequent distributed test inherits the
+      # degraded state.  Metax and Ascend already skip this test for similar reasons.
+      - tests/unit_tests/models/test_base_embedding.py::TestBaseEmbedding::test_constructor
       - tests/unit_tests/models/test_base_embedding.py::TestBaseEmbedding::test_gpu_forward
       # test_clip_vit_model: test_forward hits the TE layernorm_fwd DType bug on MUSA.
       - tests/unit_tests/models/test_clip_vit_model.py::TestCLIPViTModel::test_forward
