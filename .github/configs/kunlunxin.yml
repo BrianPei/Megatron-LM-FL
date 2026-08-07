@@ -215,6 +215,13 @@ test_matrix:
       # multimodule bridge communicator teardown"; ascend does not ignore
       # (HCCL handles this topology).
       - tests/unit_tests/pipeline_parallel/test_multimodule_communicator.py
+      # Hangs after printing the Activation Offload Summary: test body completes
+      # but teardown never finishes (destroy_process_group/barrier). All
+      # parametrized variants exhibit the same pattern. Metax ignores for
+      # "flaky fine-grained activation offload paths"; Ascend ignores because
+      # "the pytest session never reports a summary".
+      - tests/unit_tests/pipeline_parallel/test_fine_grained_activation_offloading.py::test_gpt_fine_grained_activation_offloading_correctness_and_memory
+      - tests/unit_tests/pipeline_parallel/test_fine_grained_activation_offloading.py::test_fine_grained_activation_offload_with_ep_a2a_overlap_compatibility
 
 
       # data
