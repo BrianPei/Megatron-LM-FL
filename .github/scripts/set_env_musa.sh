@@ -137,10 +137,11 @@ case "$CI_TEST_SUITE" in
     # Shared functional test toolchain and Python 3.10-compatible project install.
     ci_setup_functional_environment --ignore-requires-python
 
-    # Pin huggingface_hub to avoid HFValidationError when loading tokenizers from
-    # local paths. Newer versions (>= 0.27) added strict validate_repo_id() checks
-    # in cached_files() that reject absolute paths like /home/gitlab-runner/tokenizers/...
-    python3 -m pip install "huggingface_hub<0.27.0" --no-cache-dir
+    # Pin transformers to avoid HFValidationError when loading tokenizers from local
+    # paths. In transformers >= 4.47 cached_files() unconditionally calls
+    # hf_hub_download / try_to_load_from_cache even for absolute local paths,
+    # both of which run validate_repo_id() and reject paths that are not HF repo-ids.
+    python3 -m pip install "transformers<4.47.0" --no-cache-dir
 
     install_musa_compatibility_layer
     validate_musa_capacity
