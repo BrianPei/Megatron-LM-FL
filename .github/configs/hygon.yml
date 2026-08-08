@@ -103,6 +103,14 @@ test_matrix:
       # leaves the following ranks in the same group until torchrun kills the
       # job. Keep the scalar optimizer coverage enabled.
       - tests/unit_tests/test_optimizer.py::test_get_megatron_optimizer_with_custom_process_groups
+      # These distributed-optimizer state and custom process-group validation
+      # paths require TE/NCCL semantics that the BW1000 TE-FL/RCCL stack does
+      # not provide. The same nodes are excluded for MetaX; keep the remaining
+      # non-distributed optimizer coverage enabled.
+      - tests/unit_tests/test_optimizer.py::test_distrib_optimizer_save_load_with_non_tensor_state
+      - tests/unit_tests/test_optimizer.py::test_optim_sharded_state_dict
+      - tests/unit_tests/test_optimizer.py::test_optimizer_reload_model_params
+      - tests/unit_tests/test_optimizer.py::test_get_megatron_optimizer_custom_process_groups_validation
       # TE-FL multi_tensor_sgd API version mismatch (8 args vs 11).
       - tests/unit_tests/test_optimizer_cpu_offloading.py::test_multi_device_hybrid_optimizer
       # BW1000 CPU offload overlap exceeds CUDA tolerance.
