@@ -122,6 +122,11 @@ test_matrix:
       # hyper_comm_grid.py:161 calls dist.get_rank() which requires an
       # active process group; 7 of 8 Hygon ranks fail.
       - tests/unit_tests/test_hyper_comm_grid.py
+      # This file repeatedly creates and destroys 8-rank model-parallel
+      # process groups. The BW1000 RCCL runtime can leave ranks on different
+      # collective sequences after the first reconfiguration, so the remaining
+      # ranks wait until the unit-test hard timeout terminates the job.
+      - tests/unit_tests/test_parallel_state.py
 
 
       # distributed
@@ -183,14 +188,11 @@ test_matrix:
       # The model-parallel setup in TestGPTModel fails on BW1000 before the
       # class tests run and leaves the remaining ranks blocked.
       - tests/unit_tests/models/test_gpt_model.py::TestGPTModel
-      # These MIMO 8-rank layouts hit missing tensor model-parallel group
-      # initialization in the HyperCommGrid + TE attention path. They are also
-      # ignored on metax.
-      - tests/unit_tests/models/test_mimo_1f1b_schedule.py::TestMimo1F1BSchedule::test_encoder_tp2_llm_tp2_pp3_8gpu
-      - tests/unit_tests/models/test_mimo_1f1b_schedule.py::TestMimo1F1BSchedule::test_full_pp_8gpu
-      - tests/unit_tests/models/test_mimo_1f1b_schedule.py::TestMimo1F1BSchedule::test_fan_in_dp4_to_dp1_llm_tp2_pp2_8gpu
-      - tests/unit_tests/models/test_mimo_1f1b_schedule.py::TestMimo1F1BSchedule::test_fan_out_dp1_to_dp4_enc_tp2_pp2_8gpu
-      - tests/unit_tests/models/test_mimo_1f1b_schedule.py::TestMimo1F1BSchedule::test_fan_in_dp2_to_dp1_llm_pp3_8gpu
+      # setup_class initializes an 8-rank RCCL group before the 2/4/8-GPU
+      # methods can apply their own world-size skips. Rank 0 then fails to
+      # publish the NCCL unique ID and every other rank times out in setup.
+      # Deselect the class rather than its individual methods.
+      - tests/unit_tests/models/test_mimo_1f1b_schedule.py::TestMimo1F1BSchedule
       # MIMO checkpoint same HyperCommGrid + TE attention issue as above.
       - tests/unit_tests/models/test_mimo_checkpoint.py
       # TE-FL FlagGems backend missing these operators.
