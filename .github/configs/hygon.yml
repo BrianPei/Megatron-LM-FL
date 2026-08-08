@@ -286,7 +286,11 @@ test_matrix:
       # These tests initialize additional model-parallel groups under torchrun;
       # RCCL fails during that bootstrap on BW1000 and cascades to all ranks.
       - tests/unit_tests/tensor_parallel/test_data.py::test_broadcast_data
-      - tests/unit_tests/tensor_parallel/test_initialization.py::Test::test_embedding_init
+      # The initialization suite repeats the same 1-rank -> 4-rank group
+      # teardown/rebuild sequence for regular and TE linear layers.  Once the
+      # first case poisons RCCL state, later cases either fail or wait for the
+      # Hygon unit-test hard timeout.
+      - tests/unit_tests/tensor_parallel/test_initialization.py
 
       # pipeline_parallel
       # TE-FL FlagGems te_general_grouped_gemm broadcast shape mismatch.
