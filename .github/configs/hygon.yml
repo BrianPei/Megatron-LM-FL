@@ -291,6 +291,12 @@ test_matrix:
       # first case poisons RCCL state, later cases either fail or wait for the
       # Hygon unit-test hard timeout.
       - tests/unit_tests/tensor_parallel/test_initialization.py
+      # These checkpoint helpers reinitialize model-parallel groups after the
+      # RNG tests.  A later RCCL group bootstrap can hang on BW1000 even when
+      # the earlier RNG cases pass; retain the non-distributed RNG coverage.
+      - tests/unit_tests/tensor_parallel/test_random.py::test_checkpoint
+      - tests/unit_tests/tensor_parallel/test_random.py::test_checkpoint_without_output
+      - tests/unit_tests/tensor_parallel/test_random.py::test_checkpoint_without_output_view_sharing_regression
 
       # pipeline_parallel
       # TE-FL FlagGems te_general_grouped_gemm broadcast shape mismatch.
