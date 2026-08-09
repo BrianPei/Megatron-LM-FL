@@ -145,6 +145,11 @@ test_matrix:
       # later distributed tests then enter different process-group sequences.
       # MetaX excludes this file for the same distributed-test boundary.
       - tests/unit_tests/distributed/test_distributed_data_parallel.py
+      # Both layernorm variants and the first word-embedding all-reduce variant
+      # fail across BW1000 ranks before teardown can restore a consistent
+      # process-group state. The remaining variant then waits on collectives
+      # entered by only a subset of ranks.
+      - tests/unit_tests/distributed/test_finalize_model_grads.py
       # all TE-FL missing quantize (FP8) operator. Also on metax.
       - tests/unit_tests/distributed/test_param_and_grad_buffer.py::test_manual_bucket_group_cpu_sync_partition_and_buffer_helpers
       - tests/unit_tests/distributed/megatron_fsdp/test_mcore_fully_sharded_data_parallel.py::TestMegatronFSDPE2E::test_compatible_with_nd_parallel
@@ -256,8 +261,19 @@ test_matrix:
       - tests/unit_tests/dist_checkpointing/test_fully_parallel.py
       # Global metadata reuse fails on BW1000.
       - tests/unit_tests/dist_checkpointing/test_global_metadata_reuse.py
+      # The only MSC save/load case fails across ranks after creating a TP=2,
+      # PP=4 checkpoint group, and its synchronized temporary directory then
+      # prevents the group from reaching clean teardown.
+      - tests/unit_tests/dist_checkpointing/test_msc.py
+      # The only executable legacy non-persistent checkpoint case fails on all
+      # ranks. CUDA and MetaX also exclude this file.
+      - tests/unit_tests/dist_checkpointing/test_nonpersistent.py
       # Optimizer resharding fails on BW1000.
       - tests/unit_tests/dist_checkpointing/test_optimizer.py
+      # Both the PP case and every VPP reconfiguration reached in the BW1000
+      # run fail across ranks. Repeated TP/PP rebuilds then leave later ranks
+      # waiting until the hard timeout. MetaX excludes the same file.
+      - tests/unit_tests/dist_checkpointing/test_pipeline_parallel_layout.py
       # MoE expert reconfiguration not compatible with TE-FL.
       - tests/unit_tests/dist_checkpointing/models/test_moe_experts.py
       # TE-FL missing fused_amax_and_scale_update_after_reduction operator.
