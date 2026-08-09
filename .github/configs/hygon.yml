@@ -248,6 +248,12 @@ test_matrix:
       - tests/unit_tests/dist_checkpointing/models/test_mamba.py
       # TE-FL missing quantize operator (fp8 paths).
       - tests/unit_tests/dist_checkpointing/test_fp8.py
+      # The first fully-parallel save/load cases produce different rank
+      # assignments on BW1000. Later tests in the file rebuild TP/DP groups,
+      # share checkpoint directories, and enter collectives, so the rank
+      # divergence leaves surviving ranks waiting indefinitely. MetaX excludes
+      # the same file at this backend boundary.
+      - tests/unit_tests/dist_checkpointing/test_fully_parallel.py
       # Global metadata reuse fails on BW1000.
       - tests/unit_tests/dist_checkpointing/test_global_metadata_reuse.py
       # Optimizer resharding fails on BW1000.
