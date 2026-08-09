@@ -274,6 +274,10 @@ test_matrix:
       # run fail across ranks. Repeated TP/PP rebuilds then leave later ranks
       # waiting until the hard timeout. MetaX excludes the same file.
       - tests/unit_tests/dist_checkpointing/test_pipeline_parallel_layout.py
+      # All ranks share tmp_path_dist_ckpt, but pytest cleanup on one rank can
+      # remove its parent while another rank is still writing safe-globals
+      # checkpoints. CUDA and MetaX exclude the same file.
+      - tests/unit_tests/dist_checkpointing/test_safe_globals.py
       # MoE expert reconfiguration not compatible with TE-FL.
       - tests/unit_tests/dist_checkpointing/models/test_moe_experts.py
       # TE-FL missing fused_amax_and_scale_update_after_reduction operator.
