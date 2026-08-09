@@ -127,6 +127,11 @@ test_matrix:
       # collective sequences after the first reconfiguration, so the remaining
       # ranks wait until the unit-test hard timeout terminates the job.
       - tests/unit_tests/test_parallel_state.py
+      # These fixtures create fresh model-parallel groups late in the core
+      # test process.  BW1000 can fail the RCCL bootstrap on only a subset of
+      # ranks, after which the following ranks diverge and wait for timeout.
+      - tests/unit_tests/test_process_groups_config.py::TestPGConfigDefaultInitialization::test_default_initialization
+      - tests/unit_tests/test_training.py::TestTraining::test_build_train_valid_test_data_iterators
 
 
       # distributed

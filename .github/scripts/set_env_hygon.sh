@@ -60,7 +60,7 @@ configure_hygon_runtime() {
 configure_hygon_unit_safety() {
   local python_bin
   python_bin=$(command -v python3)
-  local timeout_seconds=1800
+  local timeout_seconds=2700
   local timeout_wrapper=/tmp/hygon-unit-python-with-timeout
 
   # Abort a unit-test job when one rank stops making collective progress
