@@ -34,6 +34,45 @@ ci_activate_python_environment() {
   activate_kunlunxin_python_environment
 }
 
+ci_install_uv_compatibility_shim() {
+  local shim_dir=/tmp/kunlunxin-ci-bin
+  mkdir -p "$shim_dir"
+
+  cat > "$shim_dir/uv" <<'UVEOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [ "${1:-}" != "run" ]; then
+  echo "KunLunXin CI uv shim only supports 'uv run': $*" >&2
+  exit 1
+fi
+
+shift
+if [ "${1:-}" = "--no-sync" ]; then
+  shift
+fi
+
+if [ "${1:-}" = "python" ]; then
+  shift
+  exec python3 "$@"
+fi
+if [ "${1:-}" = "pytest" ]; then
+  shift
+  exec python3 -m pytest "$@"
+fi
+
+exec "$@"
+UVEOF
+  chmod 0755 "$shim_dir/uv"
+
+  export PATH="$shim_dir:$PATH"
+  if [ -n "${GITHUB_PATH:-}" ]; then
+    printf '%s\n' "$shim_dir" >> "$GITHUB_PATH"
+  fi
+  ci_export_env PATH "$PATH"
+  uv run --no-sync python -c "import sys; print('KunLunXin functional Python:', sys.executable)"
+}
+
 install_kunlunxin_functional_dependencies() {
   local pip_index_args=(
     --index-url https://pypi.tuna.tsinghua.edu.cn/simple
