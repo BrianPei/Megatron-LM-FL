@@ -150,6 +150,13 @@ test_matrix:
       # process-group state. The remaining variant then waits on collectives
       # entered by only a subset of ranks.
       - tests/unit_tests/distributed/test_finalize_model_grads.py
+      # The PP=4 conditional-embedding all-reduce fails across BW1000 ranks
+      # before process-group teardown. MetaX and Ascend exclude the same file.
+      - tests/unit_tests/distributed/test_grad_reduce_for_replicated_embedder.py
+      # The first MoE gradient-sync parametrization fails across ranks and the
+      # next one waits until the hard timeout. CUDA, MetaX, and Ascend exclude
+      # this file at the backend boundary.
+      - tests/unit_tests/distributed/test_grad_sync_with_expert_parallel.py
       # all TE-FL missing quantize (FP8) operator. Also on metax.
       - tests/unit_tests/distributed/test_param_and_grad_buffer.py::test_manual_bucket_group_cpu_sync_partition_and_buffer_helpers
       - tests/unit_tests/distributed/megatron_fsdp/test_mcore_fully_sharded_data_parallel.py::TestMegatronFSDPE2E::test_compatible_with_nd_parallel
