@@ -60,9 +60,11 @@ test_matrix:
       - name: models
         path: tests/unit_tests/models/
         description: Model tests
-      - name: distributed
-        path: tests/unit_tests/distributed/
-        description: Distributed tests
+      # The Hygon distributed group is temporarily omitted. After applying the
+      # backend exclusions below, only the reduce-scatter accumulation and
+      # Torch FSDP2 files remained; both fail before consistent process-group
+      # teardown on BW1000, so scheduling the group provides no valid coverage.
+      # Re-enable this group when either boundary is supported by the DTK stack.
       - name: dist_checkpointing
         path: tests/unit_tests/dist_checkpointing/
         description: Distributed checkpointing tests
@@ -163,6 +165,13 @@ test_matrix:
       # the same DDP buffer / gradient-collective boundary; CUDA, MetaX, and
       # Ascend also exclude the complete file.
       - tests/unit_tests/distributed/test_param_and_grad_buffer.py
+      # All four FP32-accumulation combinations error across BW1000 ranks before
+      # teardown. MetaX and Ascend exclude the same reduce-scatter boundary.
+      - tests/unit_tests/distributed/test_reduce_scatter_with_fp32_accumulation.py
+      # DTK exposes the FSDP2 API, but both constructors fail during the Hygon
+      # communicator setup; the explicit-process-group case then blocks until
+      # the unit hard timeout. MetaX and MUSA exclude this file as unsupported.
+      - tests/unit_tests/distributed/test_torch_fully_sharded_parallel.py
       - tests/unit_tests/distributed/megatron_fsdp/test_mcore_fully_sharded_data_parallel.py::TestMegatronFSDPE2E::test_compatible_with_nd_parallel
       # The remaining TestFullyShardedDataParallel methods all initialize the
       # same unsupported BW1000 FSDP communicator in class setup.
