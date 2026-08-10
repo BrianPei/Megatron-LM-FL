@@ -330,8 +330,7 @@ test_matrix:
       - tests/unit_tests/post_training/test_modelopt_module_spec.py::TestModelOptMambaModel
       # The Ascend unit runner does not mount the tokenizer fixture directory.
       - tests/unit_tests/tokenizers/test_tokenizer.py
-      51.05KB
-      
+
 
   functional:
     train:
