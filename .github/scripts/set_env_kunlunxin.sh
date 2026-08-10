@@ -25,6 +25,32 @@ activate_kunlunxin_python_environment() {
   echo "Python: $(command -v python3) ($(python3 --version 2>&1))"
 }
 
+# Override the common activation helper so every shared entry point picks up
+# the XPU environment. ci_setup_functional_environment() calls
+# ci_activate_python_environment() internally; without this override the
+# functional suite would silently fall through to the system interpreter,
+# where torch and torch_xmlir are not importable.
+ci_activate_python_environment() {
+  activate_kunlunxin_python_environment
+}
+
+install_kunlunxin_functional_dependencies() {
+  local pip_index_args=(
+    --index-url https://pypi.tuna.tsinghua.edu.cn/simple
+    --timeout 300
+    --retries 10
+    --no-cache-dir
+  )
+
+  # --tensorboard-dir needs SummaryWriter, and the regular pipeline reads the
+  # emitted event files back through get_test_results_from_tensorboard_logs.py.
+  # Install the frontend package only so torch, numpy, and protobuf pinned by
+  # the XPU image stay untouched.
+  python3 -m pip install "tensorboard==2.17.1" --no-deps "${pip_index_args[@]}"
+  python3 -c \
+    "from torch.utils.tensorboard import SummaryWriter; print('KunLunXin functional dependencies validated')"
+}
+
 configure_kunlunxin_runtime() {
   # KunLunXin P800 uses XMLIR to expose XPU as a CUDA-compatible device.
   # FlagCx is the collective communication library (KunLunXin's equivalent
@@ -34,6 +60,11 @@ configure_kunlunxin_runtime() {
   ci_export_env DISTRIBUTED_BACKEND flagcx
   ci_export_env TE_FL_SKIP_CUDA 1
   ci_export_env KLX_USE_AUTOTUNE 0
+  # Route all TE-FL ops to vendor.kunlunxin (hydrax/XDNN tuned kernels) instead
+  # of the default FlagGems Triton path. 21 ops have vendor.kunlunxin impls;
+  # the policy selects [vendor, flagos, reference] so hydrax is tried first
+  # with FlagGems as automatic fallback for any unimplemented ops.
+  ci_export_env TE_FL_PREFER vendor
 }
 
 validate_kunlunxin_capacity() {
@@ -64,6 +95,7 @@ case "$CI_TEST_SUITE" in
     ;;
   functional)
     ci_setup_functional_environment
+    install_kunlunxin_functional_dependencies
     configure_kunlunxin_runtime
     validate_kunlunxin_capacity
     ;;
