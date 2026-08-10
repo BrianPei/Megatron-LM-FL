@@ -299,6 +299,10 @@ test_matrix:
       # run fail across ranks. Repeated TP/PP rebuilds then leave later ranks
       # waiting until the hard timeout. MetaX excludes the same file.
       - tests/unit_tests/dist_checkpointing/test_pipeline_parallel_layout.py
+      # Both torch-dist tests rebuild model-parallel groups. Cached metadata
+      # loses the BW1000 RCCL rendezvous after 60s; the following CPU tensor
+      # case then blocks while creating its 8-rank Gloo group for 1800s.
+      - tests/unit_tests/dist_checkpointing/test_torch_dist.py
       # All ranks share tmp_path_dist_ckpt, but pytest cleanup on one rank can
       # remove its parent while another rank is still writing safe-globals
       # checkpoints. CUDA and MetaX exclude the same file.
