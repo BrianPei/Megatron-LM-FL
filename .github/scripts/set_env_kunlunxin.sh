@@ -60,6 +60,11 @@ configure_kunlunxin_runtime() {
   ci_export_env DISTRIBUTED_BACKEND flagcx
   ci_export_env TE_FL_SKIP_CUDA 1
   ci_export_env KLX_USE_AUTOTUNE 0
+  # Route all TE-FL ops to vendor.kunlunxin (hydrax/XDNN tuned kernels) instead
+  # of the default FlagGems Triton path. 21 ops have vendor.kunlunxin impls;
+  # the policy selects [vendor, flagos, reference] so hydrax is tried first
+  # with FlagGems as automatic fallback for any unimplemented ops.
+  ci_export_env TE_FL_PREFER vendor
 }
 
 validate_kunlunxin_capacity() {
