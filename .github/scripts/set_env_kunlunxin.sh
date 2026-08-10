@@ -35,33 +35,42 @@ ci_activate_python_environment() {
 }
 
 ci_install_uv_compatibility_shim() {
+  # The common shim skips installation if a real `uv` is already present
+  # in PATH. On the vendor runner the image ships a real uv that manages
+  # its own virtual environment — it will resolve to the base conda Python
+  # (/root/miniconda/bin/python3, no torch/numpy) rather than the activated
+  # XPU environment. Override unconditionally so every `uv run python ...`
+  # call in _run_training.sh reaches the correct interpreter.
+  local python_bin
+  python_bin=$(command -v python3)
+
   local shim_dir=/tmp/kunlunxin-ci-bin
   mkdir -p "$shim_dir"
 
-  cat > "$shim_dir/uv" <<'UVEOF'
+  cat > "$shim_dir/uv" <<UVEOF
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [ "${1:-}" != "run" ]; then
-  echo "KunLunXin CI uv shim only supports 'uv run': $*" >&2
+if [ "\${1:-}" != "run" ]; then
+  echo "KunLunXin CI uv shim only supports 'uv run': \$*" >&2
   exit 1
 fi
 
 shift
-if [ "${1:-}" = "--no-sync" ]; then
+if [ "\${1:-}" = "--no-sync" ]; then
   shift
 fi
 
-if [ "${1:-}" = "python" ]; then
+if [ "\${1:-}" = "python" ]; then
   shift
-  exec python3 "$@"
+  exec "$python_bin" "\$@"
 fi
-if [ "${1:-}" = "pytest" ]; then
+if [ "\${1:-}" = "pytest" ]; then
   shift
-  exec python3 -m pytest "$@"
+  exec "$python_bin" -m pytest "\$@"
 fi
 
-exec "$@"
+exec "\$@"
 UVEOF
   chmod 0755 "$shim_dir/uv"
 
