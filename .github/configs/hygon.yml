@@ -157,8 +157,12 @@ test_matrix:
       # next one waits until the hard timeout. CUDA, MetaX, and Ascend exclude
       # this file at the backend boundary.
       - tests/unit_tests/distributed/test_grad_sync_with_expert_parallel.py
-      # all TE-FL missing quantize (FP8) operator. Also on metax.
-      - tests/unit_tests/distributed/test_param_and_grad_buffer.py::test_manual_bucket_group_cpu_sync_partition_and_buffer_helpers
+      # The first bucket-size cases now fail across BW1000 ranks before
+      # teardown, and the next parametrization blocks in model-parallel group
+      # setup until the job timeout. Every executable test in this file uses
+      # the same DDP buffer / gradient-collective boundary; CUDA, MetaX, and
+      # Ascend also exclude the complete file.
+      - tests/unit_tests/distributed/test_param_and_grad_buffer.py
       - tests/unit_tests/distributed/megatron_fsdp/test_mcore_fully_sharded_data_parallel.py::TestMegatronFSDPE2E::test_compatible_with_nd_parallel
       # The remaining TestFullyShardedDataParallel methods all initialize the
       # same unsupported BW1000 FSDP communicator in class setup.
@@ -253,8 +257,13 @@ test_matrix:
 
 
       # dist_checkpointing
-      # TE-FL doesn't expose remove_sharded_tensors. Also ignored on metax.
-      - tests/unit_tests/dist_checkpointing/test_serialization.py::TestSerialization::test_remove_sharded_tensors
+      # A rank-local serialization failure can remove the session-scoped
+      # tmp_dist_ckpt directory or leave ranks on different barriers. The next
+      # save/load cases then fail across ranks and eventually time out instead
+      # of producing a stable backend result. Exclude this synchronized file as
+      # one boundary; Ascend does the same, while the old node-only exclusion
+      # did not contain the failure cascade on BW1000.
+      - tests/unit_tests/dist_checkpointing/test_serialization.py
       # dist_checkpointing — all also ignored on metax.
       # MambaSSM unavailable on BW1000 (AMD/HIP).
       - tests/unit_tests/dist_checkpointing/models/test_mamba.py
