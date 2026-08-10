@@ -74,9 +74,10 @@ test_matrix:
       - name: pipeline_parallel
         path: tests/unit_tests/pipeline_parallel/
         description: Pipeline parallel tests
-      - name: data
-        path: tests/unit_tests/data/
-        description: Data tests
+      # The Hygon data group is temporarily omitted. Existing backend and
+      # fixture exclusions leave only test_bin_reader.py, which starts ten
+      # preprocessing workers on each of the eight ranks and leaves one rank
+      # blocked until the unit-test hard timeout.
       - name: fusions
         path: tests/unit_tests/fusions/
         description: Fusion tests
@@ -180,6 +181,10 @@ test_matrix:
       # Hardcoded /opt/data and /opt/megatron-lm paths, plus a vocab download
       # with no timeout that hangs the rank group. Also ignored on cuda/metax.
       - tests/unit_tests/data/test_preprocess_data.py
+      # Starts ten preprocessing workers per torchrun rank. Seven BW1000 ranks
+      # complete in 112-165s, while the remaining rank never returns and is
+      # terminated by the 2700s unit-test timeout. MetaX also excludes it.
+      - tests/unit_tests/data/test_bin_reader.py
       # Every data test that builds a process group fails here, while the two
       # that never touch torch.distributed pass. Utils.initialize_distributed()
       # does not reuse torchrun's env:// rendezvous; it opens a second TCPStore
@@ -355,6 +360,10 @@ test_matrix:
       # exclusions above. Its TP=1 case stalls while creating model-parallel
       # groups on the 8-rank job; one rank exits and 175 partial groups abort.
       - tests/unit_tests/tensor_parallel/test_layers.py
+      # All seven mapping tests repeatedly initialize TP=4/PP=2 groups. Ranks
+      # diverge during RCCL unique-ID rendezvous (success on some ranks, 60s
+      # store timeout on others), so later group creation is no longer aligned.
+      - tests/unit_tests/tensor_parallel/test_mappings.py
       # These checkpoint helpers reinitialize model-parallel groups after the
       # RNG tests.  A later RCCL group bootstrap can hang on BW1000 even when
       # the earlier RNG cases pass; retain the non-distributed RNG coverage.

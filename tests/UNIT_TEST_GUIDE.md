@@ -1,67 +1,95 @@
-Megatron-LM Unit Test Authoring Guide
-=====================================
+# Unit Test Authoring Guide
 
-This document explains how to add and integrate unit tests under `tests/unit_tests` so that they are easy to run locally and correctly discovered and executed by CI.
+This document covers unit-test code conventions. For workflow architecture,
+platform configuration, container setup, and CI-equivalent commands, see
+[`CI_TESTING_GUIDE.md`](CI_TESTING_GUIDE.md).
 
-Directory layout and naming conventions
----------------------------------------
+## Location and discovery
 
-- **Location**: All unit tests live in `tests/unit_tests` and its subdirectories, for example:
-  - `tests/unit_tests/test_basic.py`
-  - `tests/unit_tests/transformer/test_attention.py`
-  - `tests/unit_tests/models/test_gpt_model.py`
-- **File names**:
-  - Use the `test_xxx.py` naming convention (so that `pytest` can auto-discover them).
-  - For an existing module, prefer adding tests in the corresponding subdirectory instead of dropping everything into the root.
-- **Test names**:
-  - Function names must start with `test_`, for example:
+- Put tests under `tests/unit_tests/` in the directory that owns the behavior.
+- Name files `test_*.py`, functions and methods `test_*`, and test classes
+  `Test*` so pytest discovers them.
+- Prefer extending the nearest existing test module instead of creating a new
+  root-level test file for unrelated behavior.
 
-    ```python
-    def test_my_feature():
-        ...
-    ```
+Example:
 
-  - Or use a class whose name starts with `Test`, and define `test_` methods inside:
+```python
+class TestMyFeature:
+    def test_expected_behavior(self):
+        assert run_feature() == "expected"
+```
 
-    ```python
-    class TestMyFeature:
-        def test_case_1(self):
-            ...
-    ```
+## CI group selection
 
-Workflow config and `.github/configs`
--------------------------------------
+Each platform declares unit groups under
+`.github/configs/<platform>.yml:test_matrix.unit.groups`. A group has a unique
+name and one or more repository-relative test paths:
 
-Unit-test GitHub workflows are parameterized by small config files under `.github/configs/`.  
-For CUDA-based unit tests the relevant file is:
+```yaml
+test_matrix:
+  unit:
+    nproc_per_node: 8
+    groups:
+      - name: models
+        path: tests/unit_tests/models/
+        description: Model tests
+```
 
-- `.github/configs/cuda.yml`
-  - Defines:
-    - `ci_image`: Docker image used to run tests.
-    - `runner_labels`: labels for self-hosted runners.
-    - `container_volumes` / `container_options`: how the container is started.
-    - `device_types`: which device types (e.g. `a100`) are used.
-  - The `test_matrix.unit.ignored_tests` section is especially relevant for unit tests:
-    - It is a list of test file paths under `tests/unit_tests/...`.
-    - These paths are passed into the reusable workflow `unit_tests_common.yml` as the `ignored_tests` input.
-    - The workflow then converts this list into `pytest` options of the form `--deselect=<path>`, so those tests are **not** run in CI for that hardware/platform.
+The common workflow expands top-level `device_types` and these groups. The
+single `test_matrix.unit.nproc_per_node` value is passed to every group as
+`CI_NPROC_PER_NODE`. Do not add another process-count or device field inside a
+group.
 
-**How to use `ignored_tests` (when absolutely necessary):**
+Before adding a new group, verify that an existing path does not already
+collect the test. Update every platform config on which the new test is
+expected to run.
 
-- Prefer to **fix** flaky tests or use `pytest` markers (`flaky`, `flaky_in_dev`, `internal`, `experimental`) first.
-- If a test is known to be broken or too expensive on a specific platform and must be skipped at the CI-infra level:
-  1. Add its file path (relative to repo root, e.g. `tests/unit_tests/transformer/test_attention.py`) to the `test_matrix.unit.ignored_tests` list in `.github/configs/cuda.yml`.
-  2. Make sure the path matches the actual location of the test file.
-  3. Commit the change so the CI workflow will start skipping it on that platform.
+## Distributed test requirements
 
-Running unit tests locally
---------------------------
+CI launches each group with `torch.distributed.run`, so every rank collects and
+executes the same pytest selection. Distributed tests must:
 
-- **Run a single test file**:
+- enter collectives and process-group creation in the same order on all ranks;
+- destroy groups in fixture teardown, including exception paths;
+- avoid rank-local skips after other ranks have entered a collective;
+- use bounded timeouts for network, subprocess, and rendezvous operations;
+- avoid multiplying large worker pools by the number of torchrun ranks; and
+- use temporary paths whose ownership and synchronization are explicit.
 
-  ```bash
-  torchrun --nproc_per_node=8 -m pytest tests/unit_tests/xxx.py
-  ```
+A failure on one rank often appears on the others as a later rendezvous or
+collective timeout. Diagnose the first rank-specific exception, not the final
+`ChildFailedError` or SIGTERM cascade.
 
-When in doubt, find a similar existing test in the tree and follow the same style and patterns.
+## Platform exclusions
 
+`test_matrix.unit.ignored_tests` accepts either a complete test file or a
+pytest node ID:
+
+```yaml
+ignored_tests:
+  - tests/unit_tests/vendor_only/test_kernel.py
+  - tests/unit_tests/test_optimizer.py::test_vendor_specific_path
+```
+
+The runner converts complete files to `--ignore` and node IDs to `--deselect`.
+Use an exclusion only for a demonstrated unsupported backend boundary or a
+tracked infrastructure limitation. Keep it as narrow as the shared failure
+boundary and add a short evidence-based comment. Do not change Megatron core
+behavior merely to hide a platform CI failure.
+
+## Running tests
+
+Use the platform container and setup described in
+[`CI_TESTING_GUIDE.md`](CI_TESTING_GUIDE.md#running-tests-on-a-development-machine).
+For a quick debug loop after setup:
+
+```bash
+python3 -m torch.distributed.run --nproc_per_node=8 \
+  -m pytest -v tests/unit_tests/models/test_gpt_model.py
+```
+
+The process count must match `test_matrix.unit.nproc_per_node` for the target
+platform. A direct pytest command does not apply the platform ignore list,
+extra pytest arguments, coverage settings, or hard timeout. Run
+`tests/test_utils/runners/run_ci_unit_tests.sh` before submitting a change.
