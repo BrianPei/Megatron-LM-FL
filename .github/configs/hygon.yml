@@ -351,6 +351,10 @@ test_matrix:
       # first case poisons RCCL state, later cases either fail or wait for the
       # Hygon unit-test hard timeout.
       - tests/unit_tests/tensor_parallel/test_initialization.py
+      # This file is the first remaining tensor-parallel test after the
+      # exclusions above. Its TP=1 case stalls while creating model-parallel
+      # groups on the 8-rank job; one rank exits and 175 partial groups abort.
+      - tests/unit_tests/tensor_parallel/test_layers.py
       # These checkpoint helpers reinitialize model-parallel groups after the
       # RNG tests.  A later RCCL group bootstrap can hang on BW1000 even when
       # the earlier RNG cases pass; retain the non-distributed RNG coverage.
