@@ -341,7 +341,7 @@ test_matrix:
         golden_platform: 910c
         enable_lightweight_mode: false
         data_cache_path: /tmp/megatron-data-cache
-        gpus_per_node: 8
+        gpus_per_node: 1
       - model: gpt
         test_case: qwen3_0p6b_mcore_te_tp2_pp2_benchmark_ascend
         training_script: pretrain_gpt.py
@@ -350,4 +350,4 @@ test_matrix:
         golden_platform: 910c
         enable_lightweight_mode: false
         data_cache_path: /tmp/megatron-data-cache
-        gpus_per_node: 8
+        gpus_per_node: 4
