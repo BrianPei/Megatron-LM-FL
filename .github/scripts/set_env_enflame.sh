@@ -99,7 +99,7 @@ def _patch():
 _patch()
 """)
 with open(os.path.join(sp, "fix_coverage_enflame.pth"), "w") as f:
-    f.write("import _fix_coverage_enflame\\n")
+    f.write("import _fix_coverage_enflame")
 print("Coverage torch_gcu workaround installed")
 PYEOF
 
