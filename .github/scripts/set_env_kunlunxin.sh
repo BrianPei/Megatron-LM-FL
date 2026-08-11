@@ -82,6 +82,54 @@ UVEOF
   uv run --no-sync python -c "import sys; print('KunLunXin functional Python:', sys.executable)"
 }
 
+install_kunlunxin_python_config_shim() {
+  # megatron/core/datasets/Makefile takes its include flags from
+  # `python3 -m pybind11 --includes` but derives the module suffix from
+  # `python3-config --extension-suffix`. The activated XPU environment ships
+  # no python3-config, so PATH falls through to the conda base interpreter
+  # (Python 3.13) and stamps a cpython-313 suffix onto a module compiled
+  # against Python 3.10 headers. The 3.10 training process cannot import it
+  # and compile_helpers() reports "Failed to compile the C++ dataset helper
+  # functions". Shim python3-config onto the active interpreter so both
+  # Makefile lines agree on one Python.
+  local python_bin
+  python_bin=$(command -v python3)
+
+  local shim_dir=/tmp/kunlunxin-ci-bin
+  mkdir -p "$shim_dir"
+
+  cat > "$shim_dir/python3-config" <<PYCFGEOF
+#!/usr/bin/env bash
+set -euo pipefail
+
+case "\${1:-}" in
+  --extension-suffix)
+    exec "$python_bin" -c \
+      "import sysconfig; print(sysconfig.get_config_var('EXT_SUFFIX'))"
+    ;;
+  --includes|--cflags)
+    exec "$python_bin" -c \
+      "import sysconfig; print('-I' + sysconfig.get_paths()['include'])"
+    ;;
+  --prefix)
+    exec "$python_bin" -c "import sys; print(sys.prefix)"
+    ;;
+  *)
+    echo "KunLunXin CI python3-config shim only supports --extension-suffix, --includes, --cflags, --prefix: \$*" >&2
+    exit 1
+    ;;
+esac
+PYCFGEOF
+  chmod 0755 "$shim_dir/python3-config"
+
+  export PATH="$shim_dir:$PATH"
+  if [ -n "${GITHUB_PATH:-}" ]; then
+    printf '%s\n' "$shim_dir" >> "$GITHUB_PATH"
+  fi
+  ci_export_env PATH "$PATH"
+  echo "KunLunXin python3-config extension suffix: $(python3-config --extension-suffix)"
+}
+
 install_kunlunxin_functional_dependencies() {
   local pip_index_args=(
     --index-url https://pypi.tuna.tsinghua.edu.cn/simple
@@ -149,6 +197,7 @@ case "$CI_TEST_SUITE" in
     ;;
   functional)
     ci_setup_functional_environment
+    install_kunlunxin_python_config_shim
     install_kunlunxin_functional_dependencies
     configure_kunlunxin_runtime
     validate_kunlunxin_capacity
