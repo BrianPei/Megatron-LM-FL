@@ -162,11 +162,14 @@ configure_kunlunxin_runtime() {
   # ci_export_env DISTRIBUTED_BACKEND flagcx
   ci_export_env TE_FL_SKIP_CUDA 1
   ci_export_env KLX_USE_AUTOTUNE 0
-  # Route all TE-FL ops to vendor.kunlunxin (hydrax/XDNN tuned kernels) instead
-  # of the default FlagGems Triton path. 21 ops have vendor.kunlunxin impls;
-  # the policy selects [vendor, flagos, reference] so hydrax is tried first
-  # with FlagGems as automatic fallback for any unimplemented ops.
-  ci_export_env TE_FL_PREFER vendor
+  # TE_FL_PREFER=vendor routes ops to vendor.kunlunxin (hydrax/XDNN tuned
+  # kernels, 21 ops registered). However vendor.kunlunxin does not support
+  # BF16 in softmax_with_mask (XDNN_PYTORCH error "scalar type of output:
+  # kbfloat16 is unsupported"), and the error does not propagate to Python
+  # so TE-FL policy cannot fall back to FlagGems. The training hangs silently
+  # at the first attention forward. Disable vendor routing until kunlunxin
+  # fixes the BF16 support or raises NotImplementedError correctly.
+  # ci_export_env TE_FL_PREFER vendor
 }
 
 validate_kunlunxin_capacity() {
