@@ -31,17 +31,17 @@ container_options: >-
 
 # Device types to run tests on
 device_types:
-  - l600
+  - s60
 
 # Test matrix configuration
 test_matrix:
   unit:
     nproc_per_node: 8
-    devices:
-      - l600
     # Keep executing collected tests after an import/collection error so one
     # manual run reports the complete platform gap. Collection errors still
     # make the job fail.
+    device_types:
+      - s60
     pytest_extra_args:
       - --continue-on-collection-errors
       - --tb=short
