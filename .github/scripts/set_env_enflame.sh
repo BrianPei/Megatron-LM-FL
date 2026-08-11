@@ -21,6 +21,57 @@ validate_enflame_capacity() {
     "import torch, torch_gcu; assert torch.gcu.is_available(); print(f'GCU devices: {torch.gcu.device_count()}')"
 }
 
+clean_stale_coverage_patch() {
+  # Clean up stale .pth file from earlier image builds (commit 539097af3 → 271405d79).
+  # MUST run before any Python invocation, because .pth files are processed at startup.
+  local user_site="/github/home/.local/lib/python3.12/site-packages"
+  local sys_site="/usr/local/lib/python3.12/dist-packages"
+
+  for sp in "$user_site" "$sys_site"; do
+    [ -f "$sp/fix_coverage_enflame.pth" ] && rm -f "$sp/fix_coverage_enflame.pth" && echo "Removed $sp/fix_coverage_enflame.pth"
+    [ -f "$sp/_fix_coverage_enflame.py" ] && rm -f "$sp/_fix_coverage_enflame.py" && echo "Removed $sp/_fix_coverage_enflame.py"
+  done
+}
+
+patch_coverage_for_torch_gcu() {
+  # torch_gcu registers _OpNamespace objects in sys.modules whose __path__ is
+  # not a sequence. coverage.py scans sys.modules inside coverage.start() and
+  # calls len() on every module's __path__, which raises TypeError and kills
+  # every rank before pytest is even imported. Because the crash happens in the
+  # `coverage run` CLI before pytest loads, a pytest plugin cannot fix it and a
+  # .pth hook is fragile (it runs before coverage is installed). Patching the
+  # installed source is the only interception point that is guaranteed to be in
+  # effect when coverage.start() runs. ascend/metax do not need this: their
+  # torch backends keep __path__ a real sequence.
+  python3 - <<'PYEOF'
+import coverage.inorout as m
+
+path = m.__file__
+src = open(path).read()
+old = 'if len(getattr(mod, "__path__", ())) > 1:'
+new = 'if len(getattr(mod, "__path__", ()) or ()) > 1:'
+guard = '_enflame_gcu_patch'
+
+if guard in src:
+    print(f"coverage already patched: {path}")
+elif old in src:
+    # Coerce __path__ to a real sequence before len(); _OpNamespace is truthy
+    # but has no __len__, so isinstance is the safe test rather than `or ()`.
+    new = (
+        'if len(getattr(mod, "__path__", ())'
+        ' if isinstance(getattr(mod, "__path__", ()), (list, tuple)) else ()'
+        ') > 1:  # _enflame_gcu_patch'
+    )
+    open(path, "w").write(src.replace(old, new, 1))
+    print(f"Patched coverage for torch_gcu: {path}")
+else:
+    raise SystemExit(
+        f"::error::coverage.inorout source changed; torch_gcu patch needs an "
+        f"update: {path}"
+    )
+PYEOF
+}
+
 configure_enflame_runtime() {
   validate_enflame_torch
   validate_enflame_capacity
@@ -42,18 +93,6 @@ setup_unit_environment() {
   ci_activate_python_environment
   ci_ensure_curl
   validate_enflame_torch
-
-  # Clean up stale .pth file from earlier image builds (commit 539097af3 → 271405d79).
-  # The image may still contain fix_coverage_enflame.pth which causes SyntaxError
-  # at Python startup. Remove both the .pth and the module it imports.
-  python3 -c "
-import site, os, glob
-for sp in [site.getusersitepackages(), site.getsitepackages()[0]]:
-    for pattern in ['fix_coverage_enflame.pth', '_fix_coverage_enflame.py']:
-        for path in glob.glob(os.path.join(sp, pattern)):
-            os.remove(path)
-            print(f'Removed stale coverage patch: {path}')
-" || true
 
   local test_dependencies=(
     mock
@@ -87,30 +126,7 @@ for sp in [site.getusersitepackages(), site.getsitepackages()[0]]:
 
   echo "Skipping NVIDIA CUPTI dependencies and Emerging-Optimizers on Enflame."
 
-  # Workaround: torch_gcu registers _OpNamespace objects in sys.modules whose
-  # __path__ attribute is not a sequence (no __len__). When coverage.py scans
-  # already-imported modules at startup it calls len() on every module's
-  # __path__, which raises TypeError and crashes all ranks before any test
-  # runs. Other platforms (ascend/metax) don't hit this because their torch
-  # backends don't inject non-sequence __path__ objects into sys.modules.
-  #
-  # Use a pytest plugin instead of a .pth file: .pth runs at Python startup
-  # before coverage is installed; pytest_configure runs after all deps load.
-  local site_dir=/tmp/enflame-ci-site
-  mkdir -p "$site_dir"
-  cat > "$site_dir/enflame_ci_pytest.py" <<'PYTESTEOF'
-def pytest_configure(config):
-    import coverage.inorout
-    orig = coverage.inorout.InOrOut.warn_already_imported_files
-    def safe_warn(self):
-        try:
-            orig(self)
-        except TypeError:
-            pass
-    coverage.inorout.InOrOut.warn_already_imported_files = safe_warn
-PYTESTEOF
-  ci_export_env PYTHONPATH "$site_dir:${PYTHONPATH:-}"
-  ci_export_env PYTEST_ADDOPTS "${PYTEST_ADDOPTS:-} -p enflame_ci_pytest"
+  patch_coverage_for_torch_gcu
 
   ci_install_project --break-system-packages
   configure_enflame_runtime
@@ -125,6 +141,10 @@ setup_build_environment() {
 }
 
 ci_require_env CI_TEST_SUITE
+
+# Clean up stale .pth file BEFORE any Python execution
+clean_stale_coverage_patch
+
 case "$CI_TEST_SUITE" in
   unit)
     setup_unit_environment
