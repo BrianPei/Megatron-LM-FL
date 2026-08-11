@@ -28,9 +28,16 @@ clean_stale_coverage_patch() {
   local sys_site="/usr/local/lib/python3.12/dist-packages"
 
   for sp in "$user_site" "$sys_site"; do
-    [ -f "$sp/fix_coverage_enflame.pth" ] && rm -f "$sp/fix_coverage_enflame.pth" && echo "Removed $sp/fix_coverage_enflame.pth"
-    [ -f "$sp/_fix_coverage_enflame.py" ] && rm -f "$sp/_fix_coverage_enflame.py" && echo "Removed $sp/_fix_coverage_enflame.py"
+    if [ -f "$sp/fix_coverage_enflame.pth" ]; then
+      rm -f "$sp/fix_coverage_enflame.pth"
+      echo "Removed $sp/fix_coverage_enflame.pth"
+    fi
+    if [ -f "$sp/_fix_coverage_enflame.py" ]; then
+      rm -f "$sp/_fix_coverage_enflame.py"
+      echo "Removed $sp/_fix_coverage_enflame.py"
+    fi
   done
+  return 0
 }
 
 patch_coverage_for_torch_gcu() {
@@ -49,7 +56,6 @@ import coverage.inorout as m
 path = m.__file__
 src = open(path).read()
 old = 'if len(getattr(mod, "__path__", ())) > 1:'
-new = 'if len(getattr(mod, "__path__", ()) or ()) > 1:'
 guard = '_enflame_gcu_patch'
 
 if guard in src:
