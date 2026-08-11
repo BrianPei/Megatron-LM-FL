@@ -3,7 +3,6 @@
 hardware_name: my_hardware # Change this to your hardware name
 display_name: 'My Hardware Tests' # Display name for GitHub Actions
 setup_script: .github/scripts/set_env_my_hardware.sh
-nproc_per_node: 8
 
 # Docker image for this hardware (change image tag if needed)
 ci_image: harbor.baai.ac.cn/flagscale/megatron-lm-fl:my-hardware-image
@@ -37,6 +36,7 @@ device_types:
 # the top-level setup_script, then declare test groups and runner arguments here.
 test_matrix:
   unit:
+    nproc_per_node: 8
     devices:
       - generic
     pytest_extra_args: []

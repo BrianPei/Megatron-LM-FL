@@ -5,7 +5,6 @@
 hardware_name: cuda
 display_name: 'CUDA Tests'
 setup_script: .github/scripts/set_env_cuda.sh
-nproc_per_node: 8
 
 # CI image for online env
 ci_image: harbor.baai.ac.cn/flagscale/megatron-lm-fl:cuda12.8.1-cudnn9.8.0-torch2.7.0-python3.12-dev-02111650
@@ -40,6 +39,7 @@ device_types:
 # Test matrix configuration
 test_matrix:
   unit:
+    nproc_per_node: 8
     devices:
       - a100
     pytest_extra_args:
@@ -155,6 +155,7 @@ test_matrix:
         golden_environment: dev
         golden_platform: dgx_a100
         enable_lightweight_mode: false
+        gpus_per_node: 1
       - model: gpt
         test_case: qwen3_0p6b_mcore_te_tp2_pp2_benchmark
         training_script: pretrain_gpt.py
@@ -162,4 +163,4 @@ test_matrix:
         golden_environment: dev
         golden_platform: dgx_a100
         enable_lightweight_mode: false
-        gpus_per_node: 8
+        gpus_per_node: 4

@@ -5,7 +5,6 @@
 hardware_name: ascend
 display_name: 'Ascend Tests'
 setup_script: .github/scripts/set_env_ascend.sh
-nproc_per_node: 8
 
 # CI image for the Ascend environment (built and pushed 2026-07-17, validated on Ascend 910C)
 ci_image: harbor.baai.ac.cn/flagos-dev/megatron-lm-fl:manual-20260717-ascend-dev
@@ -51,6 +50,7 @@ device_types:
 # Test matrix configuration
 test_matrix:
   unit:
+    nproc_per_node: 8
     devices:
       - 910c
     # Keep executing collected tests after an import/collection error so one
@@ -213,7 +213,12 @@ test_matrix:
       # and torch LayerNorm on Ascend does not support sequence_parallel. A
       # crashed rank cascades 1 EB OOM / EOFError into every subsequent
       # serialization, pipeline-layout, and torch-dist test.
-      - tests/unit_tests/dist_checkpointing/test_optimizer.py::TestOptimizerResharding::test_chained_optimizer_resharding
+      # test_optimizer.py segfaults in pytest teardown (os.environ.update) when
+      # Ascend runtime holds stale pointers to environment variable strings.
+      # test_optimizer_resharding[...-src_tp_pp2-dest_tp_pp2-True-True-False]
+      # triggers SIGSEGV in conftest.py:171 reset_env_vars fixture cleanup.
+      # Whole-file skip matches Metax strategy for similar teardown crashes.
+      - tests/unit_tests/dist_checkpointing/test_optimizer.py
       # test_chained_optimizer_resharding leaks a global microbatches-calculator
       # singleton that causes these VPP layout tests to fail with
       # "AssertionError: num microbatches calculator is already initialized".
@@ -341,7 +346,7 @@ test_matrix:
         golden_platform: 910c
         enable_lightweight_mode: false
         data_cache_path: /tmp/megatron-data-cache
-        gpus_per_node: 8
+        gpus_per_node: 1
       - model: gpt
         test_case: qwen3_0p6b_mcore_te_tp2_pp2_benchmark_ascend
         training_script: pretrain_gpt.py
@@ -350,4 +355,4 @@ test_matrix:
         golden_platform: 910c
         enable_lightweight_mode: false
         data_cache_path: /tmp/megatron-data-cache
-        gpus_per_node: 8
+        gpus_per_node: 4
