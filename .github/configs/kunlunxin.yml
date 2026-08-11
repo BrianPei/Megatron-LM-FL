@@ -269,6 +269,12 @@ test_matrix:
       # fixture setup instantiating MambaStack fails with ImportError.
       # ascend ignores the entire TestModelOptMambaModel class for the same reason.
       - tests/unit_tests/post_training/test_modelopt_module_spec.py::TestModelOptMambaModel
+      # test_sharded_state_dict_restore triggers FLAGCX backend error in
+      # gather_object() (backend_flagcx.cpp:1035: flagcxComm not fully initialized).
+      # Same root cause as test_forward_vpp. Metax/ascend do not encounter this.
+      - tests/unit_tests/post_training/test_modelopt_module_spec.py::TestModelOptGPTModel::test_sharded_state_dict_restore
+      - tests/unit_tests/post_training/test_modelopt_module_spec.py::TestModelOptMLAMoE::test_sharded_state_dict_restore
+      - tests/unit_tests/post_training/test_modelopt_module_spec.py::TestModelOptLlama4MoE::test_sharded_state_dict_restore
       # tokenizer files at /opt/data/tokenizers/ are absent or not in the
       # HuggingFace repo_name format required by AutoTokenizer >= 4.x.
       # ascend and metax also ignore this entire file.
