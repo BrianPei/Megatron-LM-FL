@@ -81,13 +81,13 @@ setup_unit_environment() {
   # __path__, which raises TypeError and crashes all ranks before any test
   # runs. Other platforms (ascend/metax) don't hit this because their torch
   # backends don't inject non-sequence __path__ objects into sys.modules.
-  python3 << 'PYEOF'
-import os, site
-sp = site.getusersitepackages()
-os.makedirs(sp, exist_ok=True)
-with open(os.path.join(sp, "_fix_coverage_enflame.py"), "w") as f:
-    f.write("""
-def _patch():
+  #
+  # Use a pytest plugin instead of a .pth file: .pth runs at Python startup
+  # before coverage is installed; pytest_configure runs after all deps load.
+  local site_dir=/tmp/enflame-ci-site
+  mkdir -p "$site_dir"
+  cat > "$site_dir/enflame_ci_pytest.py" <<'PYTESTEOF'
+def pytest_configure(config):
     import coverage.inorout
     orig = coverage.inorout.InOrOut.warn_already_imported_files
     def safe_warn(self):
@@ -96,12 +96,9 @@ def _patch():
         except TypeError:
             pass
     coverage.inorout.InOrOut.warn_already_imported_files = safe_warn
-_patch()
-""")
-with open(os.path.join(sp, "fix_coverage_enflame.pth"), "w") as f:
-    f.write("import _fix_coverage_enflame")
-print("Coverage torch_gcu workaround installed")
-PYEOF
+PYTESTEOF
+  ci_export_env PYTHONPATH "$site_dir:${PYTHONPATH:-}"
+  ci_export_env PYTEST_ADDOPTS "${PYTEST_ADDOPTS:-} -p enflame_ci_pytest"
 
   ci_install_project --break-system-packages
   configure_enflame_runtime
