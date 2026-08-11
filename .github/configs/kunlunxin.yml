@@ -208,6 +208,11 @@ test_matrix:
       # ALLREDUCE SeqNum=12 times out after 600s. Metax and Ascend also ignore.
       - tests/unit_tests/pipeline_parallel/test_multimodule_schedules.py::TestMultimoduleSchedules::test_single_encoder_8gpu
       - tests/unit_tests/pipeline_parallel/test_multimodule_schedules.py::TestMultimoduleSchedules::test_dual_encoder_8gpu
+      # FlagCX backend error in group.gather() during VPP (Virtual Pipeline
+      # Parallel) execution; first parametrized case triggers FLAGCX error
+      # (backend_flagcx.cpp:1035), subsequent cases fail with "num microbatches
+      # calculator is already initialized". Metax also ignores this function.
+      - tests/unit_tests/pipeline_parallel/test_pipeline_layout.py::test_forward_vpp
 
 
       # data
