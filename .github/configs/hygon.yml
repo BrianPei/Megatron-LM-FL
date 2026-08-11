@@ -10,11 +10,11 @@ runner_labels:
   - hg-8g-cicd-megatron
 
 # The DTK PyTorch package loads driver-side runtime libraries from /opt/hyhal.
-# Functional tests use the shared CI assets used by the other runners.
+# Functional tests use the persistent CI assets extracted on the BW1000 host.
 container_volumes:
   - /opt/hyhal:/opt/hyhal
-  - /mnt/airs-business/cicd/baai_datasets:/home/gitlab-runner/data
-  - /mnt/airs-business/cicd/baai_tokenizers:/home/gitlab-runner/tokenizers
+  - /data/megatron-ci-assets-20260726/baai_datasets:/home/gitlab-runner/data
+  - /data/megatron-ci-assets-20260726/baai_tokenizers:/home/gitlab-runner/tokenizers
 
 container_options: >-
   --ipc=host
