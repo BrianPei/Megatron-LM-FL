@@ -1,6 +1,7 @@
 # Enflame Hardware Configuration for Megatron-LM-FL
 # This file defines CI/CD settings for Enflame GCU-based testing.
-# Validated on: Enflame L600, 8 CI-visible devices, ECCL 4.0.0.4, torch_gcu 2.9.1+4.0.20260714
+# Validated on: Enflame L600, 8 CI-visible devices,
+# torch 2.10.0+cpu, torch_gcu 2.10.0+3.7.20260408
 
 hardware_name: enflame
 display_name: 'Enflame Tests'

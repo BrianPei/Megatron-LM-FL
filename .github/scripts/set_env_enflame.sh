@@ -74,7 +74,7 @@ setup_unit_environment() {
     --no-deps "${pip_index_args[@]}"
 
   echo "Skipping NVIDIA CUPTI dependencies and Emerging-Optimizers on Enflame."
-  ci_install_project
+  ci_install_project --break-system-packages
   configure_enflame_runtime
   disable_unavailable_test_asset_downloads
 }
@@ -82,7 +82,7 @@ setup_unit_environment() {
 setup_build_environment() {
   ci_activate_python_environment
   validate_enflame_torch
-  ci_install_project
+  ci_install_project --break-system-packages
   configure_enflame_runtime
 }
 
