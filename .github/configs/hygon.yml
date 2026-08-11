@@ -364,6 +364,13 @@ test_matrix:
       # diverge during RCCL unique-ID rendezvous (success on some ranks, 60s
       # store timeout on others), so later group creation is no longer aligned.
       - tests/unit_tests/tensor_parallel/test_mappings.py
+      # These are the remaining tests that initialize model-parallel groups.
+      # The first one fails the default 8-rank RCCL barrier on ranks 1-7. If it
+      # is deselected, either tensor utility becomes the first communicator
+      # bootstrap and can hit the same timeout, so exclude the complete chain.
+      - tests/unit_tests/tensor_parallel/test_random.py::test_model_parallel_cuda_manual_seed
+      - tests/unit_tests/tensor_parallel/test_tensor_parallel_utils.py::test_split_tensor_into_1d_equal_chunks
+      - tests/unit_tests/tensor_parallel/test_tensor_parallel_utils.py::test_gather_split_1d_tensor
       # These checkpoint helpers reinitialize model-parallel groups after the
       # RNG tests.  A later RCCL group bootstrap can hang on BW1000 even when
       # the earlier RNG cases pass; retain the non-distributed RNG coverage.
