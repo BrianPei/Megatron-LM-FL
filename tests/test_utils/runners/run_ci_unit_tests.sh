@@ -140,6 +140,7 @@ PYTEST_ARGS+=(
 
 set +e
 "$PYTHON_BIN" -m torch.distributed.run --nproc_per_node="$CI_NPROC_PER_NODE" \
+  --master_port="${MASTER_PORT:-29500}" \
   -m coverage run \
   --rcfile="$COVERAGE_DIR/.coveragerc" \
   "$PYTEST_BIN" \

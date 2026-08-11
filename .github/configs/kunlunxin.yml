@@ -4,7 +4,6 @@
 hardware_name: kunlunxin
 display_name: 'KunLunXin Tests'
 setup_script: .github/scripts/set_env_kunlunxin.sh
-nproc_per_node: 8
 
 # CI image for KunLunXin P800 environment
 ci_image: harbor.baai.ac.cn/flagos-dev/megatron-lm-fl:manual-20260804-kunlunxin-dev
@@ -38,6 +37,7 @@ device_types:
 # Test matrix configuration
 test_matrix:
   unit:
+    nproc_per_node: 8
     pytest_extra_args: []
     groups:
       - name: core
