@@ -43,6 +43,18 @@ setup_unit_environment() {
   ci_ensure_curl
   validate_enflame_torch
 
+  # Clean up stale .pth file from earlier image builds (commit 539097af3 → 271405d79).
+  # The image may still contain fix_coverage_enflame.pth which causes SyntaxError
+  # at Python startup. Remove both the .pth and the module it imports.
+  python3 -c "
+import site, os, glob
+for sp in [site.getusersitepackages(), site.getsitepackages()[0]]:
+    for pattern in ['fix_coverage_enflame.pth', '_fix_coverage_enflame.py']:
+        for path in glob.glob(os.path.join(sp, pattern)):
+            os.remove(path)
+            print(f'Removed stale coverage patch: {path}')
+" || true
+
   local test_dependencies=(
     mock
     pytest-mock
