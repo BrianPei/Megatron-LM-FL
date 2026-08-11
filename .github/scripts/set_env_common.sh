@@ -105,7 +105,9 @@ ENVEOF
 }
 
 ci_install_uv_compatibility_shim() {
-  if command -v uv >/dev/null 2>&1; then
+  local force_shim="${1:-false}"
+
+  if [ "$force_shim" != "true" ] && command -v uv >/dev/null 2>&1; then
     uv --version
     return
   fi

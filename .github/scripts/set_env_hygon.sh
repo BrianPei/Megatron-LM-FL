@@ -171,6 +171,8 @@ setup_functional_environment() {
   ci_install_envsubst
   # Keep uv on the Python 3.10 interpreter supplied with the DTK stack.
   ci_install_uv_compatibility_shim true
+  uv run --no-sync python -c \
+    "import sys, torch; print(f'Hygon functional Python: {sys.executable}; Torch: {torch.__version__}')"
   remove_broken_hygon_cupy
   verify_hygon_software_stack
   install_hygon_project
