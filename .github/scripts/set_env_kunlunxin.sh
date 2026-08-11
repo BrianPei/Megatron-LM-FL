@@ -105,7 +105,13 @@ configure_kunlunxin_runtime() {
   # of NCCL).  TE_FL_SKIP_CUDA tells TransformerEngine-FL not to probe the
   # CUDA vendor backend so it falls through to the kunlunxin vendor path.
   ci_export_env XPU 1
-  ci_export_env DISTRIBUTED_BACKEND flagcx
+  # DISTRIBUTED_BACKEND is NOT exported: XMLIR's mock_torch intercepts NCCL
+  # calls at the C++ layer and redirects them to FlagCX, but PyTorch sees
+  # backend='nccl' at the Python layer. This allows PyTorch's Gloo helper
+  # process group logic to work correctly. Explicitly setting backend=flagcx
+  # causes gather()/gather_object() failures because FlagCX does not fully
+  # implement these operations yet (backend_flagcx.cpp:1035 error).
+  # ci_export_env DISTRIBUTED_BACKEND flagcx
   ci_export_env TE_FL_SKIP_CUDA 1
   ci_export_env KLX_USE_AUTOTUNE 0
   # Route all TE-FL ops to vendor.kunlunxin (hydrax/XDNN tuned kernels) instead

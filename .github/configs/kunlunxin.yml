@@ -155,6 +155,10 @@ test_matrix:
       - tests/unit_tests/dist_checkpointing/test_fp8.py
       # Fails on XPU; ascend and metax also ignore this file.
       - tests/unit_tests/dist_checkpointing/test_global_metadata_reuse.py
+      # FlagCX gather() / gather_object() fails with "flagcxComm not fully
+      # initialized" during fully-parallel save/load and cross-rank DP reads;
+      # metax ignores the entire file for the same reason.
+      - tests/unit_tests/dist_checkpointing/test_fully_parallel.py
       # Gloo backend fails to connect across ranks on XPU; metax ignores
       # the entire file for the same reason.
       - tests/unit_tests/dist_checkpointing/test_optimizer.py
@@ -172,6 +176,14 @@ test_matrix:
       # after prior rank failures, triggering the 600s watchdog and aborting the
       # entire test session.
       - tests/unit_tests/dist_checkpointing/test_serialization.py::TestSerialization::test_empty_load
+      # FlagCX gather_object() fails with "flagcxComm not fully initialized"
+      # during sharded tensor checkpointing and multi-local-shard save/load;
+      # same root cause as test_forward_vpp (upstream MUSA PR #100 changes).
+      - tests/unit_tests/dist_checkpointing/test_checkpointable.py::TestCheckpointableProtocol::test_sharded_tensor_checkpointing
+      - tests/unit_tests/dist_checkpointing/test_checkpointable.py::TestCheckpointableProtocol::test_multiple_local_shards
+      # FlagCX gather() fails with "flagcxComm not fully initialized" during
+      # T5 encoder/decoder parallel reconfiguration; same root cause as above.
+      - tests/unit_tests/dist_checkpointing/models/test_t5_model.py::TestT5ModelReconfiguration::test_parallel_reconfiguration_e2e
 
       # pipeline_parallel
       # All bridge_communicator tests with complex topologies (multi-grid, 2D
