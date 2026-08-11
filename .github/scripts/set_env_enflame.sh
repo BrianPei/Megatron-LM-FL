@@ -74,6 +74,35 @@ setup_unit_environment() {
     --no-deps "${pip_index_args[@]}"
 
   echo "Skipping NVIDIA CUPTI dependencies and Emerging-Optimizers on Enflame."
+
+  # Workaround: torch_gcu registers _OpNamespace objects in sys.modules whose
+  # __path__ attribute is not a sequence (no __len__). When coverage.py scans
+  # already-imported modules at startup it calls len() on every module's
+  # __path__, which raises TypeError and crashes all ranks before any test
+  # runs. Other platforms (ascend/metax) don't hit this because their torch
+  # backends don't inject non-sequence __path__ objects into sys.modules.
+  python3 << 'PYEOF'
+import os, site
+sp = site.getusersitepackages()
+os.makedirs(sp, exist_ok=True)
+with open(os.path.join(sp, "_fix_coverage_enflame.py"), "w") as f:
+    f.write("""
+def _patch():
+    import coverage.inorout
+    orig = coverage.inorout.InOrOut.warn_already_imported_files
+    def safe_warn(self):
+        try:
+            orig(self)
+        except TypeError:
+            pass
+    coverage.inorout.InOrOut.warn_already_imported_files = safe_warn
+_patch()
+""")
+with open(os.path.join(sp, "fix_coverage_enflame.pth"), "w") as f:
+    f.write("import _fix_coverage_enflame\\n")
+print("Coverage torch_gcu workaround installed")
+PYEOF
+
   ci_install_project --break-system-packages
   configure_enflame_runtime
   disable_unavailable_test_asset_downloads
