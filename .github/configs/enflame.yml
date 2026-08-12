@@ -125,6 +125,8 @@ test_matrix:
       # TE-FL vendor.enflame layernorm_fwd: 'NoneType' object has no attribute 'DType'
       - tests/unit_tests/models/test_bert_model.py::TestBertModel::test_constructor
       - tests/unit_tests/models/test_bert_model.py::TestBertModelAttentionDimensions::test_local_spec
+      # TE-FL generic_gemm flaky on Enflame; mocks TE 1.10 which is not the installed version
+      - tests/unit_tests/models/test_bert_model.py::TestBertModelAttentionDimensions::test_transformer_engine_version_1_10
       # TE-FL vendor.enflame layernorm_fwd DType error; tensors on different GCU devices
       - tests/unit_tests/models/test_clip_vit_model.py::TestCLIPViTModel::test_save_load
       # Same TE-FL layernorm_fwd DType error as test_save_load; same as musa
