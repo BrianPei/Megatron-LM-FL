@@ -123,6 +123,13 @@ test_matrix:
       # TE-FL broadcast shape mismatch ([] vs [1]).
       - tests/unit_tests/test_utils.py::test_param_norm_linear
       - tests/unit_tests/test_utils.py::test_param_norm_moe
+      # These flaky distributed utilities require every rank to enter the same
+      # communicator sequence. On BW1000 the late core suite reaches them with
+      # divergent process-group state, so ranks wait for NCCL IDs that rank 0
+      # never publishes. MUSA excludes the same three nodes.
+      - tests/unit_tests/test_utils.py::test_check_param_hashes_across_dp_replicas
+      - tests/unit_tests/test_utils.py::test_cross_check_param_hashes_across_dp_replicas
+      - tests/unit_tests/test_utils.py::test_straggler_detector
       # HyperCommGrid mocks new_subgroups_by_enumeration but
       # hyper_comm_grid.py:161 calls dist.get_rank() which requires an
       # active process group; 7 of 8 Hygon ranks fail.
@@ -133,10 +140,15 @@ test_matrix:
       # ranks wait until the unit-test hard timeout terminates the job.
       - tests/unit_tests/test_parallel_state.py
       # These fixtures create fresh model-parallel groups late in the core
-      # test process.  BW1000 can fail the RCCL bootstrap on only a subset of
+      # test process. BW1000 can fail the RCCL bootstrap on only a subset of
       # ranks, after which the following ranks diverge and wait for timeout.
       - tests/unit_tests/test_process_groups_config.py::TestPGConfigDefaultInitialization::test_default_initialization
       - tests/unit_tests/test_training.py::TestTraining::test_build_train_valid_test_data_iterators
+      - tests/unit_tests/test_training.py::TestTraining::test_closed_formula_vocab_size_with_padding
+      # setup_method creates NCCL and Gloo groups on all eight ranks. In the
+      # observed divergent state, Gloo subgroup creation waits for 30 minutes.
+      # MUSA also excludes both late TestTraining/TestSaveGrads nodes.
+      - tests/unit_tests/test_training.py::TestSaveGrads::test_save_grads
 
 
       # distributed
