@@ -133,6 +133,8 @@ test_matrix:
       - tests/unit_tests/models/test_clip_vit_model.py::TestCLIPViTModel::test_save_load
       # Same TE-FL layernorm_fwd DType error as test_save_load; same as musa
       - tests/unit_tests/models/test_clip_vit_model.py::TestCLIPViTModel::test_forward
+      # TE-FL flaky: 8 FAILED then partial PASSED (Enflame-specific)
+      - tests/unit_tests/models/test_clip_vit_model.py::TestCLIPViTModel::test_set_input_tensor
       # ECCL deadlock: rank 2 runtime launch counter mismatch; same as ascend/metax
       - tests/unit_tests/models/test_heterogeneous_gpt_model.py
       # flash_attn not available on GCU; collection error during import
@@ -151,6 +153,8 @@ test_matrix:
       - tests/unit_tests/models/test_multimodal_projector.py::TestMultimodalProjector::test_forward
       # ECCL intermittent deadlock across multiple tests in this file; Enflame-specific
       - tests/unit_tests/models/test_mimo_embedding_alignment.py
+      # torch_gcu missing topsatenScaledDotProductEfficientAttention operator → SIGABRT; musa also ignores (TE layernorm)
+      - tests/unit_tests/models/test_radio_model.py::TestRADIOViTModel::test_forward
 
 
       # distributed
