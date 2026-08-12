@@ -97,8 +97,7 @@ test_matrix:
       # ECCL all_gather_object deadlock in distributed checkpointing
       - tests/unit_tests/dist_checkpointing/models/test_bert_model.py
       - tests/unit_tests/dist_checkpointing/models/test_gpt_model.py
-      # ECCL all_gather_object deadlock in distributed checkpointing
-      - tests/unit_tests/dist_checkpointing/models/test_bert_model.py
+    
      
      
       # tensor_parallel
@@ -124,11 +123,16 @@ test_matrix:
       # others
       # ModelOpt not installed on Enflame
       - tests/unit_tests/post_training/test_modelopt_model_builder.py::test_model_provider_switches_to_modelopt_builder
+      # ECCL deadlock in distributed checkpointing via ModelOpt
+      - tests/unit_tests/post_training/test_modelopt_module_spec.py
       # FP8 TensorRT-LLM export requires CUDA FP8, not available on GCU
       - tests/unit_tests/export/trtllm/test_distributed_fp8.py
       - tests/unit_tests/export/trtllm/test_single_device_fp8.py
       # CUDA distributed GPU converter
       - tests/unit_tests/export/trtllm/test_trtllm_distributed_gpu_converter.py
+      # others
+      - tests/unit_tests/post_training/test_modelopt_module_spec.py
+
 
   functional:
     train: []
