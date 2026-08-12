@@ -73,7 +73,39 @@ test_matrix:
       - name: others
         path: tests/unit_tests/export/ tests/unit_tests/post_training/ tests/unit_tests/tokenizers/ tests/unit_tests/utils/
         description: Export, post-training, tokenizer, and utility tests
-    ignored_tests: []
+    ignored_tests:
+      # core
+      # Enflame GCU: empty_cache() unstable under 8-proc concurrency, ECCL deadlock in cleanup
+      - tests/unit_tests/test_checkpointing.py
+      # models
+      # TE-FL vendor.enflame layernorm_fwd: 'NoneType' object has no attribute 'DType'
+      - tests/unit_tests/models/test_bert_model.py::TestBertModel::test_constructor
+      - tests/unit_tests/models/test_bert_model.py::TestBertModelAttentionDimensions::test_local_spec
+      # TE-FL vendor.enflame layernorm_fwd DType error; tensors on different GCU devices
+      - tests/unit_tests/models/test_clip_vit_model.py::TestCLIPViTModel::test_save_load
+      # distributed
+      # ECCL allgather SIGSEGV in uneven_dtensor._update_offsets_and_cumulative_shape
+      - tests/unit_tests/distributed/megatron_fsdp/test_mcore_fully_sharded_data_parallel.py
+      - tests/unit_tests/distributed/megatron_fsdp/test_mfsdp_fully_shard.py
+      # dist_checkpointing
+      # ECCL all_gather_object deadlock in distributed checkpointing
+      - tests/unit_tests/dist_checkpointing/models/test_bert_model.py
+      # tensor_parallel
+      # ECCL allreduce SIGSEGV in cross_entropy
+      - tests/unit_tests/tensor_parallel/test_cross_entropy.py::test_vocab_parallel_cross_entropy
+      # pipeline_parallel
+      # ECCL collective failures in bridge communicator
+      - tests/unit_tests/pipeline_parallel/test_bridge_communicator.py
+      # ECCL all_gather deadlock in activation offloading
+      - tests/unit_tests/pipeline_parallel/test_fine_grained_activation_offloading.py::test_gpt_fine_grained_activation_offloading_correctness_and_memory
+      # fusions
+      # Triton CUDA kernel not available on GCU
+      - tests/unit_tests/fusions/test_mla_yarn_rope_apply.py
+      # TE-FL vendor.enflame missing rmsnorm_bwd_add operator
+      - tests/unit_tests/fusions/test_rmsnorm_residual_fusion.py
+      # others
+      # ModelOpt not installed on Enflame
+      - tests/unit_tests/post_training/test_modelopt_model_builder.py::test_model_provider_switches_to_modelopt_builder
 
   functional:
     train: []
