@@ -97,6 +97,18 @@ test_matrix:
       # ECCL instability in rampup batch size tests; mixed PASS/FAIL across ranks
       - tests/unit_tests/test_num_microbatches_calculator.py::TestRampupBatchsizeNumMicroBatchesCalculator::test_constructor
       - tests/unit_tests/test_num_microbatches_calculator.py::test_ramp_up
+      # TE-FL vendor.enflame missing multi_tensor_sgd op (same pattern as ascend)
+      - tests/unit_tests/test_optimizer_cpu_offloading.py::test_multi_device_hybrid_optimizer
+      - tests/unit_tests/test_optimizer_cpu_offloading.py::test_overlap_cpu_optimizer_d2h_h2d_sync_correctness
+      # torch.cuda.device_count() returns 2 instead of 8 (torch_gcu lambda bug); same as musa
+      - tests/unit_tests/test_utils.py::test_check_param_hashes_across_dp_replicas
+      - tests/unit_tests/test_utils.py::test_cross_check_param_hashes_across_dp_replicas
+      - tests/unit_tests/test_utils.py::test_param_norm_linear
+      - tests/unit_tests/test_utils.py::test_param_norm_moe
+      - tests/unit_tests/test_utils.py::test_straggler_detector
+      # ECCL communicator setup failure + distributed directory creation; same as musa
+      - tests/unit_tests/test_training.py::TestTraining::test_build_train_valid_test_data_iterators
+      - tests/unit_tests/test_training.py::TestSaveGrads::test_save_grads
       
       
       # models
