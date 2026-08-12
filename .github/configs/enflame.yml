@@ -96,6 +96,9 @@ test_matrix:
       # dist_checkpointing
       # ECCL all_gather_object deadlock in distributed checkpointing
       - tests/unit_tests/dist_checkpointing/models/test_bert_model.py
+      - tests/unit_tests/dist_checkpointing/models/test_gpt_model.py
+      # ECCL all_gather_object deadlock in distributed checkpointing
+      - tests/unit_tests/dist_checkpointing/models/test_bert_model.py
      
      
       # tensor_parallel
