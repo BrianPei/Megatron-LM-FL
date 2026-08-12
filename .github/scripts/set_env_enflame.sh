@@ -134,6 +134,10 @@ setup_unit_environment() {
 
   patch_coverage_for_torch_gcu
 
+  # Disable coverage to avoid torch_gcu SIGABRT in atexit cleanup (temporary)
+  export PYTEST_ADDOPTS="${PYTEST_ADDOPTS:-} --no-cov"
+  echo "Coverage disabled for Enflame (torch_gcu atexit SIGABRT workaround)"
+
   ci_install_project --break-system-packages
   configure_enflame_runtime
   disable_unavailable_test_asset_downloads
