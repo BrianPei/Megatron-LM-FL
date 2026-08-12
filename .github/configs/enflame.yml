@@ -133,15 +133,8 @@ test_matrix:
       - tests/unit_tests/models/test_heterogeneous_gpt_model.py
       # flash_attn not available on GCU; collection error during import
       - tests/unit_tests/models/test_gpt_model.py
-      # ECCL deadlock: rank 3 runtime launch counter(18) lower than others; 5/8 ranks stuck
-      - tests/unit_tests/models/test_llava_model.py::TestLLaVAModel::test_preprocess_data
-      # ECCL intermittent deadlock: rank 6 counter(16) lower than others(17); Enflame-specific
-      - tests/unit_tests/models/test_llava_model.py::TestLLaVAModel::test_set_input_tensor
-      # ECCL intermittent deadlock: rank 6 counter(15) lower than others(16); passed in previous runs
-      - tests/unit_tests/models/test_llava_model.py::TestLLaVAModel::test_constructor
-      # ECCL deadlock: same pattern as ascend/metax/musa
-      - tests/unit_tests/models/test_llava_model.py::TestLLaVAModel::test_forward_fsdp
-      - tests/unit_tests/models/test_llava_model.py::TestLLaVAModelTokenParallel::test_process_embedding_token_parallel
+      # ECCL intermittent deadlock across multiple tests in this file; same approach as metax (metax.yml L233)
+      - tests/unit_tests/models/test_llava_model.py
 
 
       # distributed
