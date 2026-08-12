@@ -25,6 +25,7 @@ MODEL_ARGS:
   --save: ${CHECKPOINT_SAVE_PATH}
   --load: ${CHECKPOINT_LOAD_PATH}
   --data-path: /opt/data/datasets/pile_wikipedia_demo/pile_wikipedia_demo
+  --data-cache-path: ${DATA_CACHE_PATH}
   --split: 100,0,0
   --tokenizer-type: HuggingFaceTokenizer
   --tokenizer-model: /opt/data/tokenizers/qwentokenizer

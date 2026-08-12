@@ -408,13 +408,13 @@ source .github/scripts/set_env_hygon.sh
 
 MODEL=gpt
 TEST_CASE=qwen3_0p6b_mcore_te_tp1_pp1_no_mmap_bin_files_hygon
-GOLDEN_VALUES_PATH=./tests/functional_tests/test_cases/gpt/$TEST_CASE/golden_values_dev_dgx_a100.json
+GOLDEN_VALUES_PATH=./tests/functional_tests/test_cases/gpt/$TEST_CASE/golden_values_dev_bw1000.json
 GPUS_PER_NODE=1
 OUTPUT_DIR="./test_output/$TEST_CASE"
 mkdir -p "$OUTPUT_DIR"
 
 bash tests/functional_tests/shell_test_utils/run_ci_test.sh \
-  "DATA_PATH=/home/gitlab-runner/data" \
+  "DATA_PATH=/opt/data/datasets" \
   "DATA_CACHE_PATH=/tmp/data_cache" \
   "OUTPUT_PATH=$OUTPUT_DIR" \
   "TENSORBOARD_PATH=$OUTPUT_DIR/tensorboard" \

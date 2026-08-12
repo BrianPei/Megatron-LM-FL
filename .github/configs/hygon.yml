@@ -428,8 +428,7 @@ test_matrix:
         training_script: pretrain_gpt.py
         n_repeat: 1
         golden_environment: dev
-        # Bootstrap the first BW1000 result against an existing golden file.
-        golden_platform: dgx_a100
+        golden_platform: bw1000
         enable_lightweight_mode: false
         gpus_per_node: 1
       - model: gpt
