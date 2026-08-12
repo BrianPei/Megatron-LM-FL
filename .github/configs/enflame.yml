@@ -109,6 +109,16 @@ test_matrix:
       # ECCL communicator setup failure + distributed directory creation; same as musa
       - tests/unit_tests/test_training.py::TestTraining::test_build_train_valid_test_data_iterators
       - tests/unit_tests/test_training.py::TestSaveGrads::test_save_grads
+      # Platform contract tests: Enflame plugin does not implement clock_rate/power_draw/
+      # temperature/utilization (return None — no sensor API on GCU), get_compile_backend
+      # (no custom compiler backend registered), and is_triton_supported (Triton not
+      # available). Ascend/Metax/MUSA implement these via their platform plugins.
+      - megatron/plugin/tests/test_platform.py::TestAllRegisteredPlatformsContract::test_clock_rate_returns_numeric
+      - megatron/plugin/tests/test_platform.py::TestAllRegisteredPlatformsContract::test_power_draw_returns_numeric
+      - megatron/plugin/tests/test_platform.py::TestAllRegisteredPlatformsContract::test_temperature_returns_numeric
+      - megatron/plugin/tests/test_platform.py::TestAllRegisteredPlatformsContract::test_utilization_returns_numeric
+      - megatron/plugin/tests/test_platform.py::TestAllRegisteredPlatformsContract::test_get_compile_backend_returns_string
+      - megatron/plugin/tests/test_platform.py::TestAllRegisteredPlatformsContract::test_is_triton_supported_returns_bool
       
       
       # models
