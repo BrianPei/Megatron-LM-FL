@@ -137,6 +137,7 @@ test_matrix:
       - tests/unit_tests/distributed/test_finalize_model_grads.py
       # ECCL allreduce deadlock: rank 2 runtime launch counter mismatch; same as ascend/metax
       - tests/unit_tests/distributed/test_grad_reduce_for_replicated_embedder.py
+      - tests/unit_tests/distributed/test_grad_sync_with_expert_parallel.py
 
 
       # dist_checkpointing
