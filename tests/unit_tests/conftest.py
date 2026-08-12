@@ -63,15 +63,17 @@ def bind_local_device():
         platform.set_device(int(local_rank) % device_count)
 
 
-@pytest.fixture(scope="session", autouse=True)
-def cleanup():
-    yield
-    if torch.distributed.is_initialized():
-        try:
-            torch.distributed.barrier(timeout=timedelta(seconds=300))
-        except Exception:
-            return
-        torch.distributed.destroy_process_group()
+# [Enflame DEBUG] Temporarily disabled to bypass ECCL barrier/destroy_process_group deadlock.
+# Revert before merging to main!
+# @pytest.fixture(scope="session", autouse=True)
+# def cleanup():
+#     yield
+#     if torch.distributed.is_initialized():
+#         try:
+#             torch.distributed.barrier(timeout=timedelta(seconds=300))
+#         except Exception:
+#             return
+#         torch.distributed.destroy_process_group()
 
 
 @pytest.fixture(scope="function", autouse=True)

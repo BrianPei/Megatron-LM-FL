@@ -49,12 +49,12 @@ test_matrix:
        # - name: core
       #  path: tests/unit_tests/test_*.py megatron/plugin/tests/
       #  description: Core unit tests
-      # - name: models
-      #  path: tests/unit_tests/models/
-      #  description: Model tests
-      - name: distributed
-        path: tests/unit_tests/distributed/
-        description: Distributed tests
+       - name: models
+         path: tests/unit_tests/models/
+         description: Model tests
+      #- name: distributed
+      #  path: tests/unit_tests/distributed/
+      #  description: Distributed tests
       #- name: dist_checkpointing
       #  path: tests/unit_tests/dist_checkpointing/
       #  description: Distributed checkpointing tests
