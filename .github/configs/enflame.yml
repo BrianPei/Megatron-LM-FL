@@ -147,6 +147,8 @@ test_matrix:
       # TE-FL vendor.enflame layernorm_fwd DType error + tensors on different GCU devices; same as musa
       - tests/unit_tests/models/test_mimo_submodules.py
       - tests/unit_tests/models/test_multimodal_projector.py::TestMultimodalProjector::test_forward
+      # ECCL intermittent deadlock: stuck during distributed embedding alignment; Enflame-specific
+      - tests/unit_tests/models/test_mimo_embedding_alignment.py::TestEmbeddingAlignment::test_basic_alignment
 
 
       # distributed
