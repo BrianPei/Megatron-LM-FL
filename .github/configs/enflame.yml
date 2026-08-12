@@ -135,8 +135,10 @@ test_matrix:
       - tests/unit_tests/distributed/megatron_fsdp/test_mfsdp_fully_shard.py
       # ECCL SIGSEGV in word embedding gradient allreduce
       - tests/unit_tests/distributed/test_finalize_model_grads.py
-     
-     
+      # ECCL allreduce deadlock: rank 2 runtime launch counter mismatch; same as ascend/metax
+      - tests/unit_tests/distributed/test_grad_reduce_for_replicated_embedder.py
+
+
       # dist_checkpointing
       # ECCL all_gather_object deadlock in distributed checkpointing
       - tests/unit_tests/dist_checkpointing/models/test_bert_model.py
