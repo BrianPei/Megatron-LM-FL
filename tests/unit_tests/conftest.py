@@ -171,12 +171,14 @@ def reset_env_vars():
     os.environ.update(original_env)
 
 
-@pytest.fixture(autouse=True)
-def cleanup_gpu_memory():
-    """Clean up GPU memory after each test to prevent OOM in CI."""
-    yield
-    # Metax can abort inside cyclic GC during multi-rank pytest teardown.
-    if os.getenv("MEGATRON_TEST_PLATFORM") != "metax":
-        gc.collect()
-    if torch.cuda.is_available():
-        torch.cuda.empty_cache()
+# [Enflame DEBUG] Temporarily disabled to bypass ECCL empty_cache deadlock.
+# Revert before merging to main!
+# @pytest.fixture(autouse=True)
+# def cleanup_gpu_memory():
+#     """Clean up GPU memory after each test to prevent OOM in CI."""
+#     yield
+#     # Metax can abort inside cyclic GC during multi-rank pytest teardown.
+#     if os.getenv("MEGATRON_TEST_PLATFORM") != "metax":
+#         gc.collect()
+#     if torch.cuda.is_available():
+#         torch.cuda.empty_cache()

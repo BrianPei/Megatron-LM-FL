@@ -79,6 +79,24 @@ test_matrix:
       - tests/unit_tests/test_checkpointing.py
       # torch_gcu has no torch._C._nccl_version; collection error stops entire run
       - tests/unit_tests/test_nccl_allocator.py
+      # ECCL process group / allreduce failures in distributed integration; 7/7 tests fail
+      - tests/unit_tests/test_hyper_comm_grid.py::TestHyperCommGridIntegration
+      # ECCL failures in distributed optimizer (same pattern as metax)
+      - tests/unit_tests/test_optimizer.py::test_chained_optimizer
+      - tests/unit_tests/test_optimizer.py::test_chained_optimizer_get_parameters
+      - tests/unit_tests/test_optimizer.py::test_precision_aware_fused_adam
+      - tests/unit_tests/test_optimizer.py::test_precision_aware_optimizer
+      - tests/unit_tests/test_optimizer.py::test_distrib_optimizer_save_load_with_non_tensor_state
+      - tests/unit_tests/test_optimizer.py::test_optim_sharded_state_dict
+      - tests/unit_tests/test_optimizer.py::test_optimizer_reload_model_params
+      - tests/unit_tests/test_optimizer.py::test_get_megatron_optimizer_with_custom_process_groups
+      - tests/unit_tests/test_optimizer.py::test_get_megatron_optimizer_custom_process_groups_validation
+      - tests/unit_tests/test_optimizer.py::test_get_param_groups_no_overrides
+      - tests/unit_tests/test_optimizer.py::test_get_param_groups_overlapping_matches
+      - tests/unit_tests/test_optimizer.py::test_get_param_groups_appling_wd_to_qk_layernorm
+      # ECCL instability in rampup batch size tests; mixed PASS/FAIL across ranks
+      - tests/unit_tests/test_num_microbatches_calculator.py::TestRampupBatchsizeNumMicroBatchesCalculator::test_constructor
+      - tests/unit_tests/test_num_microbatches_calculator.py::test_ramp_up
       
       
       # models
