@@ -142,6 +142,9 @@ test_matrix:
       - tests/unit_tests/models/test_mamba_moe_model.py
       - tests/unit_tests/models/test_mimo_1f1b_schedule.py
       - tests/unit_tests/models/test_mimo_checkpoint.py
+      # TE-FL vendor.enflame layernorm_fwd DType error + tensors on different GCU devices; same as musa
+      - tests/unit_tests/models/test_mimo_submodules.py
+      - tests/unit_tests/models/test_multimodal_projector.py::TestMultimodalProjector::test_forward
 
 
       # distributed
