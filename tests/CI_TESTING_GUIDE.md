@@ -88,27 +88,101 @@ silently replace that stack with packages from public PyPI.
 
 ## Adding a unit test
 
-1. Put the test under `tests/unit_tests/` in the directory that owns the
-   behavior. Use `test_*.py` files and `test_*` functions or methods.
-2. Check whether an existing group path in every applicable
-   `.github/configs/<platform>.yml` discovers the file. A directory path covers
-   all tests below it; a group path may also contain multiple shell-style paths
-   separated by spaces.
-3. If the test needs a new group, add a unique entry to
-   `test_matrix.unit.groups`:
+There is no separate unit-test registry. A test enters CI when pytest discovers
+its name and a unit group in the target platform config selects its path.
 
-   ```yaml
-   test_matrix:
-     unit:
-       groups:
-         - name: optimizer
-           path: tests/unit_tests/optimizer/
-           description: Optimizer tests
-   ```
+Put the test under `tests/unit_tests/` in the directory that owns the behavior.
+Name files `test_*.py`, functions and methods `test_*`, and classes `Test*`.
+Prefer extending the nearest existing test module instead of adding an
+unrelated root-level file.
 
-4. Run the affected group through the CI runner script, then run the individual
-   node directly only when a shorter debugging loop is useful.
-5. Update all platform configs on which the test is expected to run.
+### How CI discovers and starts the test
+
+The complete unit-test selection path is:
+
+```text
+.github/configs/<platform>.yml
+  test_matrix.unit.groups[].path
+    -> all_tests_common.yml reads the groups
+    -> unit_tests_common.yml creates one job per device and group
+    -> CI_TEST_PATH=<group path>
+    -> run_ci_unit_tests.sh expands paths and platform exclusions
+    -> torch.distributed.run starts CI_NPROC_PER_NODE processes
+    -> every rank runs the same pytest selection
+```
+
+For example, a new file at
+`tests/unit_tests/models/test_my_model.py` is automatically selected when the
+platform contains:
+
+```yaml
+- name: models
+  path: tests/unit_tests/models/
+```
+
+No workflow edit is needed in that case. The common directory mapping is:
+
+| Test location | Group |
+| --- | --- |
+| `tests/unit_tests/test_*.py` | `core` |
+| `tests/unit_tests/models/` | `models` |
+| `tests/unit_tests/distributed/` | `distributed` |
+| `tests/unit_tests/dist_checkpointing/` | `dist_checkpointing` |
+| `tests/unit_tests/tensor_parallel/` | `tensor_parallel` |
+| `tests/unit_tests/pipeline_parallel/` | `pipeline_parallel` |
+| `tests/unit_tests/data/` | `data` |
+| `tests/unit_tests/fusions/` | `fusions` |
+| `export/`, `post_training/`, `tokenizers/`, `utils/` | `others` |
+
+The platform config remains authoritative. A platform may omit a complete
+group when its runtime cannot execute that boundary. A root glob such as
+`tests/unit_tests/test_*.py` also does not include tests in subdirectories.
+
+If a new top-level directory is not covered, add a unique group to every
+platform config that should run it:
+
+```yaml
+test_matrix:
+  unit:
+    groups:
+      - name: optimizer
+        path: tests/unit_tests/optimizer/
+        description: Optimizer tests
+```
+
+A group `path` may contain multiple repository-relative paths separated by
+spaces. Directory paths are collected recursively.
+
+Before submitting a new test:
+
+1. Check the group paths in every applicable `.github/configs/<platform>.yml`.
+2. Run `python3 -m pytest --collect-only <path>` in the platform container.
+3. Check that `test_matrix.unit.ignored_tests` does not exclude the file or
+   node ID.
+4. Run the complete affected group through `run_ci_unit_tests.sh` using the
+   CI-parity command below.
+
+Running only `pytest <node>` proves the test can execute, but does not prove CI
+selects it. The group run is the final collection check.
+
+### Distributed test requirements
+
+CI launches every unit group through `torch.distributed.run`, including tests
+that do not explicitly use collectives. Every rank collects and executes the
+same pytest selection. Distributed tests must:
+
+- enter collectives and process-group creation in the same order on all ranks;
+- destroy process groups in fixture teardown, including exception paths;
+- avoid rank-local skips after another rank has entered a collective;
+- use bounded timeouts for network, subprocess, and rendezvous operations;
+- avoid multiplying large worker pools by the number of torchrun ranks; and
+- use temporary paths whose ownership and synchronization are explicit.
+
+A failure on one rank often appears on other ranks as a later rendezvous or
+collective timeout. Diagnose the first rank-specific exception instead of the
+final `ChildFailedError` or SIGTERM cascade.
+
+### Platform exclusions
 
 The CI runner accepts ignored entries as either a complete file or a pytest
 node ID:
@@ -261,6 +335,8 @@ docker run --rm -it \
   -v /opt/hyhal:/opt/hyhal \
   -v /data/megatron-ci-assets-20260726/baai_datasets:/home/gitlab-runner/data \
   -v /data/megatron-ci-assets-20260726/baai_tokenizers:/home/gitlab-runner/tokenizers \
+  -v /data/megatron-ci-assets-20260726/baai_datasets:/opt/data/datasets \
+  -v /data/megatron-ci-assets-20260726/baai_tokenizers:/opt/data/tokenizers \
   -v "$PWD:/workspace/Megatron-LM-FL" \
   -w /workspace/Megatron-LM-FL \
   harbor.baai.ac.cn/flagos-dev/megatron-lm-fl:manual-20260728-hygon-dev \

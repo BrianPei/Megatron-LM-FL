@@ -139,6 +139,32 @@ PY
   ci_validate_device_capacity "$device_count"
 }
 
+prepare_hygon_functional_assets() {
+  local data_prefix=/opt/data/datasets/pile_wikipedia_demo/pile_wikipedia_demo
+  local tokenizer_path=/opt/data/tokenizers/qwentokenizer
+  local hf_home=/tmp/hygon-huggingface
+
+  test -f "${data_prefix}.bin"
+  test -f "${data_prefix}.idx"
+  test -f "$tokenizer_path/tokenizer_config.json"
+  test -f "$tokenizer_path/tokenization_qwen.py"
+
+  mkdir -p "$hf_home/modules"
+  ci_export_env HF_HOME "$hf_home"
+  ci_export_env HF_MODULES_CACHE "$hf_home/modules"
+  ci_export_env HF_HUB_OFFLINE 1
+  ci_export_env TRANSFORMERS_OFFLINE 1
+
+  # Populate the dynamic-module cache before torchrun starts multiple ranks.
+  python3 - <<'PY'
+from transformers import AutoTokenizer
+
+path = "/opt/data/tokenizers/qwentokenizer"
+tokenizer = AutoTokenizer.from_pretrained(path, trust_remote_code=True)
+print(f"Hygon tokenizer prewarm passed: {type(tokenizer)}; vocab={tokenizer.vocab_size}")
+PY
+}
+
 setup_unit_environment() {
   ci_activate_python_environment
   configure_hygon_runtime
@@ -177,6 +203,7 @@ setup_functional_environment() {
   verify_hygon_software_stack
   install_hygon_project
   validate_hygon_capacity
+  prepare_hygon_functional_assets
 }
 
 setup_build_environment() {
