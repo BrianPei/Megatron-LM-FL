@@ -77,6 +77,8 @@ test_matrix:
       # core
       # Enflame GCU: empty_cache() unstable under 8-proc concurrency, ECCL deadlock in cleanup
       - tests/unit_tests/test_checkpointing.py
+      # torch_gcu has no torch._C._nccl_version; collection error stops entire run
+      - tests/unit_tests/test_nccl_allocator.py
       
       
       # models
@@ -113,6 +115,8 @@ test_matrix:
       # ECCL all_gather deadlock in activation offloading
       - tests/unit_tests/pipeline_parallel/test_fine_grained_activation_offloading.py::test_gpt_fine_grained_activation_offloading_correctness_and_memory
       - tests/unit_tests/pipeline_parallel/test_fine_grained_activation_offloading.py::test_fine_grained_activation_offload_with_ep_a2a_overlap_compatibility
+      # ECCL p2p send/recv hang + collective failures in multimodule communicator; 7/7 tests fail or deadlock
+      - tests/unit_tests/pipeline_parallel/test_multimodule_communicator.py
 
 
       # data
