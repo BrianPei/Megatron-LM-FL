@@ -133,6 +133,8 @@ test_matrix:
       - tests/unit_tests/models/test_heterogeneous_gpt_model.py
       # flash_attn not available on GCU; collection error during import
       - tests/unit_tests/models/test_gpt_model.py
+      # Consistently FAILED (8/8) due to TE-FL layernorm; now ECCL intermittent deadlock (3/8 ranks stuck)
+      - tests/unit_tests/models/test_base_embedding.py::TestBaseEmbedding::test_gpu_forward
       # ECCL intermittent deadlock across multiple tests in this file; same approach as metax (metax.yml L233)
       - tests/unit_tests/models/test_llava_model.py
 
