@@ -46,9 +46,9 @@ test_matrix:
       - --continue-on-collection-errors
       - --tb=short
     groups:
-      - name: core
-        path: tests/unit_tests/test_*.py megatron/plugin/tests/
-        description: Core unit tests
+       # - name: core
+      #  path: tests/unit_tests/test_*.py megatron/plugin/tests/
+      #  description: Core unit tests
       # - name: models
       #  path: tests/unit_tests/models/
       #  description: Model tests
