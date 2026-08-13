@@ -63,17 +63,25 @@ def bind_local_device():
         platform.set_device(int(local_rank) % device_count)
 
 
-# [Enflame DEBUG] Temporarily disabled to bypass ECCL barrier/destroy_process_group deadlock.
-# Revert before merging to main!
-# @pytest.fixture(scope="session", autouse=True)
-# def cleanup():
-#     yield
-#     if torch.distributed.is_initialized():
-#         try:
-#             torch.distributed.barrier(timeout=timedelta(seconds=300))
-#         except Exception:
-#             return
-#         torch.distributed.destroy_process_group()
+@pytest.fixture(scope="session", autouse=True)
+def cleanup():
+    """Destroy default process group after all tests complete.
+
+    Follows the pattern from Utils.destroy_model_parallel() (test_utilities.py:106-108):
+    synchronize device work, then barrier without timeout (GCU has no timeout kwarg),
+    then destroy the default process group even if barrier fails.
+    """
+    yield
+    if torch.distributed.is_initialized():
+        try:
+            # Flush pending device work to minimize rank arrival time skew
+            platform = get_platform()
+            platform.synchronize()
+            # Plain barrier (no timeout kwarg on GCU per zhaoyinglia's note)
+            torch.distributed.barrier()
+        except Exception:
+            pass  # Proceed to destroy even if barrier fails
+        torch.distributed.destroy_process_group()
 
 
 @pytest.fixture(scope="function", autouse=True)
@@ -173,14 +181,27 @@ def reset_env_vars():
     os.environ.update(original_env)
 
 
-# [Enflame DEBUG] Temporarily disabled to bypass ECCL empty_cache deadlock.
-# Revert before merging to main!
-# @pytest.fixture(autouse=True)
-# def cleanup_gpu_memory():
-#     """Clean up GPU memory after each test to prevent OOM in CI."""
-#     yield
-#     # Metax can abort inside cyclic GC during multi-rank pytest teardown.
-#     if os.getenv("MEGATRON_TEST_PLATFORM") != "metax":
-#         gc.collect()
-#     if torch.cuda.is_available():
-#         torch.cuda.empty_cache()
+@pytest.fixture(autouse=True)
+def cleanup_gpu_memory():
+    """Clean up GPU memory after each test to prevent OOM in CI.
+
+    Platform-specific behavior:
+    - metax: skip gc.collect() (can abort inside cyclic GC during multi-rank teardown)
+    - enflame: skip entirely (empty_cache can deadlock under ECCL)
+    """
+    yield
+
+    platform = get_platform()
+    device_name = platform.device_name()
+
+    # Enflame: skip cleanup entirely due to ECCL empty_cache instability
+    if device_name == 'enflame':
+        return
+
+    # Metax: skip gc.collect() but still run empty_cache
+    if device_name != 'metax':
+        gc.collect()
+
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
