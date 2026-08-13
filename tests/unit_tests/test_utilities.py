@@ -99,15 +99,17 @@ class Utils:
         if not Utils.inited:
             return
 
-        try:
-            # Flush pending device work before the barrier so slow ranks don't
-            # time out while fast ranks tear down process groups.
-            # NOTE(zhaoyinglia): there is not keyword argument 'timeout' in torch.distributed.barrier()
-            cur_platform.synchronize()
-            torch.distributed.barrier()
-        except Exception:
-            Utils.inited = False
-            return
+        # [Enflame DEBUG] Temporarily disabled to bypass ECCL barrier deadlock in teardown.
+        # Revert before merging to main (together with conftest.py cleanup/cleanup_gpu_memory)!
+        # try:
+        #     # Flush pending device work before the barrier so slow ranks don't
+        #     # time out while fast ranks tear down process groups.
+        #     # NOTE(zhaoyinglia): there is not keyword argument 'timeout' in torch.distributed.barrier()
+        #     cur_platform.synchronize()
+        #     torch.distributed.barrier()
+        # except Exception:
+        #     Utils.inited = False
+        #     return
         ps.destroy_model_parallel()
         Utils.inited = False
 
