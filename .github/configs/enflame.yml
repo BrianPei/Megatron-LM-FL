@@ -191,6 +191,9 @@ test_matrix:
       - tests/unit_tests/dist_checkpointing/test_async_save.py::TestAsyncSave::test_async_is_equivalent_to_sync
       # nvidia-resiliency-ext (nvrx) not installed on GCU; same as ascend/metax/musa
       - tests/unit_tests/dist_checkpointing/test_async_save.py::TestAsyncSave::test_get_async_strategy[nvrx]
+      # torch.distributed.checkpoint.save (DCP) gather_object -> ECCL ALLGATHER deadlock on GCU;
+      # test_sharded_tensor_checkpointing leaves stuck ALLGATHER, test_multiple_local_shards 6/8 FAILED + SIGABRT
+      - tests/unit_tests/dist_checkpointing/test_checkpointable.py
 
      
      
