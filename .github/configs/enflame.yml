@@ -177,6 +177,10 @@ test_matrix:
       # ECCL all_gather_object deadlock in distributed checkpointing
       - tests/unit_tests/dist_checkpointing/models/test_bert_model.py
       - tests/unit_tests/dist_checkpointing/models/test_gpt_model.py
+      # ECCL all_gather_object deadlock in T5 sharded state dict save/load; metax and cuda ignore entire function
+      - tests/unit_tests/dist_checkpointing/models/test_t5_model.py::TestT5Model::test_sharded_state_dict_save_load
+      # T5 parallel reconfiguration: ECCL deadlock (same pattern as mamba/moe_experts reconfiguration)
+      - tests/unit_tests/dist_checkpointing/models/test_t5_model.py::TestT5ModelReconfiguration::test_parallel_reconfiguration_e2e
       # Mamba model reconfiguration: all test params FAIL from first test (79 FAILED, 0 PASSED)
       - tests/unit_tests/dist_checkpointing/models/test_mamba.py
       # ECCL all_gather_object deadlock: rank 2 counter 128 < others 129
