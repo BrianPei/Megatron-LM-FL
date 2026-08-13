@@ -199,6 +199,10 @@ test_matrix:
       # FullyParallelSaveStrategyWrapper all_gather_object on DP sub-group deadlocks ECCL
       # (test_save_distribution[True] SIGABRT, rank 3/4/5 counter 5 < others 6); metax ignores entire file
       - tests/unit_tests/dist_checkpointing/test_fully_parallel.py
+      # fully-parallel save + distributed optimizer all_gather_object deadlock on GCU; ascend/metax/musa/cuda all ignore entire file
+      - tests/unit_tests/dist_checkpointing/test_global_metadata_reuse.py
+      # distributed optimizer checkpointing ECCL deadlock (all_gather_object / reduce_scatter); ascend/metax/cuda ignore entire file
+      - tests/unit_tests/dist_checkpointing/test_optimizer.py
 
      
      
