@@ -231,6 +231,10 @@ test_matrix:
       - tests/unit_tests/tensor_parallel/test_cross_entropy.py::test_vocab_parallel_cross_entropy
       # ECCL broadcast hang: rank 2 launch counter mismatch, all ranks stuck in init_process_group
       - tests/unit_tests/tensor_parallel/test_data.py::test_broadcast_data
+      # torch_gcu RNG manual_seed broken → RowParallelLinear weight init mismatch on GCU (assert torch.equal fails)
+      - tests/unit_tests/tensor_parallel/test_initialization.py::Test::test_row_init
+      # TERowParallelLinear (TE-FL vendor.enflame) hangs in TP=4 init/teardown → ECCL runtime launch counter mismatch
+      - tests/unit_tests/tensor_parallel/test_initialization.py::Test::test_te_row_init
       # ECCL collective failures in tensor parallel mapping ops (Copy/Reduce/Scatter/Gather); musa ignores all 7 tests
       - tests/unit_tests/tensor_parallel/test_mappings.py::test_CopyToModelParallelRegion
       - tests/unit_tests/tensor_parallel/test_mappings.py::test_ReduceFromModelParallelRegion
