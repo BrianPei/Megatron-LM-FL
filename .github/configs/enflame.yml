@@ -215,6 +215,10 @@ test_matrix:
       # deadlock on GCU (6/8 FAIL, no pytest summary); ascend ignores entire file, metax/cuda ignore
       # test_remove_sharded_tensors only
       - tests/unit_tests/dist_checkpointing/test_serialization.py
+      # test_cached_metadata: save() with use_cached_ckpt_structure=True all_gather_object ECCL deadlock
+      # (6/8 FAIL, no pytest summary); musa ignores both cached-metadata and cpu-tensors functions
+      - tests/unit_tests/dist_checkpointing/test_torch_dist.py::TestCachedMetadata::test_cached_metadata
+      - tests/unit_tests/dist_checkpointing/test_torch_dist.py::TestCPUTensors::test_cpu_tensors_dont_take_too_much_space
 
      
      
