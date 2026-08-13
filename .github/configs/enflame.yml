@@ -314,6 +314,10 @@ test_matrix:
       - tests/unit_tests/export/trtllm/test_trtllm_distributed_gpu_converter.py
       # HuggingFace tokenizer downloads fail in CI (no network access); same reason as ascend/metax/musa
       - tests/unit_tests/tokenizers/test_tokenizer.py
+      # experimental_fn/cls log via log_single_rank (safe_get_rank reads RANK env under torchrun);
+      # ranks 1-7 suppress the log so caplog.records is empty (assert 0 == 1); same as musa
+      - tests/unit_tests/utils/test_experimental_log_once.py::test_experimental_fn_logs_once
+      - tests/unit_tests/utils/test_experimental_log_once.py::test_experimental_cls_logs_once
 
 
   functional:
