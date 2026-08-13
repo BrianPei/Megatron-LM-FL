@@ -265,12 +265,22 @@ test_matrix:
       - tests/unit_tests/pipeline_parallel/test_fine_grained_activation_offloading.py::test_fine_grained_activation_offload_with_ep_a2a_overlap_compatibility
       # ECCL p2p send/recv hang + collective failures in multimodule communicator; 7/7 tests fail or deadlock
       - tests/unit_tests/pipeline_parallel/test_multimodule_communicator.py
-      # ECCL collective kernel deadlock (kernel enter counter stuck on default PG) in dual-encoder
-      # multimodule schedule; metax/ascend ignore both 8gpu variants, musa ignores whole file
+      # ECCL collective kernel deadlock (kernel enter counter stuck on default PG) in 8-GPU
+      # multimodule schedules; metax/ascend ignore both 8gpu variants, musa ignores whole file
+      - tests/unit_tests/pipeline_parallel/test_multimodule_schedules.py::TestMultimoduleSchedules::test_single_encoder_8gpu
       - tests/unit_tests/pipeline_parallel/test_multimodule_schedules.py::TestMultimoduleSchedules::test_dual_encoder_8gpu
       # ECCL collective deadlock in VPP forward + dist-checkpoint (MoE+MTP); metax ignores
       # test_forward_vpp, musa/cuda ignore the whole test_pipeline_layout.py
       - tests/unit_tests/pipeline_parallel/test_pipeline_layout.py::test_forward_vpp
+      # ECCL communicator setup/teardown deadlock while cycling PP=1→4→4/VPP2→2/VPP4 configs;
+      # metax/musa ignore test_get_forward_backward_func
+      - tests/unit_tests/pipeline_parallel/test_schedules.py::test_get_forward_backward_func
+      # ECCL p2p/collective deadlock in PP>=4 pipelined schedules; musa ignores the same set
+      - tests/unit_tests/pipeline_parallel/test_schedules.py::test_forward_backward_func_with_pipeline_parallel
+      - tests/unit_tests/pipeline_parallel/test_schedules.py::test_forward_backward_func_with_interleaving
+      - tests/unit_tests/pipeline_parallel/test_schedules.py::test_forward_backward_func_with_uneven_interleaving
+      - tests/unit_tests/pipeline_parallel/test_schedules.py::test_forward_backward_pipelining_without_interleaving_with_custom_pgs
+      - tests/unit_tests/pipeline_parallel/test_schedules.py::test_forward_backward_pipelining_with_interleaving_with_custom_pgs
 
 
       # data
