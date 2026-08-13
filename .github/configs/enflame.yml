@@ -208,6 +208,13 @@ test_matrix:
       # PP/VPP layout checkpointing ECCL deadlock (both test_save_and_load_checkpoint_pp and _vpp FAILED,
       # runtime launch counter 12 < others 14); metax ignores entire file
       - tests/unit_tests/dist_checkpointing/test_pipeline_parallel_layout.py
+      # torch.distributed.barrier + torch.load(weights_only) deadlock on GCU (6/8 ranks FAIL, 2 hang in
+      # ECCL barrier); metax and cuda ignore entire file, musa ignores only test_safe_globals
+      - tests/unit_tests/dist_checkpointing/test_safe_globals.py
+      # test_single_process_save_load: DTensor DeviceMesh.from_group(...,"cuda") + save() all_gather_object
+      # deadlock on GCU (6/8 FAIL, no pytest summary); ascend ignores entire file, metax/cuda ignore
+      # test_remove_sharded_tensors only
+      - tests/unit_tests/dist_checkpointing/test_serialization.py
 
      
      
