@@ -239,6 +239,11 @@ test_matrix:
       - tests/unit_tests/tensor_parallel/test_mappings.py::test_ScatterToSequenceParallelRegion
       - tests/unit_tests/tensor_parallel/test_mappings.py::test_GatherFromSequenceParallelRegion
       - tests/unit_tests/tensor_parallel/test_mappings.py::test_ReduceScatterToSequenceParallelRegion
+      # torch_gcu RNG API incomplete: get_rng_state/set_rng_state/manual_seed failures; musa ignores 4 tests
+      - tests/unit_tests/tensor_parallel/test_random.py::test_model_parallel_cuda_manual_seed
+      - tests/unit_tests/tensor_parallel/test_random.py::test_double_fork_cuda_rng_states_tracker
+      - tests/unit_tests/tensor_parallel/test_random.py::test_convert_cuda_rng_state
+      - tests/unit_tests/tensor_parallel/test_random.py::test_checkpoint
       
       
       # pipeline_parallel
