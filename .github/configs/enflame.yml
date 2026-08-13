@@ -127,6 +127,8 @@ test_matrix:
       - tests/unit_tests/models/test_bert_model.py::TestBertModelAttentionDimensions::test_local_spec
       # TE-FL generic_gemm flaky on Enflame; entire class mocks TE versions not installed (2.9.0)
       - tests/unit_tests/models/test_bert_model.py::TestBertModelAttentionDimensions
+      # TE-FL flaky: 7/8 ranks FAIL in model initialization; same as musa
+      - tests/unit_tests/models/test_bert_model.py::TestBertModel::test_post_process_forward
       # TE-FL flaky on Enflame; some ranks fail, some pass (generic_gemm instability)
       - tests/unit_tests/models/test_clip_vit_model.py::TestCLIPViTModel::test_constructor
       # TE-FL vendor.enflame layernorm_fwd DType error; tensors on different GCU devices
