@@ -196,6 +196,9 @@ test_matrix:
       - tests/unit_tests/dist_checkpointing/test_checkpointable.py
       # FP8/FP16 broadcast: ECCL deadlock (rank 2 runtime launch counter 3 < others 6); same as ascend/metax/musa
       - tests/unit_tests/dist_checkpointing/test_fp8.py
+      # FullyParallelSaveStrategyWrapper all_gather_object on DP sub-group deadlocks ECCL
+      # (test_save_distribution[True] SIGABRT, rank 3/4/5 counter 5 < others 6); metax ignores entire file
+      - tests/unit_tests/dist_checkpointing/test_fully_parallel.py
 
      
      
