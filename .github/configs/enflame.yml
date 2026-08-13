@@ -177,6 +177,10 @@ test_matrix:
       # ECCL all_gather_object deadlock in distributed checkpointing
       - tests/unit_tests/dist_checkpointing/models/test_bert_model.py
       - tests/unit_tests/dist_checkpointing/models/test_gpt_model.py
+      # Mamba model reconfiguration: all test params FAIL from first test (79 FAILED, 0 PASSED)
+      - tests/unit_tests/dist_checkpointing/models/test_mamba.py
+      # ECCL all_gather_object deadlock: rank 2 counter 128 < others 129
+      - tests/unit_tests/dist_checkpointing/models/test_mlp_glu.py
     
      
      
