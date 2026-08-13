@@ -187,7 +187,11 @@ test_matrix:
       - tests/unit_tests/dist_checkpointing/models/test_mlp_glu.py
       # MoE expert reconfiguration: ECCL deadlock from first test (rank 3 counter 7 < others 8/12); metax ignores entire file
       - tests/unit_tests/dist_checkpointing/models/test_moe_experts.py
-    
+      # mcore async save background worker fails/hangs on GCU (subprocess Gloo world_size=1); metax ignores entire function
+      - tests/unit_tests/dist_checkpointing/test_async_save.py::TestAsyncSave::test_async_is_equivalent_to_sync
+      # nvidia-resiliency-ext (nvrx) not installed on GCU; same as ascend/metax/musa
+      - tests/unit_tests/dist_checkpointing/test_async_save.py::TestAsyncSave::test_get_async_strategy[nvrx]
+
      
      
       # tensor_parallel
