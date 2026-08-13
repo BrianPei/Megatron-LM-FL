@@ -235,6 +235,9 @@ test_matrix:
       - tests/unit_tests/tensor_parallel/test_initialization.py::Test::test_row_init
       # TERowParallelLinear (TE-FL vendor.enflame) hangs in TP=4 init/teardown → ECCL runtime launch counter mismatch
       - tests/unit_tests/tensor_parallel/test_initialization.py::Test::test_te_row_init
+      # ECCL communicator setup times out exchanging ecclUniqueId for TP=8 all-gather;
+      # same root cause as musa MCCL UniqueId exchange timeout (musa ignores both LinearWithFrozenWeight variants)
+      - tests/unit_tests/tensor_parallel/test_layers.py::test_LinearWithFrozenWeight[8-True]
       # ECCL collective failures in tensor parallel mapping ops (Copy/Reduce/Scatter/Gather); musa ignores all 7 tests
       - tests/unit_tests/tensor_parallel/test_mappings.py::test_CopyToModelParallelRegion
       - tests/unit_tests/tensor_parallel/test_mappings.py::test_ReduceFromModelParallelRegion
