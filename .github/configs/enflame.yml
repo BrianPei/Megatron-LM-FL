@@ -219,9 +219,13 @@ test_matrix:
       # (6/8 FAIL, no pytest summary); musa ignores both cached-metadata and cpu-tensors functions
       - tests/unit_tests/dist_checkpointing/test_torch_dist.py::TestCachedMetadata::test_cached_metadata
       - tests/unit_tests/dist_checkpointing/test_torch_dist.py::TestCPUTensors::test_cpu_tensors_dont_take_too_much_space
+      # test_process_save_load: MultiStorageClient + DTensor DeviceMesh.from_group(...,"cuda") allgather
+      # triggers ECCL communicator setup timeout (rank 0 fails broadcastUniqueECCLID, ranks 2-7 wait
+      # 60s for ecclUniqueId); GCU device type is "gcu" not "cuda"; Enflame-specific
+      - tests/unit_tests/dist_checkpointing/test_msc.py
 
-     
-     
+
+
       # tensor_parallel
       # ECCL allreduce SIGSEGV in cross_entropy
       - tests/unit_tests/tensor_parallel/test_cross_entropy.py::test_vocab_parallel_cross_entropy
