@@ -61,12 +61,12 @@ test_matrix:
       #- name: tensor_parallel
       # path: tests/unit_tests/tensor_parallel/
       #  description: Tensor parallel tests
-      - name: pipeline_parallel
-        path: tests/unit_tests/pipeline_parallel/
-        description: Pipeline parallel tests
-      #- name: data
-      #  path: tests/unit_tests/data/
-      #  description: Data tests
+      #- name: pipeline_parallel
+      #  path: tests/unit_tests/pipeline_parallel/
+      #  description: Pipeline parallel tests
+      - name: data
+        path: tests/unit_tests/data/
+        description: Data tests
       #- name: fusions
       #  path: tests/unit_tests/fusions/
       #  description: Fusion tests
