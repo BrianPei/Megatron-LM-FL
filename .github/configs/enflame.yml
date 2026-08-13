@@ -203,6 +203,8 @@ test_matrix:
       - tests/unit_tests/dist_checkpointing/test_global_metadata_reuse.py
       # distributed optimizer checkpointing ECCL deadlock (all_gather_object / reduce_scatter); ascend/metax/cuda ignore entire file
       - tests/unit_tests/dist_checkpointing/test_optimizer.py
+      # legacy save/load all_gather_object ECCL deadlock (TestLegacySaveAndLoad FAILED); metax/cuda ignore entire file, musa ignores the legacy function
+      - tests/unit_tests/dist_checkpointing/test_nonpersistent.py
 
      
      
