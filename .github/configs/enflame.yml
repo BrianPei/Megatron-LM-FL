@@ -231,6 +231,14 @@ test_matrix:
       - tests/unit_tests/tensor_parallel/test_cross_entropy.py::test_vocab_parallel_cross_entropy
       # ECCL broadcast hang: rank 2 launch counter mismatch, all ranks stuck in init_process_group
       - tests/unit_tests/tensor_parallel/test_data.py::test_broadcast_data
+      # ECCL collective failures in tensor parallel mapping ops (Copy/Reduce/Scatter/Gather); musa ignores all 7 tests
+      - tests/unit_tests/tensor_parallel/test_mappings.py::test_CopyToModelParallelRegion
+      - tests/unit_tests/tensor_parallel/test_mappings.py::test_ReduceFromModelParallelRegion
+      - tests/unit_tests/tensor_parallel/test_mappings.py::test_ScatterToModelParallelRegion
+      - tests/unit_tests/tensor_parallel/test_mappings.py::test_GatherFromModelParallelRegion
+      - tests/unit_tests/tensor_parallel/test_mappings.py::test_ScatterToSequenceParallelRegion
+      - tests/unit_tests/tensor_parallel/test_mappings.py::test_GatherFromSequenceParallelRegion
+      - tests/unit_tests/tensor_parallel/test_mappings.py::test_ReduceScatterToSequenceParallelRegion
       
       
       # pipeline_parallel
