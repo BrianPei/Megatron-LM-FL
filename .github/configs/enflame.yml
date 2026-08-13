@@ -194,6 +194,8 @@ test_matrix:
       # torch.distributed.checkpoint.save (DCP) gather_object -> ECCL ALLGATHER deadlock on GCU;
       # test_sharded_tensor_checkpointing leaves stuck ALLGATHER, test_multiple_local_shards 6/8 FAILED + SIGABRT
       - tests/unit_tests/dist_checkpointing/test_checkpointable.py
+      # FP8/FP16 broadcast: ECCL deadlock (rank 2 runtime launch counter 3 < others 6); same as ascend/metax/musa
+      - tests/unit_tests/dist_checkpointing/test_fp8.py
 
      
      
