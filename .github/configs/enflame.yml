@@ -205,6 +205,9 @@ test_matrix:
       - tests/unit_tests/dist_checkpointing/test_optimizer.py
       # legacy save/load all_gather_object ECCL deadlock (TestLegacySaveAndLoad FAILED); metax/cuda ignore entire file, musa ignores the legacy function
       - tests/unit_tests/dist_checkpointing/test_nonpersistent.py
+      # PP/VPP layout checkpointing ECCL deadlock (both test_save_and_load_checkpoint_pp and _vpp FAILED,
+      # runtime launch counter 12 < others 14); metax ignores entire file
+      - tests/unit_tests/dist_checkpointing/test_pipeline_parallel_layout.py
 
      
      
