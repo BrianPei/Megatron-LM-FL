@@ -20,7 +20,7 @@ container_volumes:
   - /home/gitlab-runner/tokenizers:/home/gitlab-runner/tokenizers
 
 # Container options (hardware-specific settings)
-container_options: 
+container_options: >-
   --privileged
   --shm-size=500g
   --hostname megatron_cicd
@@ -52,7 +52,7 @@ test_matrix:
       - name: models
         path: tests/unit_tests/models/
         description: Model tests
-    -  name: distributed
+      - name: distributed
         path: tests/unit_tests/distributed/
         description: Distributed tests
       - name: dist_checkpointing
