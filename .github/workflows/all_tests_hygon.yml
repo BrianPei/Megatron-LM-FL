@@ -24,7 +24,7 @@ jobs:
     uses: ./.github/workflows/all_tests_common.yml
     with:
       platform: hygon
-      run_unit_tests: false
+      run_unit_tests: true
       run_functional_tests: ${{ github.event_name != 'workflow_dispatch' || inputs.run_functional_tests }}
 
   all_tests:
