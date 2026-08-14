@@ -428,6 +428,7 @@ test_matrix:
         golden_environment: dev
         golden_platform: bw1000
         enable_lightweight_mode: false
+        data_path: /home/gitlab-runner/data
         gpus_per_node: 1
       - model: gpt
         test_case: qwen3_0p6b_mcore_te_tp2_pp2_benchmark_hygon
@@ -436,5 +437,6 @@ test_matrix:
         golden_environment: dev
         golden_platform: bw1000
         enable_lightweight_mode: false
+        data_path: /home/gitlab-runner/data
         # This baseline is recorded with TP2/PP2 on four devices (DP=1).
         gpus_per_node: 4

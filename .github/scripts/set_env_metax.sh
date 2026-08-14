@@ -65,6 +65,8 @@ case "$CI_TEST_SUITE" in
     ;;
   functional)
     ci_setup_functional_environment
+    ci_install_local_tokenizer_dependencies
+    ci_validate_shared_qwen_assets
     setup_metax_toolchain
     validate_metax_capacity
     ;;

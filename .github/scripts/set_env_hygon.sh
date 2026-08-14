@@ -140,14 +140,9 @@ PY
 }
 
 prepare_hygon_functional_assets() {
-  local data_prefix=/home/gitlab-runner/data/pile_wikipedia_demo/pile_wikipedia_demo
-  local tokenizer_path=/home/gitlab-runner/tokenizers/qwentokenizer
   local hf_home=/tmp/hygon-huggingface
 
-  test -f "${data_prefix}.bin"
-  test -f "${data_prefix}.idx"
-  test -f "$tokenizer_path/tokenizer_config.json"
-  test -f "$tokenizer_path/tokenization_qwen.py"
+  ci_validate_shared_qwen_assets
 
   mkdir -p "$hf_home/modules"
   ci_export_env HF_HOME "$hf_home"
@@ -202,6 +197,7 @@ setup_functional_environment() {
   remove_broken_hygon_cupy
   verify_hygon_software_stack
   install_hygon_project
+  ci_install_local_tokenizer_dependencies
   validate_hygon_capacity
   prepare_hygon_functional_assets
 }

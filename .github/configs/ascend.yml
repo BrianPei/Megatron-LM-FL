@@ -345,6 +345,7 @@ test_matrix:
         golden_environment: dev
         golden_platform: 910c
         enable_lightweight_mode: false
+        data_path: /home/gitlab-runner/data
         data_cache_path: /tmp/megatron-data-cache
         gpus_per_node: 1
       - model: gpt
@@ -354,5 +355,6 @@ test_matrix:
         golden_environment: dev
         golden_platform: 910c
         enable_lightweight_mode: false
+        data_path: /home/gitlab-runner/data
         data_cache_path: /tmp/megatron-data-cache
         gpus_per_node: 4

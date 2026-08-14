@@ -131,15 +131,8 @@ case "$CI_TEST_SUITE" in
 
     # Shared functional test toolchain and Python 3.10-compatible project install.
     ci_setup_functional_environment --ignore-requires-python
-
-    # transformers>=4.47 calls validate_repo_id() on local from_pretrained paths,
-    # which rejects the mounted tokenizer directory.
-    # Pin to <4.47 so local tokenizer directories are accepted without errors.
-    python3 -m pip install \
-      "transformers<4.47.0" \
-      "huggingface_hub<0.27.0" \
-      --no-cache-dir --quiet
-
+    ci_install_local_tokenizer_dependencies
+    ci_validate_shared_qwen_assets
     install_musa_compatibility_layer
     validate_musa_capacity
     ;;
