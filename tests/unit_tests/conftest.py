@@ -67,21 +67,40 @@ def bind_local_device():
 def cleanup():
     """Destroy default process group after all tests complete.
 
+    On Enflame: tensor_parallel/pipeline_parallel skip cleanup via ENFLAME_SKIP_SESSION_CLEANUP=1
+    (cleanup barrier deadlocks: 4 ranks don't launch collective, counter mismatch 9 vs 10).
+    Other Enflame groups run cleanup (fixes dist_checkpointing/distributed teardown deadlocks).
+
     Follows the pattern from Utils.destroy_model_parallel() (test_utilities.py:106-108):
     synchronize device work, then barrier without timeout (GCU has no timeout kwarg),
     then destroy the default process group even if barrier fails.
     """
     yield
-    if torch.distributed.is_initialized():
+    if not torch.distributed.is_initialized():
+        return
+
+    # Enflame: skip cleanup for test groups where session-end barrier deadlocks
+    if os.getenv('ENFLAME_SKIP_SESSION_CLEANUP') == '1':
+        return
+
+    platform = get_platform()
+
+    # Enflame: run cleanup (fixes dist_checkpointing/distributed)
+    if platform.device_name() == 'enflame':
         try:
-            # Flush pending device work to minimize rank arrival time skew
-            platform = get_platform()
             platform.synchronize()
-            # Plain barrier (no timeout kwarg on GCU per zhaoyinglia's note)
             torch.distributed.barrier()
         except Exception:
-            pass  # Proceed to destroy even if barrier fails
+            pass
         torch.distributed.destroy_process_group()
+        return
+
+    # Non-Enflame: upstream pattern (barrier with timeout → TypeError → early return)
+    try:
+        torch.distributed.barrier(timeout=timedelta(seconds=300))
+    except Exception:
+        return
+    torch.distributed.destroy_process_group()
 
 
 @pytest.fixture(scope="function", autouse=True)
