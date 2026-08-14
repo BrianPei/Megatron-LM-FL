@@ -64,12 +64,12 @@ def bind_local_device():
 
 
 @pytest.fixture(scope="session", autouse=True)
-def cleanup():
+def cleanup(request):
     """Destroy default process group after all tests complete.
 
-    On Enflame: tensor_parallel/pipeline_parallel skip cleanup via ENFLAME_SKIP_SESSION_CLEANUP=1
-    (cleanup barrier deadlocks: 4 ranks don't launch collective, counter mismatch 9 vs 10).
-    Other Enflame groups run cleanup (fixes dist_checkpointing/distributed teardown deadlocks).
+    On Enflame: tensor_parallel skips cleanup (cleanup barrier deadlocks with rank counter
+    mismatch 9 vs 10 due to post-test timing race). Other Enflame groups run cleanup
+    (fixes dist_checkpointing/distributed teardown deadlocks).
 
     Follows the pattern from Utils.destroy_model_parallel() (test_utilities.py:106-108):
     synchronize device work, then barrier without timeout (GCU has no timeout kwarg),
@@ -79,14 +79,17 @@ def cleanup():
     if not torch.distributed.is_initialized():
         return
 
-    # Enflame: skip cleanup for test groups where session-end barrier deadlocks
-    if os.getenv('ENFLAME_SKIP_SESSION_CLEANUP') == '1':
-        return
-
     platform = get_platform()
 
-    # Enflame: run cleanup (fixes dist_checkpointing/distributed)
+    # Enflame: skip cleanup for tensor_parallel (session-end barrier deadlocks)
     if platform.device_name() == 'enflame':
+        # Check if any collected test is from tensor_parallel
+        session = request.session
+        test_paths = [str(item.fspath) for item in session.items]
+        if any('tensor_parallel' in path for path in test_paths):
+            return  # Skip cleanup, rely on atexit destructor
+
+        # Other Enflame groups: run cleanup (fixes dist_checkpointing/distributed)
         try:
             platform.synchronize()
             torch.distributed.barrier()
