@@ -102,6 +102,11 @@ test_matrix:
       - tests/unit_tests/test_optimizer_cpu_offloading.py::test_overlap_cpu_optimizer_d2h_h2d_sync_correctness
       # torch.cuda.device_count() returns 2 instead of 8 (torch_gcu lambda bug); same as musa
       - tests/unit_tests/test_utils.py::test_check_param_hashes_across_dp_replicas
+      # FP8 inference utilities require full TE vendor.enflame FP8 support (incomplete on GCU);
+      # Gloo PG setup fails in test_prepare_model_for_fp8_inference_basic → ECCL collective deadlock (rank counter 3 vs 4)
+      - tests/unit_tests/test_fp8_utils.py
+      # FP8 training with TE + CUDA graphs requires complete vendor.enflame FP8 implementation (not available on GCU)
+      - tests/unit_tests/test_fp8_param.py
       - tests/unit_tests/test_utils.py::test_cross_check_param_hashes_across_dp_replicas
       - tests/unit_tests/test_utils.py::test_param_norm_linear
       - tests/unit_tests/test_utils.py::test_param_norm_moe
@@ -157,6 +162,13 @@ test_matrix:
       - tests/unit_tests/models/test_mimo_embedding_alignment.py
       # torch_gcu missing topsatenScaledDotProductEfficientAttention operator → SIGABRT; musa also ignores (TE layernorm)
       - tests/unit_tests/models/test_radio_model.py::TestRADIOViTModel::test_forward
+      # TE-FL vendor.enflame FP8 quantization incomplete: test_te_config_resolution_dense
+      # configures tensorwise FP8 recipe, rank 7 fails in FP8 initialization → ECCL collective
+      # deadlock (rank[0-6] counter=8 vs rank[7] counter=7). Kitchen quantization tests are
+      # already skipped via @pytest.mark.skipif(not HAVE_KITCHEN), but TE quantization tests
+      # have no such guard and run on Enflame where HAVE_TE=True.
+      - tests/unit_tests/models/test_gpt_model_quantization.py::TestGPTModelTEQuantizationConfig
+
 
 
       # distributed
