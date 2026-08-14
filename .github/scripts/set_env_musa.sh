@@ -138,6 +138,7 @@ case "$CI_TEST_SUITE" in
     python3 -m pip install \
       "transformers<4.47.0" \
       "huggingface_hub<0.27.0" \
+      --upgrade --force-reinstall \
       --no-cache-dir --quiet
 
     install_musa_compatibility_layer
