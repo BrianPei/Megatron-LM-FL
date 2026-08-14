@@ -166,7 +166,7 @@ ci_install_local_tokenizer_dependencies() {
     --no-cache-dir --quiet
 }
 
-ci_validate_shared_qwen_assets() {
+ci_validate_qwen_assets() {
   local data_root="${1:-/home/gitlab-runner/data}"
   local tokenizer_root="${2:-/home/gitlab-runner/tokenizers}"
   local data_prefix="$data_root/pile_wikipedia_demo/pile_wikipedia_demo"
@@ -188,14 +188,14 @@ ci_validate_shared_qwen_assets() {
   done
 
   if [ "${#missing_paths[@]}" -ne 0 ]; then
-    echo "::error::Shared functional assets are missing inside the container"
+    echo "::error::Functional assets are missing inside the container"
     for path in "${missing_paths[@]}"; do
       echo "  missing: $path"
     done
     return 1
   fi
 
-  echo "Shared functional assets validated"
+  echo "Functional assets validated"
   echo "  dataset: $data_prefix"
   echo "  tokenizer: $tokenizer_path"
 }

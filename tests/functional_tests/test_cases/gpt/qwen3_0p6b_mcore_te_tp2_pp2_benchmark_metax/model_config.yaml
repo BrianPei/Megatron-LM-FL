@@ -51,6 +51,7 @@ MODEL_ARGS:
   --use-distributed-optimizer: true
   --overlap-grad-reduce: true
   --overlap-param-gather: true
+  --no-mmap-bin-files: true
   --attention-backend: unfused
   --attention-softmax-in-fp32: true
   --accumulate-allreduce-grads-in-fp32: true

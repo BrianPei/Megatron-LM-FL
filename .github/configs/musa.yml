@@ -11,10 +11,14 @@ runner_labels:
 # CI image for online env
 ci_image: registry.mthreads.com/presale/devtech/flagsclae:0206
 
-# Dataset/tokenizer volumes for test data
+# Dataset/tokenizer volumes for local runner test data
 container_volumes:
-  - /mnt/airs-business/cicd/baai_datasets:/home/gitlab-runner/data
-  - /mnt/airs-business/cicd/baai_tokenizers:/home/gitlab-runner/tokenizers
+  - /home/flagscale_cicd/flask/static:/workspace/report
+  - /home/flagscale_cicd/flask/config:/workspace/config
+  - /home/flagscale_cicd/docker/docker_build/docker_data:/home/gitlab-runner/data
+  - /home/flagscale_cicd/docker/docker_build/docker_tokenizers:/home/gitlab-runner/tokenizers
+  - /home/flagscale_cicd/docker/docker_build/docker_data/Megatron-LM/datasets:/opt/data/datasets
+  - /home/flagscale_cicd/docker/docker_build/docker_tokenizers/Megatron-LM/tokenizers:/opt/data/tokenizers
   # Override broken libmusa.so stub inside the image.
   - /usr/lib/x86_64-linux-gnu/libmusa.so:/usr/lib/x86_64-linux-gnu/libmusa.so
   - /usr/lib/x86_64-linux-gnu/libmusa.so.1:/usr/lib/x86_64-linux-gnu/libmusa.so.1
@@ -325,7 +329,7 @@ test_matrix:
         golden_environment: dev
         golden_platform: s5000
         enable_lightweight_mode: false
-        data_path: /home/gitlab-runner/data
+        data_path: /opt/data/datasets
         gpus_per_node: 1
       - model: gpt
         test_case: qwen3_0p6b_mcore_te_tp2_pp2_benchmark_musa
@@ -334,5 +338,5 @@ test_matrix:
         golden_environment: dev
         golden_platform: s5000
         enable_lightweight_mode: false
-        data_path: /home/gitlab-runner/data
+        data_path: /opt/data/datasets
         gpus_per_node: 4

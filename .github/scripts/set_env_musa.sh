@@ -129,10 +129,10 @@ case "$CI_TEST_SUITE" in
   functional)
     configure_musa_runtime
 
-    # Shared functional test toolchain and Python 3.10-compatible project install.
+    # Functional test toolchain and Python 3.10-compatible project install.
     ci_setup_functional_environment --ignore-requires-python
     ci_install_local_tokenizer_dependencies
-    ci_validate_shared_qwen_assets
+    ci_validate_qwen_assets /opt/data/datasets /opt/data/tokenizers
     install_musa_compatibility_layer
     validate_musa_capacity
     ;;

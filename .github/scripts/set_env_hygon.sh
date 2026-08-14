@@ -140,9 +140,11 @@ PY
 }
 
 prepare_hygon_functional_assets() {
+  local data_root=/opt/data/datasets
+  local tokenizer_root=/opt/data/tokenizers
   local hf_home=/tmp/hygon-huggingface
 
-  ci_validate_shared_qwen_assets
+  ci_validate_qwen_assets "$data_root" "$tokenizer_root"
 
   mkdir -p "$hf_home/modules"
   ci_export_env HF_HOME "$hf_home"
@@ -154,7 +156,7 @@ prepare_hygon_functional_assets() {
   python3 - <<'PY'
 from transformers import AutoTokenizer
 
-path = "/home/gitlab-runner/tokenizers/qwentokenizer"
+path = "/opt/data/tokenizers/qwentokenizer"
 tokenizer = AutoTokenizer.from_pretrained(path, trust_remote_code=True)
 print(f"Hygon tokenizer prewarm passed: {type(tokenizer)}; vocab={tokenizer.vocab_size}")
 PY

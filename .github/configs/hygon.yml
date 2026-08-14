@@ -10,11 +10,14 @@ runner_labels:
   - hg-8g-cicd-megatron
 
 # The DTK PyTorch package loads driver-side runtime libraries from /opt/hyhal.
-# Use the shared CI asset set and the common container paths used by MetaX.
+# Use the local runner asset set. Keep both container layouts because the
+# Hygon functional cases use the legacy /opt/data paths.
 container_volumes:
   - /opt/hyhal:/opt/hyhal
-  - /mnt/airs-business/cicd/baai_datasets:/home/gitlab-runner/data
-  - /mnt/airs-business/cicd/baai_tokenizers:/home/gitlab-runner/tokenizers
+  - /data/megatron-ci-assets-20260726/baai_datasets:/home/gitlab-runner/data
+  - /data/megatron-ci-assets-20260726/baai_tokenizers:/home/gitlab-runner/tokenizers
+  - /data/megatron-ci-assets-20260726/baai_datasets:/opt/data/datasets
+  - /data/megatron-ci-assets-20260726/baai_tokenizers:/opt/data/tokenizers
 
 container_options: >-
   --ipc=host
@@ -428,7 +431,7 @@ test_matrix:
         golden_environment: dev
         golden_platform: bw1000
         enable_lightweight_mode: false
-        data_path: /home/gitlab-runner/data
+        data_path: /opt/data/datasets
         gpus_per_node: 1
       - model: gpt
         test_case: qwen3_0p6b_mcore_te_tp2_pp2_benchmark_hygon
@@ -437,6 +440,6 @@ test_matrix:
         golden_environment: dev
         golden_platform: bw1000
         enable_lightweight_mode: false
-        data_path: /home/gitlab-runner/data
+        data_path: /opt/data/datasets
         # This baseline is recorded with TP2/PP2 on four devices (DP=1).
         gpus_per_node: 4

@@ -18,8 +18,8 @@ runner_labels:
 container_volumes:
   - /usr/local/Ascend/driver:/usr/local/Ascend/driver
   - /usr/local/sbin/npu-smi:/usr/local/sbin/npu-smi
-  - /mnt/airs-business/cicd/baai_datasets:/home/gitlab-runner/data
-  - /mnt/airs-business/cicd/baai_tokenizers:/home/gitlab-runner/tokenizers
+  - /home/secure/cicd_dev/megatron-lm-fl/ci-assets/datasets:/home/gitlab-runner/data
+  - /home/secure/cicd_dev/megatron-lm-fl/ci-assets/tokenizers:/home/gitlab-runner/tokenizers
 
 # Container options (hardware-specific settings)
 container_options: >-
