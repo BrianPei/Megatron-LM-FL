@@ -13,13 +13,13 @@ ci_image: harbor.baai.ac.cn/flagos-dev/megatron-lm-fl:manual-20260717-ascend-dev
 runner_labels:
   - hw-8g-cicd-megatron
 
-# Container volumes (hardware-specific paths)
+# Container volumes (local runner assets under /data)
 # NOTE: /usr/local/Ascend/add-ons does not exist on this runner; not mounted.
 container_volumes:
   - /usr/local/Ascend/driver:/usr/local/Ascend/driver
   - /usr/local/sbin/npu-smi:/usr/local/sbin/npu-smi
-  - /home/secure/cicd_dev/megatron-lm-fl/ci-assets/datasets:/home/gitlab-runner/data
-  - /home/secure/cicd_dev/megatron-lm-fl/ci-assets/tokenizers:/home/gitlab-runner/tokenizers
+  - /data/megatron-ci-assets-20260726/baai_datasets:/home/gitlab-runner/data
+  - /data/megatron-ci-assets-20260726/baai_tokenizers:/home/gitlab-runner/tokenizers
 
 # Container options (hardware-specific settings)
 container_options: >-
