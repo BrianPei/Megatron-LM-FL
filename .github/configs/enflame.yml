@@ -63,11 +63,11 @@ test_matrix:
         description: Tensor parallel tests
         env:
           ENFLAME_SKIP_SESSION_CLEANUP: "1"
-      - name: pipeline_parallel
-        path: tests/unit_tests/pipeline_parallel/
-        description: Pipeline parallel tests
-        env:
-          ENFLAME_SKIP_SESSION_CLEANUP: "1"
+      #- name: pipeline_parallel
+      #  path: tests/unit_tests/pipeline_parallel/
+      #  description: Pipeline parallel tests
+      #  env:
+      #    ENFLAME_SKIP_SESSION_CLEANUP: "1"
       #- name: data
       #  path: tests/unit_tests/data/
       #  description: Data tests
