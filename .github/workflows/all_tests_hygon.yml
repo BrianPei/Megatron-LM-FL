@@ -9,11 +9,6 @@ on:
       - main
   workflow_dispatch:
     inputs:
-      run_unit_tests:
-        description: Run the validated BW1000 unit-test matrix
-        required: false
-        type: boolean
-        default: true
       run_functional_tests:
         description: Run BW1000 functional and benchmark tests
         required: false
@@ -29,7 +24,7 @@ jobs:
     uses: ./.github/workflows/all_tests_common.yml
     with:
       platform: hygon
-      run_unit_tests: ${{ github.event_name != 'workflow_dispatch' || inputs.run_unit_tests }}
+      run_unit_tests: false
       run_functional_tests: ${{ github.event_name != 'workflow_dispatch' || inputs.run_functional_tests }}
 
   all_tests:

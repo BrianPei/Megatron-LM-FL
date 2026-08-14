@@ -140,8 +140,8 @@ PY
 }
 
 prepare_hygon_functional_assets() {
-  local data_prefix=/opt/data/datasets/pile_wikipedia_demo/pile_wikipedia_demo
-  local tokenizer_path=/opt/data/tokenizers/qwentokenizer
+  local data_prefix=/home/gitlab-runner/data/pile_wikipedia_demo/pile_wikipedia_demo
+  local tokenizer_path=/home/gitlab-runner/tokenizers/qwentokenizer
   local hf_home=/tmp/hygon-huggingface
 
   test -f "${data_prefix}.bin"
@@ -159,7 +159,7 @@ prepare_hygon_functional_assets() {
   python3 - <<'PY'
 from transformers import AutoTokenizer
 
-path = "/opt/data/tokenizers/qwentokenizer"
+path = "/home/gitlab-runner/tokenizers/qwentokenizer"
 tokenizer = AutoTokenizer.from_pretrained(path, trust_remote_code=True)
 print(f"Hygon tokenizer prewarm passed: {type(tokenizer)}; vocab={tokenizer.vocab_size}")
 PY

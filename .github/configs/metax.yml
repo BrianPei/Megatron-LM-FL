@@ -286,7 +286,7 @@ test_matrix:
   functional:
     train:
       - model: gpt
-        test_case: qwen3_0p6b_mcore_te_tp1_pp1_no_mmap_bin_files
+        test_case: qwen3_0p6b_mcore_te_tp1_pp1_metax
         training_script: pretrain_gpt.py
         n_repeat: 1
         golden_environment: dev

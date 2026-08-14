@@ -10,13 +10,11 @@ runner_labels:
   - hg-8g-cicd-megatron
 
 # The DTK PyTorch package loads driver-side runtime libraries from /opt/hyhal.
-# Expose one host asset set through both common and legacy CI paths.
+# Use the shared CI asset set and the common container paths used by MetaX.
 container_volumes:
   - /opt/hyhal:/opt/hyhal
-  - /data/megatron-ci-assets-20260726/baai_datasets:/home/gitlab-runner/data
-  - /data/megatron-ci-assets-20260726/baai_tokenizers:/home/gitlab-runner/tokenizers
-  - /data/megatron-ci-assets-20260726/baai_datasets:/opt/data/datasets
-  - /data/megatron-ci-assets-20260726/baai_tokenizers:/opt/data/tokenizers
+  - /mnt/airs-business/cicd/baai_datasets:/home/gitlab-runner/data
+  - /mnt/airs-business/cicd/baai_tokenizers:/home/gitlab-runner/tokenizers
 
 container_options: >-
   --ipc=host
