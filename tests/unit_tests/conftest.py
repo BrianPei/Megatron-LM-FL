@@ -64,12 +64,12 @@ def bind_local_device():
 
 
 @pytest.fixture(scope="session", autouse=True)
-def cleanup():
+def cleanup(request):
     """Destroy default process group after all tests complete.
 
     On Enflame: run cleanup for all groups (fixes dist_checkpointing/distributed teardown
-    deadlocks). tensor_parallel/pipeline_parallel may deadlock at cleanup barrier due to
-    post-test timing race, but this is documented behavior.
+    deadlocks). tensor_parallel gets extra pre-cleanup synchronization passes to reduce
+    the probability of timing-race deadlocks (rank counter mismatch).
 
     Follows the pattern from Utils.destroy_model_parallel() (test_utilities.py:106-108):
     synchronize device work, then barrier without timeout (GCU has no timeout kwarg),
@@ -83,6 +83,22 @@ def cleanup():
 
     # Enflame: run cleanup for all groups
     if platform.device_name() == 'enflame':
+        # Check if this is tensor_parallel test session
+        session = request.session
+        test_paths = [str(item.fspath) for item in session.items]
+        is_tensor_parallel = any('tensor_parallel' in path for path in test_paths)
+
+        # tensor_parallel: extra synchronization passes to align 8 ranks before final cleanup
+        if is_tensor_parallel:
+            try:
+                for i in range(5):  # 5 alignment passes
+                    platform.synchronize()
+                    torch.distributed.barrier()
+                    time.sleep(0.002)  # 2ms between passes
+            except Exception:
+                pass  # If alignment fails, proceed to cleanup anyway
+
+        # Final cleanup barrier for all groups
         try:
             platform.synchronize()
             torch.distributed.barrier()
