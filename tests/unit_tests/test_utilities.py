@@ -126,8 +126,7 @@ class Utils:
 
         ps.destroy_model_parallel()
         Utils.initialize_distributed()
-        # Musa/Enflame: disable Gloo process groups to reduce collective ops in teardown
-        if cur_platform.device_name() in ('musa', 'enflame') and 'create_gloo_process_groups' not in kwargs:
+        if cur_platform.device_name() == 'musa' and 'create_gloo_process_groups' not in kwargs:
             kwargs['create_gloo_process_groups'] = False
         ps.initialize_model_parallel(
             tensor_model_parallel_size,
