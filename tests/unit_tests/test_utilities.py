@@ -99,11 +99,15 @@ class Utils:
         if not Utils.inited:
             return
 
-        # Flush pending device work before the barrier so slow ranks don't
-        # time out while fast ranks tear down process groups.
-        # NOTE(zhaoyinglia): there is not keyword argument 'timeout' in torch.distributed.barrier()
-        cur_platform.synchronize()
-        torch.distributed.barrier()
+        try:
+                # Flush pending device work before the barrier so slow ranks don't
+                # time out while fast ranks tear down process groups.
+                # NOTE(zhaoyinglia): there is not keyword argument 'timeout' in torch.distributed.barrier()
+            cur_platform.synchronize()
+            torch.distributed.barrier()
+        except Exception:
+            Utils.inited = False
+            return
         ps.destroy_model_parallel()
         Utils.inited = False
 
