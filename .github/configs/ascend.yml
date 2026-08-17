@@ -72,9 +72,9 @@ test_matrix:
       - name: dist_checkpointing
         path: tests/unit_tests/dist_checkpointing/
         description: Distributed checkpointing tests
-      #- name: tensor_parallel
-      #  path: tests/unit_tests/tensor_parallel/
-      #  description: Tensor parallel tests
+      - name: tensor_parallel
+        path: tests/unit_tests/tensor_parallel/
+        description: Tensor parallel tests
       - name: pipeline_parallel
         path: tests/unit_tests/pipeline_parallel/
         description: Pipeline parallel tests

@@ -65,34 +65,14 @@ def bind_local_device():
 
 @pytest.fixture(scope="session", autouse=True)
 def cleanup():
-    """Destroy default process group after all tests complete.
-
-    Follows the pattern from Utils.destroy_model_parallel() (test_utilities.py:106-108):
-    synchronize device work, then barrier without timeout (GCU has no timeout kwarg),
-    then destroy the default process group even if barrier fails.
-    """
+    """Destroy default process group after all tests complete."""
     yield
-    if not torch.distributed.is_initialized():
-        return
-
-    platform = get_platform()
-
-    # Enflame: run cleanup with tolerant exception handling
-    if platform.device_name() == 'enflame':
+    if torch.distributed.is_initialized():
         try:
-            platform.synchronize()
-            torch.distributed.barrier()
+            torch.distributed.barrier(timeout=timedelta(seconds=300))
         except Exception:
-            pass
+            return
         torch.distributed.destroy_process_group()
-        return
-
-    # Non-Enflame: upstream pattern (barrier with timeout → TypeError → early return)
-    try:
-        torch.distributed.barrier(timeout=timedelta(seconds=300))
-    except Exception:
-        return
-    torch.distributed.destroy_process_group()
 
 
 @pytest.fixture(scope="function", autouse=True)
