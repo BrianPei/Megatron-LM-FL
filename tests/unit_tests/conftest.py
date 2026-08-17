@@ -174,25 +174,11 @@ def reset_env_vars():
 
 @pytest.fixture(autouse=True)
 def cleanup_gpu_memory():
-    """Clean up GPU memory after each test to prevent OOM in CI.
-
-    Platform-specific behavior:
-    - metax: skip gc.collect() (can abort inside cyclic GC during multi-rank teardown)
-    - enflame: skip entirely (empty_cache can deadlock under ECCL)
-    """
+    """Clean up GPU memory after each test to prevent OOM in CI."""
     yield
-
-    platform = get_platform()
-    device_name = platform.device_name()
-
-    # Enflame: skip cleanup entirely due to ECCL empty_cache instability
-    if device_name == 'enflame':
-        return
-
-    # Metax: skip gc.collect() but still run empty_cache
-    if device_name != 'metax':
+    # Metax can abort inside cyclic GC during multi-rank pytest teardown.
+    if os.getenv("MEGATRON_TEST_PLATFORM") != "metax":
         gc.collect()
-
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
 
