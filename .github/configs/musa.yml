@@ -36,7 +36,7 @@ container_options: >-
 
 # Device types to run tests on
 device_types:
-  - s60
+  - s5000
 
 # Test matrix configuration
 test_matrix:
