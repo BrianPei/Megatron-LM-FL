@@ -2,9 +2,9 @@ name: enflame_tests
 
 on:
   push:
-    branches: ["main"]
+    branches: ["main","dev-Enflame"]
   pull_request:
-    branches: ["main"]
+    branches: ["main","dev-Enflame"]
   workflow_dispatch: # Allows manual triggering
 
 concurrency:
