@@ -26,15 +26,14 @@ class PlatformCUDA(PlatformBase):
     def is_available(self):
         try:
             import torch
-
             # Enflame runtimes patch torch.cuda, so those APIs cannot identify
             # the underlying backend when a GCU is actually available.
-            gcu = getattr(torch, 'gcu', None)
-            gcu_is_available = getattr(gcu, 'is_available', None)
-            if callable(gcu_is_available) and gcu_is_available():
-                return False
-
+            # gcu = getattr(torch, 'gcu', None)
+            # gcu_is_available = getattr(gcu, 'is_available', None)
+            # if callable(gcu_is_available) and gcu_is_available():
+            #     return False
             # Determine if we are on a GPU or x86 CPU with torch.
+
             if torch.cuda.device_count() > 0 and torch.cuda.is_available():  #ignore-cuda
                 return True
             else:

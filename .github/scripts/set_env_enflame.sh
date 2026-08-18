@@ -20,26 +20,7 @@ validate_enflame_capacity() {
   python3 -c \
     "import torch, torch_gcu; assert torch.gcu.is_available(); print(f'GCU devices: {torch.gcu.device_count()}')"
 }
-'''
-clean_stale_coverage_patch() {
-  # Clean up stale .pth file from earlier image builds (commit 539097af3 → 271405d79).
-  # MUST run before any Python invocation, because .pth files are processed at startup.
-  local user_site="/github/home/.local/lib/python3.12/site-packages"
-  local sys_site="/usr/local/lib/python3.12/dist-packages"
 
-  for sp in "$user_site" "$sys_site"; do
-    if [ -f "$sp/fix_coverage_enflame.pth" ]; then
-      rm -f "$sp/fix_coverage_enflame.pth"
-      echo "Removed $sp/fix_coverage_enflame.pth"
-    fi
-    if [ -f "$sp/_fix_coverage_enflame.py" ]; then
-      rm -f "$sp/_fix_coverage_enflame.py"
-      echo "Removed $sp/_fix_coverage_enflame.py"
-    fi
-  done
-  return 0
-}
-'''
 patch_coverage_for_torch_gcu() {
   # torch_gcu registers _OpNamespace objects in sys.modules whose __path__ is
   # not a sequence. coverage.py scans sys.modules inside coverage.start() and
@@ -147,9 +128,6 @@ setup_build_environment() {
 }
 
 ci_require_env CI_TEST_SUITE
-
-# Clean up stale .pth file BEFORE any Python execution
-clean_stale_coverage_patch
 
 case "$CI_TEST_SUITE" in
   unit)
