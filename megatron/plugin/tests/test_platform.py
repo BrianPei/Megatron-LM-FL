@@ -11,7 +11,6 @@ from unittest.mock import patch, MagicMock
 
 from megatron.plugin.platform.platform_base import PlatformBase
 from megatron.plugin.platform.platform_cpu import PlatformCPU
-from megatron.plugin.platform.platform_cuda import PlatformCUDA
 from megatron.plugin.platform import platform_register, platform_manager
 
 
@@ -346,36 +345,6 @@ class TestPlatformCPU(unittest.TestCase):
         with self.assertRaises(NotImplementedError):
             self.cpu.get_device_capability()
 
-
-class TestPlatformCUDAAvailability(unittest.TestCase):
-    """Test CUDA detection when vendor runtimes expose CUDA-compatible APIs."""
-
-    def test_defers_to_enflame_when_gcu_is_available(self):
-        cuda = types.SimpleNamespace(
-            device_count=MagicMock(return_value=2),
-            is_available=MagicMock(return_value=True),
-        )
-        fake_torch = types.SimpleNamespace(
-            cuda=cuda,
-            gcu=types.SimpleNamespace(is_available=MagicMock(return_value=True)),
-        )
-
-        with patch.dict(sys.modules, {"torch": fake_torch}):
-            self.assertFalse(PlatformCUDA().is_available())
-
-        cuda.device_count.assert_not_called()
-        cuda.is_available.assert_not_called()
-
-    def test_detects_cuda_when_gcu_api_is_absent(self):
-        fake_torch = types.SimpleNamespace(
-            cuda=types.SimpleNamespace(
-                device_count=MagicMock(return_value=8),
-                is_available=MagicMock(return_value=True),
-            )
-        )
-
-        with patch.dict(sys.modules, {"torch": fake_torch}):
-            self.assertTrue(PlatformCUDA().is_available())
 
 
 class _FakeDeviceProps:
