@@ -26,7 +26,7 @@ class PlatformCUDA(PlatformBase):
     def is_available(self):
         try:
             import torch
-
+            # Determine if we are on a GPU or x86 CPU with torch.
             if torch.cuda.device_count() > 0 and torch.cuda.is_available():  #ignore-cuda
                 return True
             else:

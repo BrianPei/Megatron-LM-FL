@@ -346,7 +346,6 @@ class TestPlatformCPU(unittest.TestCase):
             self.cpu.get_device_capability()
 
 
-
 class _FakeDeviceProps:
     total_memory = 1024
 
