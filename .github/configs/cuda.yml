@@ -173,7 +173,7 @@ te_fl:
   native:
     mode: source
     source_paths: [transformer_engine]
-    build_files: [setup.py, pyproject.toml, CMakeLists.txt, build_tools]
+    build_files: [setup.py, pyproject.toml, build_tools]
     runtime_modules: [torch]
     require_shared_library: true
     target_arch: sm_80
