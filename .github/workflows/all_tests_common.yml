@@ -36,8 +36,8 @@ jobs:
         shell: bash
     runs-on: ubuntu-latest
     outputs:
-      ci_image: ${{ steps.config.outputs.ci_image }}
-      expected_te_fl_commit: ${{ steps.config.outputs.expected_te_fl_commit }}
+      ci_image: ${{ steps.resolve_image.outputs.ci_image }}
+      expected_te_fl_commit: ${{ steps.resolve_image.outputs.expected_te_fl_commit }}
       runs_on: ${{ steps.config.outputs.runs_on }}
       container_volumes: ${{ steps.config.outputs.container_volumes }}
       container_options: ${{ steps.config.outputs.container_options }}
@@ -66,9 +66,27 @@ jobs:
           /usr/local/bin/yq --version
           echo "Loading configuration from $CONFIG_FILE"
 
-          # Resolve CI image (override takes precedence)
-          IMAGE_OVERRIDE="${{ inputs.image_override }}"
+      - name: Validate and resolve image override
+        id: resolve_image
+        env:
+          IMAGE_OVERRIDE: ${{ inputs.image_override }}
+          EXPECTED_COMMIT: ${{ inputs.expected_te_fl_commit }}
+          PLATFORM: ${{ inputs.platform }}
+        run: |
+          set -euo pipefail
 
+          CONFIG_FILE=".github/configs/${PLATFORM}.yml"
+
+          # Validate expected_te_fl_commit format if provided
+          if [[ -n "${EXPECTED_COMMIT}" ]]; then
+            if ! [[ "${EXPECTED_COMMIT}" =~ ^[0-9a-f]{40}$ ]]; then
+              echo "::error::expected_te_fl_commit must be 40 hex characters"
+              echo "::error::Got: ${EXPECTED_COMMIT}"
+              exit 1
+            fi
+          fi
+
+          # Resolve CI image (override takes precedence)
           if [[ -n "${IMAGE_OVERRIDE}" ]]; then
             # Validate digest format: image@sha256:64-hex-chars
             if ! [[ "${IMAGE_OVERRIDE}" =~ ^[^@]+@sha256:[0-9a-f]{64}$ ]]; then
@@ -76,6 +94,14 @@ jobs:
               echo "::error::Got: ${IMAGE_OVERRIDE}"
               exit 1
             fi
+
+            # If image_override provided, expected_te_fl_commit is REQUIRED
+            if [[ -z "${EXPECTED_COMMIT}" ]]; then
+              echo "::error::expected_te_fl_commit is required when image_override is provided"
+              echo "::error::Cannot verify TE-FL provenance without expected commit"
+              exit 1
+            fi
+
             CI_IMAGE="${IMAGE_OVERRIDE}"
             echo "Using image override: ${CI_IMAGE}"
           else
@@ -84,11 +110,15 @@ jobs:
             echo "Using platform config image: ${CI_IMAGE}"
           fi
 
-          echo "ci_image=$CI_IMAGE" >> $GITHUB_OUTPUT
 
-          # Pass through expected TE-FL commit for verification
-          EXPECTED_COMMIT="${{ inputs.expected_te_fl_commit }}"
-          echo "expected_te_fl_commit=$EXPECTED_COMMIT" >> $GITHUB_OUTPUT
+      - name: Read platform configuration
+        id: config
+        env:
+          PLATFORM: ${{ inputs.platform }}
+        run: |
+          set -euo pipefail
+
+          CONFIG_FILE=".github/configs/${PLATFORM}.yml"
 
           # Read runner labels and format as JSON array
           RUNS_ON=$(yq '.runner_labels | tojson(0)' "$CONFIG_FILE")
@@ -140,6 +170,7 @@ jobs:
           echo "unit_test_groups=$UNIT_TEST_GROUPS" >> $GITHUB_OUTPUT
           echo "unit_pytest_extra_args=$UNIT_PYTEST_EXTRA_ARGS" >> $GITHUB_OUTPUT
           echo "ignored_tests=$IGNORED_TESTS" >> $GITHUB_OUTPUT
+
       
   lint:
     name: lint

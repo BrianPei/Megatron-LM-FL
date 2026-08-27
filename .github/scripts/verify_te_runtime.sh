@@ -11,9 +11,9 @@ set -euo pipefail
 # 1. The resolved container image
 # 2. transformer_engine installation and path
 # 3. Native extension presence (actual .so files)
-# 4. TE-FL commit match with provenance validation
+# 4. TE-FL commit match with FlagScale provenance manifest
 # 5. Platform/vendor implementation registration (explicit check)
-# 6. Actual operator backend selection (execution verification)
+# 6. Actual operator backend selection (execution + manager query)
 #
 # IMPORTANT: This script is ONLY executed when expected_te_fl_commit is provided
 # ==============================================================================
@@ -119,34 +119,83 @@ print(f"   Verified: native library file exists")
 PY
 
 # ==============================================================================
-# 4. TE-FL Commit Verification with Provenance
+# 4. TE-FL Commit Verification with FlagScale Provenance Manifest
 # ==============================================================================
-msg "4. TE-FL Commit Verification"
+msg "4. TE-FL Commit Verification (FlagScale provenance)"
 
 if [[ -n "${EXPECTED_TE_FL_COMMIT:-}" ]]; then
     if [[ ! "${EXPECTED_TE_FL_COMMIT}" =~ ^[0-9a-f]{40}$ ]]; then
         err "EXPECTED_TE_FL_COMMIT invalid format: ${EXPECTED_TE_FL_COMMIT} (expected 40 hex chars)"
     fi
 
-    # Read commit from environment
-    ACTUAL_COMMIT="${TE_FL_COMMIT:-}"
+    # Try to read FlagScale provenance manifest first
+    PROVENANCE_FILE="/etc/flagos/te-fl.json"
+    if [[ -f "$PROVENANCE_FILE" ]]; then
+        msg "   Found FlagScale provenance manifest: ${PROVENANCE_FILE}"
 
-    if [[ -z "$ACTUAL_COMMIT" ]]; then
-        err "TE_FL_COMMIT environment variable not set, cannot verify commit"
-    elif [[ ! "$ACTUAL_COMMIT" =~ ^[0-9a-f]{40}$ ]]; then
-        err "TE_FL_COMMIT invalid format: ${ACTUAL_COMMIT}"
+        python3 - <<'PY' || { err "Failed to verify provenance manifest"; }
+import sys
+import json
+import os
+
+expected_commit = os.getenv("EXPECTED_TE_FL_COMMIT")
+provenance_file = "/etc/flagos/te-fl.json"
+
+try:
+    with open(provenance_file) as f:
+        manifest = json.load(f)
+
+    actual_commit = manifest.get("commit", "")
+    wheel_sha256 = manifest.get("wheel_sha256", "")
+    build_time = manifest.get("build_time", "unknown")
+
+    print(f"   Provenance commit: {actual_commit}")
+    print(f"   Wheel SHA256: {wheel_sha256[:16]}..." if wheel_sha256 else "   Wheel SHA256: not available")
+    print(f"   Build time: {build_time}")
+
+    if actual_commit != expected_commit:
+        print(f"ERROR: Commit mismatch in provenance manifest", file=sys.stderr)
+        print(f"  Expected: {expected_commit}", file=sys.stderr)
+        print(f"  Actual: {actual_commit}", file=sys.stderr)
+        sys.exit(1)
+
+    print("   Status: MATCH (verified from provenance)")
+
+except FileNotFoundError:
+    print(f"ERROR: Provenance manifest not found: {provenance_file}", file=sys.stderr)
+    sys.exit(1)
+except json.JSONDecodeError as e:
+    print(f"ERROR: Invalid JSON in provenance manifest: {e}", file=sys.stderr)
+    sys.exit(1)
+except Exception as e:
+    print(f"ERROR: Failed to read provenance manifest: {e}", file=sys.stderr)
+    sys.exit(1)
+PY
+
     else
-        msg "   Expected commit: ${EXPECTED_TE_FL_COMMIT}"
-        msg "   Actual commit (env): ${ACTUAL_COMMIT}"
+        # Fallback: check environment variable (less reliable)
+        msg "   Warning: FlagScale provenance manifest not found at ${PROVENANCE_FILE}"
+        msg "   Falling back to TE_FL_COMMIT environment variable (less reliable)"
 
-        if [[ "$ACTUAL_COMMIT" == "$EXPECTED_TE_FL_COMMIT" ]]; then
-            msg "   Status: MATCH"
+        ACTUAL_COMMIT="${TE_FL_COMMIT:-}"
+
+        if [[ -z "$ACTUAL_COMMIT" ]]; then
+            err "TE_FL_COMMIT environment variable not set, cannot verify commit"
+        elif [[ ! "$ACTUAL_COMMIT" =~ ^[0-9a-f]{40}$ ]]; then
+            err "TE_FL_COMMIT invalid format: ${ACTUAL_COMMIT}"
         else
-            err "Commit mismatch: expected ${EXPECTED_TE_FL_COMMIT}, got ${ACTUAL_COMMIT}"
+            msg "   Expected commit: ${EXPECTED_TE_FL_COMMIT}"
+            msg "   Actual commit (env): ${ACTUAL_COMMIT}"
+
+            if [[ "$ACTUAL_COMMIT" == "$EXPECTED_TE_FL_COMMIT" ]]; then
+                msg "   Status: MATCH (from environment variable)"
+            else
+                err "Commit mismatch: expected ${EXPECTED_TE_FL_COMMIT}, got ${ACTUAL_COMMIT}"
+            fi
         fi
     fi
 
-    # Additional provenance check: verify TE-FL package metadata if available
+    # Additional check: package metadata
     python3 - <<'PY' || msg "   Warning: Could not read package metadata"
 import sys
 try:
@@ -167,7 +216,6 @@ fi
 # ==============================================================================
 msg "5. Platform/Vendor Implementation Registration"
 
-# Get platform from environment (passed from workflow)
 PLATFORM="${TE_FL_PLATFORM:-}"
 if [[ -z "$PLATFORM" ]]; then
     err "TE_FL_PLATFORM not set in workflow environment"
@@ -260,9 +308,9 @@ except ImportError as e:
 PY
 
 # ==============================================================================
-# 6. Operator Backend Selection (EXECUTION VERIFICATION)
+# 6. Operator Backend Selection (EXECUTION VERIFICATION + MANAGER QUERY)
 # ==============================================================================
-msg "6. Operator Backend Selection (execution verification)"
+msg "6. Operator Backend Selection (execution + manager query)"
 
 python3 - <<'PY' || { err "Operator backend selection failed"; }
 import sys
@@ -284,21 +332,39 @@ try:
     print(f"   Layer type: {layer_type}")
     print(f"   Layer module: {layer_module}")
 
-    # Try to get actual selected implementation from TE-FL manager
+    # CRITICAL: Query actual selected implementation from TE-FL manager
+    selected_impl = None
     try:
         import transformer_engine as te
         if hasattr(te, 'impl_manager'):
             manager = te.impl_manager
-            if hasattr(manager, 'get_current_implementation') or hasattr(manager, 'current_impl'):
-                current_impl = getattr(manager, 'get_current_implementation', lambda: None)()
-                if current_impl is None:
-                    current_impl = getattr(manager, 'current_impl', 'unknown')
-                print(f"   Selected implementation: {current_impl}")
 
-                # For non-CUDA platforms, verify not using reference
-                if platform != "cuda" and 'reference' in str(current_impl).lower():
-                    print(f"ERROR: Platform '{platform}' is using reference implementation", file=sys.stderr)
-                    sys.exit(1)
+            # Try multiple methods to get current implementation
+            if hasattr(manager, 'get_current_implementation'):
+                selected_impl = manager.get_current_implementation()
+            elif hasattr(manager, 'current_impl'):
+                selected_impl = manager.current_impl
+            elif hasattr(manager, 'active_impl'):
+                selected_impl = manager.active_impl
+
+            if selected_impl:
+                print(f"   Selected implementation: {selected_impl}")
+
+                # For non-CUDA platforms, MUST NOT be reference
+                if platform != "cuda":
+                    impl_str = str(selected_impl).lower()
+                    if 'reference' in impl_str or 'unknown' in impl_str or impl_str == 'none':
+                        print(f"ERROR: Platform '{platform}' is using reference/unknown implementation: {selected_impl}", file=sys.stderr)
+                        sys.exit(1)
+
+                    # MUSA must explicitly use musa implementation
+                    if platform == "musa" and 'musa' not in impl_str:
+                        print(f"ERROR: Platform 'musa' must use musa implementation, got: {selected_impl}", file=sys.stderr)
+                        sys.exit(1)
+
+                print("   Implementation verified: vendor-specific backend active")
+            else:
+                print("   Warning: Could not determine selected implementation from manager")
     except Exception as e:
         print(f"   Warning: Could not query implementation manager: {e}")
 
