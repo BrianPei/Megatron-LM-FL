@@ -1,0 +1,259 @@
+name: Prepare TE-FL Runtime
+
+on:
+  workflow_call:
+    inputs:
+      platform: {required: true, type: string}
+      image: {required: true, type: string}
+      runs_on: {required: true, type: string}
+      container_volumes: {required: true, type: string}
+      container_options: {required: true, type: string}
+      setup_script: {required: true, type: string}
+      nproc_per_node: {required: true, type: string}
+      te_fl_ref: {required: true, type: string}
+      native_mode: {required: true, type: string}
+      target_arch: {required: true, type: string}
+      compiler: {required: true, type: string}
+      require_shared_library: {required: true, type: string}
+      source_paths: {required: true, type: string}
+      build_files: {required: true, type: string}
+      build_env: {required: true, type: string}
+      build_pip_args: {required: true, type: string}
+      native_modules: {required: true, type: string}
+      runtime_modules: {required: true, type: string}
+      bootstrap_modules: {required: true, type: string}
+      native_module: {required: true, type: string}
+      device_module: {required: true, type: string}
+      expected_backend: {required: true, type: string}
+      runtime_env: {required: true, type: string}
+      install_pip_args: {required: true, type: string}
+      expected_te_fl_commit: {required: false, type: string, default: ''}
+    outputs:
+      te_fl_commit:
+        value: ${{ jobs.prepare.outputs.te_fl_commit }}
+      native_fingerprint:
+        value: ${{ jobs.prepare.outputs.native_fingerprint }}
+      cache_key:
+        value: ${{ jobs.prepare.outputs.cache_key }}
+
+jobs:
+  prepare:
+    name: te-fl-${{ inputs.platform }}
+    runs-on: ${{ fromJson(inputs.runs_on) }}
+    container:
+      image: ${{ inputs.image }}
+      volumes: ${{ fromJson(inputs.container_volumes) }}
+      options: ${{ inputs.container_options }}
+    outputs:
+      te_fl_commit: ${{ steps.resolve.outputs.commit }}
+      native_fingerprint: ${{ steps.fingerprint.outputs.fingerprint }}
+      cache_key: ${{ steps.key.outputs.key }}
+    steps:
+      - name: Checkout Megatron source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve TE-FL ref
+        id: resolve
+        env:
+          TE_FL_REF: ${{ inputs.te_fl_ref }}
+          TE_FL_REPOSITORY: https://github.com/FlagOpen/TransformerEngine-FL.git
+          EXPECTED_TE_FL_COMMIT: ${{ inputs.expected_te_fl_commit }}
+        run: |
+          set -euo pipefail
+          case "$TE_FL_REF" in
+            ''|*[!A-Za-z0-9._/-]*)
+              if ! [[ "$TE_FL_REF" =~ ^[0-9a-f]{40}$ ]]; then
+                echo "::error::invalid TE_FL_REF" >&2
+                exit 1
+              fi
+              ;;
+          esac
+          if [[ "$TE_FL_REF" =~ ^[0-9a-f]{40}$ ]]; then
+            commit="$TE_FL_REF"
+          else
+            commit=$(git ls-remote "$TE_FL_REPOSITORY" "refs/heads/$TE_FL_REF" | awk 'NR==1 {print $1}')
+          fi
+          if ! [[ "$commit" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::could not resolve TE-FL ref: $TE_FL_REF" >&2
+            exit 1
+          fi
+          if [ -n "$EXPECTED_TE_FL_COMMIT" ] && \
+             [ "$commit" != "$EXPECTED_TE_FL_COMMIT" ]; then
+            echo "::error::resolved TE-FL commit does not match expected_te_fl_commit" >&2
+            exit 1
+          fi
+          echo "commit=$commit" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout TE-FL source
+        uses: actions/checkout@v4
+        with:
+          repository: FlagOpen/TransformerEngine-FL
+          ref: ${{ steps.resolve.outputs.commit }}
+          path: te-fl
+          fetch-depth: 0
+          submodules: recursive
+
+      - name: Setup platform environment
+        env:
+          CI_TEST_SUITE: build
+          CI_NPROC_PER_NODE: ${{ inputs.nproc_per_node }}
+          MEGATRON_CI_IMAGE: ${{ inputs.image }}
+          SETUP_SCRIPT: ${{ inputs.setup_script }}
+          TE_FL_BUILD_ENV_JSON: ${{ inputs.build_env }}
+        run: |
+          set -euo pipefail
+          if [[ "$SETUP_SCRIPT" = /* || "$SETUP_SCRIPT" == *..* || ! -f "$GITHUB_WORKSPACE/$SETUP_SCRIPT" ]]; then
+            echo "::error::invalid or missing platform setup script: $SETUP_SCRIPT" >&2
+            exit 1
+          fi
+          source "$GITHUB_WORKSPACE/.github/scripts/set_env_common.sh"
+          ci_apply_env_json "$TE_FL_BUILD_ENV_JSON"
+          bash "$GITHUB_WORKSPACE/$SETUP_SCRIPT"
+
+      - name: Calculate native fingerprint
+        id: fingerprint
+        env:
+          PLATFORM: ${{ inputs.platform }}
+          BASE_IMAGE_REF: ${{ inputs.image }}
+          NATIVE_MODE: ${{ inputs.native_mode }}
+          TARGET_ARCH: ${{ inputs.target_arch }}
+          COMPILER: ${{ inputs.compiler }}
+          SOURCE_PATHS: ${{ inputs.source_paths }}
+          BUILD_FILES: ${{ inputs.build_files }}
+          BUILD_ENV: ${{ inputs.build_env }}
+          BUILD_PIP_ARGS: ${{ inputs.build_pip_args }}
+          NATIVE_MODULES: ${{ inputs.native_modules }}
+          RUNTIME_MODULES: ${{ inputs.runtime_modules }}
+          REQUIRE_SHARED_LIBRARY: ${{ inputs.require_shared_library }}
+          SETUP_SCRIPT: ${{ inputs.setup_script }}
+        run: |
+          set -euo pipefail
+          BUILD_RECIPE_HASH=$(sha256sum \
+            .github/scripts/calculate_native_fingerprint.py \
+            .github/docker/build_te_fl_native.sh \
+            .github/scripts/set_env_common.sh \
+            "$SETUP_SCRIPT" | sha256sum | awk '{print $1}')
+          python3 .github/scripts/calculate_native_fingerprint.py \
+            --platform "$PLATFORM" \
+            --mode "$NATIVE_MODE" \
+            --base-image-ref "$BASE_IMAGE_REF" \
+            --te-fl-repo "$GITHUB_WORKSPACE/te-fl" \
+            --target-arch "$TARGET_ARCH" \
+            --compiler "$COMPILER" \
+            --source-paths-json "$SOURCE_PATHS" \
+            --build-files-json "$BUILD_FILES" \
+            --build-env-json "$BUILD_ENV" \
+            --build-pip-args-json "$BUILD_PIP_ARGS" \
+            --native-modules-json "$NATIVE_MODULES" \
+            --runtime-modules-json "$RUNTIME_MODULES" \
+            --require-shared-library "$REQUIRE_SHARED_LIBRARY" \
+            --build-recipe-hash "$BUILD_RECIPE_HASH" \
+            --output te-fl-fingerprint.json
+          FINGERPRINT=$(python3 -c 'import json; print(json.load(open("te-fl-fingerprint.json"))["fingerprint"])')
+          echo "fingerprint=$FINGERPRINT" >> "$GITHUB_OUTPUT"
+
+      - name: Set cache key
+        id: key
+        env:
+          PLATFORM: ${{ inputs.platform }}
+          FINGERPRINT: ${{ steps.fingerprint.outputs.fingerprint }}
+        run: echo "key=te-fl-native-${PLATFORM}-${FINGERPRINT}" >> "$GITHUB_OUTPUT"
+
+      - name: Restore native artifact
+        id: cache
+        uses: actions/cache/restore@v4
+        with:
+          path: te-fl-native
+          key: ${{ steps.key.outputs.key }}
+
+      - name: Build native artifact on cache miss
+        if: steps.cache.outputs.cache-hit != 'true'
+        env:
+          PLATFORM: ${{ inputs.platform }}
+          NATIVE_MODE: ${{ inputs.native_mode }}
+          BASE_IMAGE_REF: ${{ inputs.image }}
+          TE_FL_REPO: ${{ github.workspace }}/te-fl
+          TE_FL_COMMIT: ${{ steps.resolve.outputs.commit }}
+          NATIVE_FINGERPRINT: ${{ steps.fingerprint.outputs.fingerprint }}
+          OUTPUT_DIR: ${{ github.workspace }}/te-fl-native
+          BUILD_ENV_JSON: ${{ inputs.build_env }}
+          BUILD_PIP_ARGS_JSON: ${{ inputs.build_pip_args }}
+          NATIVE_MODULES_JSON: ${{ inputs.native_modules }}
+          TARGET_ARCH: ${{ inputs.target_arch }}
+          FINGERPRINT_MANIFEST: ${{ github.workspace }}/te-fl-fingerprint.json
+          REQUIRE_SHARED_LIBRARY: ${{ inputs.require_shared_library }}
+        run: bash .github/docker/build_te_fl_native.sh
+
+      - name: Verify native artifact
+        env:
+          EXPECTED_PLATFORM: ${{ inputs.platform }}
+          EXPECTED_FINGERPRINT: ${{ steps.fingerprint.outputs.fingerprint }}
+        run: |
+          set -euo pipefail
+          test -f te-fl-native/manifest.json
+          test -f te-fl-native/checksums.txt
+          (cd te-fl-native && sha256sum -c checksums.txt)
+          python3 - "$EXPECTED_PLATFORM" "$EXPECTED_FINGERPRINT" <<'PY'
+          import json
+          import sys
+          manifest = json.load(open("te-fl-native/manifest.json"))
+          expected = {
+              "platform": sys.argv[1],
+              "native_source_fingerprint": sys.argv[2],
+          }
+          for key, value in expected.items():
+              if manifest.get(key) != value:
+                  raise SystemExit(f"artifact manifest mismatch for {key}: {manifest.get(key)!r}")
+          fingerprint = json.load(open("te-fl-native/fingerprint.json"))
+          if fingerprint.get("fingerprint") != sys.argv[2]:
+              raise SystemExit("cached fingerprint manifest does not match cache key")
+          for record in manifest.get("files", []):
+              path = __import__("pathlib").Path("te-fl-native") / record["filename"]
+              if not path.is_file() or path.stat().st_size != record["size"]:
+                  raise SystemExit(f"artifact file mismatch: {path}")
+          PY
+
+      - name: Install current TE-FL runtime
+        env:
+          PLATFORM: ${{ inputs.platform }}
+          TE_FL_SOURCE: ${{ github.workspace }}/te-fl
+          TE_FL_PYTHON_COMMIT: ${{ steps.resolve.outputs.commit }}
+          TE_FL_NATIVE_DIR: ${{ github.workspace }}/te-fl-native
+          TE_FL_NATIVE_FINGERPRINT: ${{ steps.fingerprint.outputs.fingerprint }}
+          TE_FL_RUNTIME_ENV_JSON: ${{ inputs.runtime_env }}
+          TE_FL_INSTALL_PIP_ARGS_JSON: ${{ inputs.install_pip_args }}
+        run: .github/scripts/install_te_fl_runtime.sh
+
+      - name: Verify current TE-FL runtime
+        env:
+          TE_FL_PLATFORM: ${{ inputs.platform }}
+          TE_FL_EXPECTED_COMMIT: ${{ steps.resolve.outputs.commit }}
+          TE_FL_EXPECTED_FINGERPRINT: ${{ steps.fingerprint.outputs.fingerprint }}
+          TE_FL_NATIVE_MODULE: ${{ inputs.native_module }}
+          TE_FL_DEVICE_MODULE: ${{ inputs.device_module }}
+          TE_FL_BOOTSTRAP_MODULES_JSON: ${{ inputs.bootstrap_modules }}
+          TE_FL_EXPECTED_BACKEND: ${{ inputs.expected_backend }}
+          TE_FL_RUNTIME_ENV_JSON: ${{ inputs.runtime_env }}
+          TE_FL_SOURCE_ROOT: ${{ github.workspace }}/te-fl
+        run: |
+          set -euo pipefail
+          python3 .github/scripts/verify_te_fl_runtime_strict.py \
+            --platform "$TE_FL_PLATFORM" \
+            --expected-commit "$TE_FL_EXPECTED_COMMIT" \
+            --expected-fingerprint "$TE_FL_EXPECTED_FINGERPRINT" \
+            --native-module "$TE_FL_NATIVE_MODULE" \
+            --device-module "$TE_FL_DEVICE_MODULE" \
+            --bootstrap-modules-json "$TE_FL_BOOTSTRAP_MODULES_JSON" \
+            --expected-backend "$TE_FL_EXPECTED_BACKEND" \
+            --runtime-env-json "$TE_FL_RUNTIME_ENV_JSON" \
+            --source-root "$TE_FL_SOURCE_ROOT"
+        timeout-minutes: 5
+
+      - name: Save native artifact
+        if: steps.cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: te-fl-native
+          key: ${{ steps.key.outputs.key }}

@@ -17,6 +17,11 @@ on:
         type: boolean
         default: true
         description: Whether to run functional tests in this workflow
+      prepare_te_fl_only:
+        required: false
+        type: boolean
+        default: false
+        description: Resolve TE-FL main and prepare its native cache without running tests
       image_override:
         required: false
         type: string
@@ -27,6 +32,11 @@ on:
         type: string
         default: ''
         description: 'Expected TE-FL commit SHA (40 hex chars) for verification'
+      te_fl_ref:
+        required: false
+        type: string
+        default: ''
+        description: 'TransformerEngine-FL branch or immutable commit'
 
 jobs:
   checkout_and_config:
@@ -44,10 +54,28 @@ jobs:
       device_types: ${{ steps.config.outputs.device_types }}
       setup_script: ${{ steps.config.outputs.setup_script }}
       unit_nproc_per_node: ${{ steps.config.outputs.unit_nproc_per_node }}
+      te_fl_prepare_nproc_per_node: ${{ steps.config.outputs.te_fl_prepare_nproc_per_node }}
       train_test_matrix: ${{ steps.config.outputs.train_test_matrix }}
       unit_test_groups: ${{ steps.config.outputs.unit_test_groups }}
       unit_pytest_extra_args: ${{ steps.config.outputs.unit_pytest_extra_args }}
       ignored_tests: ${{ steps.config.outputs.ignored_tests }}
+      te_fl_ref: ${{ steps.config.outputs.te_fl_ref }}
+      te_fl_mode: ${{ steps.config.outputs.te_fl_mode }}
+      te_fl_target_arch: ${{ steps.config.outputs.te_fl_target_arch }}
+      te_fl_compiler: ${{ steps.config.outputs.te_fl_compiler }}
+      te_fl_require_shared_library: ${{ steps.config.outputs.te_fl_require_shared_library }}
+      te_fl_source_paths: ${{ steps.config.outputs.te_fl_source_paths }}
+      te_fl_build_files: ${{ steps.config.outputs.te_fl_build_files }}
+      te_fl_build_env: ${{ steps.config.outputs.te_fl_build_env }}
+      te_fl_build_pip_args: ${{ steps.config.outputs.te_fl_build_pip_args }}
+      te_fl_install_pip_args: ${{ steps.config.outputs.te_fl_install_pip_args }}
+      te_fl_native_modules: ${{ steps.config.outputs.te_fl_native_modules }}
+      te_fl_runtime_modules: ${{ steps.config.outputs.te_fl_runtime_modules }}
+      te_fl_bootstrap_modules: ${{ steps.config.outputs.te_fl_bootstrap_modules }}
+      te_fl_device_module: ${{ steps.config.outputs.te_fl_device_module }}
+      te_fl_native_module: ${{ steps.config.outputs.te_fl_native_module }}
+      te_fl_expected_backend: ${{ steps.config.outputs.te_fl_expected_backend }}
+      te_fl_runtime_env: ${{ steps.config.outputs.te_fl_runtime_env }}
     steps:
       - name: Checkout source code
         uses: actions/checkout@v4
@@ -94,13 +122,6 @@ jobs:
               exit 1
             fi
 
-            # If image_override provided, expected_te_fl_commit is REQUIRED
-            if [[ -z "${EXPECTED_COMMIT}" ]]; then
-              echo "::error::expected_te_fl_commit is required when image_override is provided"
-              echo "::error::Cannot verify TE-FL provenance without expected commit"
-              exit 1
-            fi
-
             CI_IMAGE="${IMAGE_OVERRIDE}"
             echo "Using image override: ${CI_IMAGE}"
           else
@@ -117,6 +138,7 @@ jobs:
         id: config
         env:
           PLATFORM: ${{ inputs.platform }}
+          TE_FL_REF_OVERRIDE: ${{ inputs.te_fl_ref }}
         run: |
           set -euo pipefail
 
@@ -156,6 +178,7 @@ jobs:
 
           # Read the complete unit-test contract from the platform configuration.
           UNIT_NPROC_PER_NODE=$(yq '.test_matrix.unit.nproc_per_node // ""' "$CONFIG_FILE")
+          PREPARE_NPROC_PER_NODE=$(yq '.test_matrix.unit.nproc_per_node // .test_matrix.functional.train[0].gpus_per_node // ""' "$CONFIG_FILE")
           UNIT_TEST_GROUPS=$(yq '.test_matrix.unit.groups // [] | tojson(0)' "$CONFIG_FILE")
           UNIT_PYTEST_EXTRA_ARGS=$(yq '.test_matrix.unit.pytest_extra_args // [] | tojson(0)' "$CONFIG_FILE")
           IGNORED_TESTS=$(yq '.test_matrix.unit.ignored_tests // [] | tojson(0)' "$CONFIG_FILE")
@@ -168,14 +191,106 @@ jobs:
             echo "::error::test_matrix.unit.nproc_per_node must be a positive integer"
             exit 1
           fi
+          if { [ "${{ inputs.run_unit_tests }}" = "true" ] || \
+               [ "${{ inputs.run_functional_tests }}" = "true" ] || \
+               [ "${{ inputs.prepare_te_fl_only }}" = "true" ]; } && \
+             ! [[ "$PREPARE_NPROC_PER_NODE" =~ ^[1-9][0-9]*$ ]]; then
+            echo "::error::TE-FL prepare requires a positive process count"
+            exit 1
+          fi
           echo "unit_nproc_per_node=$UNIT_NPROC_PER_NODE" >> $GITHUB_OUTPUT
+          echo "te_fl_prepare_nproc_per_node=$PREPARE_NPROC_PER_NODE" >> $GITHUB_OUTPUT
           echo "unit_test_groups=$UNIT_TEST_GROUPS" >> $GITHUB_OUTPUT
           echo "unit_pytest_extra_args=$UNIT_PYTEST_EXTRA_ARGS" >> $GITHUB_OUTPUT
           echo "ignored_tests=$IGNORED_TESTS" >> $GITHUB_OUTPUT
 
+          TE_FL_REF="$TE_FL_REF_OVERRIDE"
+          if [ -z "$TE_FL_REF" ]; then
+            TE_FL_REF=$(yq -r '.te_fl.ref // "main"' "$CONFIG_FILE")
+          fi
+          TE_FL_MODE=$(yq -r '.te_fl.native.mode // ""' "$CONFIG_FILE")
+          TE_FL_TARGET_ARCH=$(yq -r '.te_fl.native.target_arch // ""' "$CONFIG_FILE")
+          TE_FL_COMPILER=$(yq -r '.te_fl.native.compiler // ""' "$CONFIG_FILE")
+          TE_FL_REQUIRE_SHARED_LIBRARY=$(yq -r '.te_fl.native.require_shared_library // false' "$CONFIG_FILE")
+          TE_FL_SOURCE_PATHS=$(yq -o=json -I=0 '.te_fl.native.source_paths // []' "$CONFIG_FILE")
+          TE_FL_BUILD_FILES=$(yq -o=json -I=0 '.te_fl.native.build_files // []' "$CONFIG_FILE")
+          TE_FL_BUILD_ENV=$(yq -o=json -I=0 '.te_fl.native.environment // {}' "$CONFIG_FILE")
+          TE_FL_BUILD_PIP_ARGS=$(yq -o=json -I=0 '.te_fl.native.build_pip_args // []' "$CONFIG_FILE")
+          TE_FL_INSTALL_PIP_ARGS=$(yq -o=json -I=0 '.te_fl.runtime.install_pip_args // []' "$CONFIG_FILE")
+          TE_FL_NATIVE_MODULES=$(yq -o=json -I=0 '[.te_fl.runtime.native_module] | map(select(. != null and . != ""))' "$CONFIG_FILE")
+          TE_FL_RUNTIME_MODULES=$(yq -o=json -I=0 '.te_fl.native.runtime_modules // []' "$CONFIG_FILE")
+          TE_FL_BOOTSTRAP_MODULES=$(yq -o=json -I=0 '.te_fl.runtime.bootstrap_modules // []' "$CONFIG_FILE")
+          TE_FL_DEVICE_MODULE=$(yq -r '.te_fl.runtime.device_module // ""' "$CONFIG_FILE")
+          TE_FL_NATIVE_MODULE=$(yq -r '.te_fl.runtime.native_module // ""' "$CONFIG_FILE")
+          TE_FL_EXPECTED_BACKEND=$(yq -r '.te_fl.runtime.expected_backend // ""' "$CONFIG_FILE")
+          TE_FL_RUNTIME_ENV=$(yq -o=json -I=0 '.te_fl.runtime.environment // {}' "$CONFIG_FILE")
+          for pair in \
+            "te_fl_ref=$TE_FL_REF" \
+            "te_fl_mode=$TE_FL_MODE" \
+            "te_fl_target_arch=$TE_FL_TARGET_ARCH" \
+            "te_fl_compiler=$TE_FL_COMPILER" \
+            "te_fl_require_shared_library=$TE_FL_REQUIRE_SHARED_LIBRARY" \
+            "te_fl_source_paths=$TE_FL_SOURCE_PATHS" \
+            "te_fl_build_files=$TE_FL_BUILD_FILES" \
+            "te_fl_build_env=$TE_FL_BUILD_ENV" \
+            "te_fl_build_pip_args=$TE_FL_BUILD_PIP_ARGS" \
+            "te_fl_install_pip_args=$TE_FL_INSTALL_PIP_ARGS" \
+            "te_fl_native_modules=$TE_FL_NATIVE_MODULES" \
+            "te_fl_runtime_modules=$TE_FL_RUNTIME_MODULES" \
+            "te_fl_bootstrap_modules=$TE_FL_BOOTSTRAP_MODULES" \
+            "te_fl_device_module=$TE_FL_DEVICE_MODULE" \
+            "te_fl_native_module=$TE_FL_NATIVE_MODULE" \
+            "te_fl_expected_backend=$TE_FL_EXPECTED_BACKEND" \
+            "te_fl_runtime_env=$TE_FL_RUNTIME_ENV"; do
+            echo "$pair" >> "$GITHUB_OUTPUT"
+          done
+
+          if [ -z "$TE_FL_MODE" ] || [ -z "$TE_FL_TARGET_ARCH" ] || [ -z "$TE_FL_COMPILER" ] || \
+             [ -z "$TE_FL_DEVICE_MODULE" ] || [ -z "$TE_FL_NATIVE_MODULE" ] || \
+             [ -z "$TE_FL_EXPECTED_BACKEND" ] || [ "$TE_FL_BUILD_ENV" = "{}" ] || \
+             [ "$TE_FL_RUNTIME_ENV" = "{}" ] || \
+             [ "$TE_FL_RUNTIME_MODULES" = "[]" ] || \
+             ! [[ "$TE_FL_REQUIRE_SHARED_LIBRARY" =~ ^(true|false)$ ]]; then
+            echo "::error::incomplete te_fl contract in $CONFIG_FILE"
+            exit 1
+          fi
+
       
+  te_fl_prepare:
+    name: te_fl_prepare
+    if: inputs.run_unit_tests || inputs.run_functional_tests || inputs.prepare_te_fl_only
+    needs: checkout_and_config
+    uses: ./.github/workflows/prepare_te_fl.yml
+    with:
+      platform: ${{ inputs.platform }}
+      image: ${{ needs.checkout_and_config.outputs.ci_image }}
+      runs_on: ${{ needs.checkout_and_config.outputs.runs_on }}
+      container_volumes: ${{ needs.checkout_and_config.outputs.container_volumes }}
+      container_options: ${{ needs.checkout_and_config.outputs.container_options }}
+      setup_script: ${{ needs.checkout_and_config.outputs.setup_script }}
+      nproc_per_node: ${{ needs.checkout_and_config.outputs.te_fl_prepare_nproc_per_node }}
+      te_fl_ref: ${{ needs.checkout_and_config.outputs.te_fl_ref }}
+      native_mode: ${{ needs.checkout_and_config.outputs.te_fl_mode }}
+      target_arch: ${{ needs.checkout_and_config.outputs.te_fl_target_arch }}
+      compiler: ${{ needs.checkout_and_config.outputs.te_fl_compiler }}
+      require_shared_library: ${{ needs.checkout_and_config.outputs.te_fl_require_shared_library }}
+      source_paths: ${{ needs.checkout_and_config.outputs.te_fl_source_paths }}
+      build_files: ${{ needs.checkout_and_config.outputs.te_fl_build_files }}
+      build_env: ${{ needs.checkout_and_config.outputs.te_fl_build_env }}
+      build_pip_args: ${{ needs.checkout_and_config.outputs.te_fl_build_pip_args }}
+      native_modules: ${{ needs.checkout_and_config.outputs.te_fl_native_modules }}
+      runtime_modules: ${{ needs.checkout_and_config.outputs.te_fl_runtime_modules }}
+      bootstrap_modules: ${{ needs.checkout_and_config.outputs.te_fl_bootstrap_modules }}
+      native_module: ${{ needs.checkout_and_config.outputs.te_fl_native_module }}
+      device_module: ${{ needs.checkout_and_config.outputs.te_fl_device_module }}
+      expected_backend: ${{ needs.checkout_and_config.outputs.te_fl_expected_backend }}
+      runtime_env: ${{ needs.checkout_and_config.outputs.te_fl_runtime_env }}
+      install_pip_args: ${{ needs.checkout_and_config.outputs.te_fl_install_pip_args }}
+      expected_te_fl_commit: ${{ needs.checkout_and_config.outputs.expected_te_fl_commit }}
+
   lint:
     name: lint
+    if: ${{ !inputs.prepare_te_fl_only }}
     needs: 
       - checkout_and_config
     uses: ./.github/workflows/lint_common.yml
@@ -185,6 +300,7 @@ jobs:
     if: inputs.run_unit_tests
     needs: 
       - checkout_and_config
+      - te_fl_prepare
       - lint
     strategy:
       fail-fast: false
@@ -203,7 +319,15 @@ jobs:
       nproc_per_node: ${{ needs.checkout_and_config.outputs.unit_nproc_per_node }}
       pytest_extra_args: ${{ needs.checkout_and_config.outputs.unit_pytest_extra_args }}
       ignored_tests: ${{ needs.checkout_and_config.outputs.ignored_tests }}
-      expected_te_fl_commit: ${{ needs.checkout_and_config.outputs.expected_te_fl_commit }}
+      te_fl_commit: ${{ needs.te_fl_prepare.outputs.te_fl_commit }}
+      te_fl_native_fingerprint: ${{ needs.te_fl_prepare.outputs.native_fingerprint }}
+      te_fl_cache_key: ${{ needs.te_fl_prepare.outputs.cache_key }}
+      te_fl_native_module: ${{ needs.checkout_and_config.outputs.te_fl_native_module }}
+      te_fl_device_module: ${{ needs.checkout_and_config.outputs.te_fl_device_module }}
+      te_fl_bootstrap_modules: ${{ needs.checkout_and_config.outputs.te_fl_bootstrap_modules }}
+      te_fl_expected_backend: ${{ needs.checkout_and_config.outputs.te_fl_expected_backend }}
+      te_fl_runtime_env: ${{ needs.checkout_and_config.outputs.te_fl_runtime_env }}
+      te_fl_install_pip_args: ${{ needs.checkout_and_config.outputs.te_fl_install_pip_args }}
 
   unit_tests_complete:
     name: unit_tests_complete
@@ -233,9 +357,11 @@ jobs:
       inputs.run_functional_tests &&
       needs.checkout_and_config.result == 'success' &&
       needs.lint.result == 'success' &&
-      needs.unit_tests_complete.result == 'success'
+      needs.unit_tests_complete.result == 'success' &&
+      needs.te_fl_prepare.result == 'success'
     needs:
       - checkout_and_config
+      - te_fl_prepare
       - lint
       - unit_tests_complete
     strategy:
@@ -252,7 +378,15 @@ jobs:
       container_options: ${{ needs.checkout_and_config.outputs.container_options }}
       setup_script: ${{ needs.checkout_and_config.outputs.setup_script }}
       test_matrix: ${{ needs.checkout_and_config.outputs.train_test_matrix }}
-      expected_te_fl_commit: ${{ needs.checkout_and_config.outputs.expected_te_fl_commit }}
+      te_fl_commit: ${{ needs.te_fl_prepare.outputs.te_fl_commit }}
+      te_fl_native_fingerprint: ${{ needs.te_fl_prepare.outputs.native_fingerprint }}
+      te_fl_cache_key: ${{ needs.te_fl_prepare.outputs.cache_key }}
+      te_fl_native_module: ${{ needs.checkout_and_config.outputs.te_fl_native_module }}
+      te_fl_device_module: ${{ needs.checkout_and_config.outputs.te_fl_device_module }}
+      te_fl_bootstrap_modules: ${{ needs.checkout_and_config.outputs.te_fl_bootstrap_modules }}
+      te_fl_expected_backend: ${{ needs.checkout_and_config.outputs.te_fl_expected_backend }}
+      te_fl_runtime_env: ${{ needs.checkout_and_config.outputs.te_fl_runtime_env }}
+      te_fl_install_pip_args: ${{ needs.checkout_and_config.outputs.te_fl_install_pip_args }}
 
   functional_tests_complete:
     name: functional_tests_complete
@@ -275,6 +409,7 @@ jobs:
         shell: bash
     needs:
       - checkout_and_config
+      - te_fl_prepare
       - lint
       - unit_tests_complete
       - functional_tests_complete
@@ -289,6 +424,12 @@ jobs:
           if [ "${{ needs.lint.result }}" != "success" ] && \
             [ "${{ needs.lint.result }}" != "skipped" ]; then
             echo "❌ Lint failed"
+            failed=true
+          fi
+
+          if [ "${{ needs.te_fl_prepare.result }}" != "success" ] && \
+            [ "${{ needs.te_fl_prepare.result }}" != "skipped" ]; then
+            echo "❌ TE-FL prepare failed or cancelled: ${{ needs.te_fl_prepare.result }}"
             failed=true
           fi
 

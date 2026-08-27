@@ -164,3 +164,43 @@ test_matrix:
         golden_platform: dgx_a100
         enable_lightweight_mode: false
         gpus_per_node: 4
+
+# TE-FL (TransformerEngine-FL) native build configuration
+te_fl:
+  ref: main
+
+  # Native build configuration
+  native:
+    mode: source
+    source_paths: [transformer_engine]
+    build_files: [setup.py, pyproject.toml, CMakeLists.txt, build_tools]
+    runtime_modules: [torch]
+    require_shared_library: true
+    target_arch: sm_80
+
+    # Environment used while fingerprinting and building TE-FL native code.
+    environment:
+      NVTE_FRAMEWORK: pytorch
+      NVTE_WITH_USERBUFFERS: "0"
+      NVTE_WITH_CUDA: "1"
+      CMAKE_CUDA_ARCHITECTURES: "80"
+      TORCH_CUDA_ARCH_LIST: "8.0"
+    build_pip_args: []
+
+    # Compiler information
+    compiler: nvcc
+
+  # Runtime verification configuration
+  runtime:
+    # Expected TE-FL backend implementation
+    expected_backend: vendor.cuda
+
+    # Device API module for verification
+    device_module: torch.cuda
+    bootstrap_modules: []
+
+    # Installed TE-FL package module
+    native_module: transformer_engine
+    environment:
+      TE_FL_PREFER: vendor
+    install_pip_args: []

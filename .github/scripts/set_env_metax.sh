@@ -54,6 +54,7 @@ setup_unit_environment() {
 
 setup_build_environment() {
   ci_activate_python_environment
+  setup_metax_toolchain
   ci_install_project
   validate_metax_capacity
 }

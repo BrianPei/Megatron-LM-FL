@@ -24,6 +24,41 @@ ci_export_env() {
   fi
 }
 
+ci_apply_env_json() {
+  local environment_json="$1"
+  local entries
+  local name
+  local value
+
+  if ! entries=$(python3 - "$environment_json" <<'PY'
+import json
+import re
+import sys
+
+values = json.loads(sys.argv[1])
+if not isinstance(values, dict) or not values:
+    raise SystemExit("environment must be a non-empty JSON object")
+for key, value in values.items():
+    if not isinstance(key, str) or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key):
+        raise SystemExit(f"invalid environment variable name: {key!r}")
+    if not isinstance(value, (str, int, float, bool)):
+        raise SystemExit(f"environment value must be scalar: {key}")
+    text = str(value)
+    if any(character in text for character in ("\n", "\r", "\t")):
+        raise SystemExit(f"environment value contains unsupported control characters: {key}")
+    print(f"{key}\t{text}")
+PY
+  ); then
+    echo "::error::Invalid environment JSON" >&2
+    return 1
+  fi
+
+  while IFS=$'\t' read -r name value; do
+    [ -n "$name" ] || continue
+    ci_export_env "$name" "$value"
+  done <<< "$entries"
+}
+
 ci_activate_python_environment() {
   if [ -f /opt/conda/etc/profile.d/conda.sh ]; then
     source /opt/conda/etc/profile.d/conda.sh

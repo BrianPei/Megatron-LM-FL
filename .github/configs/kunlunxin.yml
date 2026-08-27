@@ -318,3 +318,42 @@ test_matrix:
       #  enable_lightweight_mode: false
       #  data_cache_path: /tmp/megatron-data-cache
       #  gpus_per_node: 4
+
+# TE-FL (TransformerEngine-FL) native build configuration
+te_fl:
+  ref: main
+
+  # Native build configuration
+  native:
+    mode: source
+    source_paths: [transformer_engine]
+    build_files: [setup.py, pyproject.toml, CMakeLists.txt, build_tools]
+    runtime_modules: [torch, torch_xmlir]
+    require_shared_library: false
+    target_arch: kunlun2
+
+    # XMLIR exposes a CUDA-compatible API; skip NVIDIA and use FlagOS kernels.
+    environment:
+      NVTE_FRAMEWORK: pytorch
+      NVTE_WITH_USERBUFFERS: "0"
+      TE_FL_SKIP_CUDA: "1"
+    build_pip_args: [--ignore-requires-python]
+
+    # Compiler information
+    compiler: gcc
+
+  # Runtime verification configuration
+  runtime:
+    # Expected TE-FL backend implementation
+    expected_backend: default.flagos
+
+    # Device API module for verification
+    device_module: torch.cuda  # Kunlunxin uses torch.cuda API
+    bootstrap_modules: [torch_xmlir]
+
+    # Installed TE-FL package module
+    native_module: transformer_engine
+    environment:
+      TE_FL_SKIP_CUDA: "1"
+      TE_FL_PREFER: flagos
+    install_pip_args: [--ignore-requires-python]

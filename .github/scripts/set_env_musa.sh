@@ -118,6 +118,7 @@ setup_build_environment() {
   ci_activate_python_environment
   configure_musa_runtime
   ci_install_project --ignore-requires-python
+  install_musa_compatibility_layer
   validate_musa_capacity
 }
 

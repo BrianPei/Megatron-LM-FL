@@ -1,0 +1,31 @@
+name: daily
+
+on:
+  schedule:
+    - cron: '0 18 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: te-fl-daily-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  prepare:
+    name: prepare-${{ matrix.platform }}
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - cuda
+          - musa
+          - ascend
+          - metax
+          - hygon
+          - kunlunxin
+          - enflame
+    uses: ./.github/workflows/all_tests_common.yml
+    with:
+      platform: ${{ matrix.platform }}
+      run_unit_tests: false
+      run_functional_tests: false
+      prepare_te_fl_only: true

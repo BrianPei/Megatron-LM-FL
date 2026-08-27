@@ -31,11 +31,33 @@ on:
         required: true
         type: string
         description: JSON array of test configurations
-      expected_te_fl_commit:
-        required: false
+      te_fl_commit:
+        required: true
         type: string
-        default: ''
-        description: Expected TE-FL commit SHA for runtime verification
+      te_fl_native_fingerprint:
+        required: true
+        type: string
+      te_fl_cache_key:
+        required: true
+        type: string
+      te_fl_native_module:
+        required: true
+        type: string
+      te_fl_device_module:
+        required: true
+        type: string
+      te_fl_bootstrap_modules:
+        required: true
+        type: string
+      te_fl_expected_backend:
+        required: true
+        type: string
+      te_fl_runtime_env:
+        required: true
+        type: string
+      te_fl_install_pip_args:
+        required: true
+        type: string
 
 jobs:
   functional_test_train:
@@ -87,6 +109,7 @@ jobs:
           CI_TEST_SUITE: functional
           CI_NPROC_PER_NODE: ${{ matrix.test_config.gpus_per_node }}
           MEGATRON_CI_IMAGE: ${{ inputs.image }}
+          TE_FL_RUNTIME_ENV_JSON: ${{ inputs.te_fl_runtime_env }}
         run: |
           set -euo pipefail
 
@@ -100,25 +123,68 @@ jobs:
             exit 1
           fi
 
+          source "$GITHUB_WORKSPACE/.github/scripts/set_env_common.sh"
+          ci_apply_env_json "$TE_FL_RUNTIME_ENV_JSON"
           bash "$GITHUB_WORKSPACE/$SETUP_SCRIPT"
         timeout-minutes: 30
 
-      - name: Verify TE-FL runtime
-        if: inputs.expected_te_fl_commit != ''
+      - name: Checkout TransformerEngine-FL
+        uses: actions/checkout@v4
+        with:
+          repository: FlagOpen/TransformerEngine-FL
+          ref: ${{ inputs.te_fl_commit }}
+          path: te-fl
+          fetch-depth: 0
+
+      - name: Restore TE-FL native artifact
+        id: te_fl_cache
+        uses: actions/cache/restore@v4
+        with:
+          path: te-fl-native
+          key: ${{ inputs.te_fl_cache_key }}
+
+      - name: Require TE-FL native cache hit
+        if: steps.te_fl_cache.outputs.cache-hit != 'true'
+        run: |
+          echo "::error::TE-FL native artifact was not restored: ${{ inputs.te_fl_cache_key }}"
+          exit 1
+
+      - name: Install TE-FL runtime
         working-directory: ${{ github.workspace }}
         env:
-          MEGATRON_CI_IMAGE: ${{ inputs.image }}
-          EXPECTED_TE_FL_COMMIT: ${{ inputs.expected_te_fl_commit }}
+          PLATFORM: ${{ inputs.platform }}
+          TE_FL_SOURCE: ${{ github.workspace }}/te-fl
+          TE_FL_PYTHON_COMMIT: ${{ inputs.te_fl_commit }}
+          TE_FL_NATIVE_DIR: ${{ github.workspace }}/te-fl-native
+          TE_FL_NATIVE_FINGERPRINT: ${{ inputs.te_fl_native_fingerprint }}
+          TE_FL_RUNTIME_ENV_JSON: ${{ inputs.te_fl_runtime_env }}
+          TE_FL_INSTALL_PIP_ARGS_JSON: ${{ inputs.te_fl_install_pip_args }}
+        run: .github/scripts/install_te_fl_runtime.sh
+
+      - name: Verify TE-FL runtime
+        working-directory: ${{ github.workspace }}
+        env:
           TE_FL_PLATFORM: ${{ inputs.platform }}
+          TE_FL_EXPECTED_COMMIT: ${{ inputs.te_fl_commit }}
+          TE_FL_EXPECTED_FINGERPRINT: ${{ inputs.te_fl_native_fingerprint }}
+          TE_FL_NATIVE_MODULE: ${{ inputs.te_fl_native_module }}
+          TE_FL_DEVICE_MODULE: ${{ inputs.te_fl_device_module }}
+          TE_FL_BOOTSTRAP_MODULES_JSON: ${{ inputs.te_fl_bootstrap_modules }}
+          TE_FL_EXPECTED_BACKEND: ${{ inputs.te_fl_expected_backend }}
+          TE_FL_RUNTIME_ENV_JSON: ${{ inputs.te_fl_runtime_env }}
+          TE_FL_SOURCE_ROOT: ${{ github.workspace }}/te-fl
         run: |
           set -euo pipefail
-
-          if [ ! -f ".github/scripts/verify_te_runtime.sh" ]; then
-            echo "::error::TE-FL runtime verification script not found: .github/scripts/verify_te_runtime.sh"
-            exit 1
-          fi
-
-          bash .github/scripts/verify_te_runtime.sh
+          python3 .github/scripts/verify_te_fl_runtime_strict.py \
+            --platform "$TE_FL_PLATFORM" \
+            --expected-commit "$TE_FL_EXPECTED_COMMIT" \
+            --expected-fingerprint "$TE_FL_EXPECTED_FINGERPRINT" \
+            --native-module "$TE_FL_NATIVE_MODULE" \
+            --device-module "$TE_FL_DEVICE_MODULE" \
+            --bootstrap-modules-json "$TE_FL_BOOTSTRAP_MODULES_JSON" \
+            --expected-backend "$TE_FL_EXPECTED_BACKEND" \
+            --runtime-env-json "$TE_FL_RUNTIME_ENV_JSON" \
+            --source-root "$TE_FL_SOURCE_ROOT"
         timeout-minutes: 5
 
       - name: Run functional tests

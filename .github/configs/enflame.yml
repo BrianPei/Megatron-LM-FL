@@ -343,3 +343,42 @@ test_matrix:
 
   functional:
     train: []
+
+# TE-FL (TransformerEngine-FL) native build configuration
+te_fl:
+  ref: main
+
+  # Native build configuration
+  native:
+    mode: source
+    source_paths: [transformer_engine]
+    build_files: [setup.py, pyproject.toml, CMakeLists.txt, build_tools]
+    runtime_modules: [torch, torch_gcu]
+    require_shared_library: false
+    target_arch: gcu210
+
+    # Enflame uses torch_gcu and must not probe/build the NVIDIA backend.
+    environment:
+      NVTE_FRAMEWORK: pytorch
+      NVTE_WITH_USERBUFFERS: "0"
+      TE_FL_SKIP_CUDA: "1"
+    build_pip_args: []
+
+    # Compiler information
+    compiler: gcc
+
+  # Runtime verification configuration
+  runtime:
+    # Expected TE-FL backend implementation
+    expected_backend: vendor.enflame
+
+    # Device API module for verification
+    device_module: torch.gcu
+    bootstrap_modules: [torch_gcu]
+
+    # Installed TE-FL package module
+    native_module: transformer_engine
+    environment:
+      TE_FL_SKIP_CUDA: "1"
+      TE_FL_PREFER: vendor
+    install_pip_args: [--break-system-packages]
