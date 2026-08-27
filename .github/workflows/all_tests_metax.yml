@@ -2,7 +2,7 @@ name: metax_tests
 
 on:
   push:
-    branches: ["main"]
+    branches: ["main","image_change"]
   pull_request:
     branches: ["main"]
   workflow_dispatch: # Allows manual triggering

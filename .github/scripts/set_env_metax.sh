@@ -12,6 +12,12 @@ validate_metax_capacity() {
   ci_validate_device_capacity "$device_count"
 }
 
+configure_metax_runtime() {
+  ci_export_env TE_FL_SKIP_CUDA 1
+  ci_export_env TE_FL_PREFER vendor
+  validate_metax_capacity
+}
+
 setup_metax_toolchain() {
   local bridge_bin=/opt/maca/tools/cu-bridge/bin
   local cucc_path="$bridge_bin/cucc"
@@ -49,13 +55,13 @@ setup_unit_environment() {
 
   echo "Skipping NVIDIA CUPTI dependencies on MetaX."
   ci_install_project
-  validate_metax_capacity
+  configure_metax_runtime
 }
 
 setup_build_environment() {
   ci_activate_python_environment
   ci_install_project
-  validate_metax_capacity
+  configure_metax_runtime
 }
 
 ci_require_env CI_TEST_SUITE
@@ -68,7 +74,7 @@ case "$CI_TEST_SUITE" in
     ci_install_local_tokenizer_dependencies
     ci_validate_qwen_assets /home/gitlab-runner/data /home/gitlab-runner/tokenizers
     setup_metax_toolchain
-    validate_metax_capacity
+    configure_metax_runtime
     ;;
   build)
     setup_build_environment
