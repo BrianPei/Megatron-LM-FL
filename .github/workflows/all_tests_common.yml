@@ -52,8 +52,7 @@ jobs:
       - name: Checkout source code
         uses: actions/checkout@v4
 
-      - name: Load platform configuration
-        id: config
+      - name: Setup environment
         run: |
           set -euo pipefail
 
@@ -110,6 +109,9 @@ jobs:
             echo "Using platform config image: ${CI_IMAGE}"
           fi
 
+          # Output resolved values
+          echo "ci_image=${CI_IMAGE}" >> "$GITHUB_OUTPUT"
+          echo "expected_te_fl_commit=${EXPECTED_COMMIT}" >> "$GITHUB_OUTPUT"
 
       - name: Read platform configuration
         id: config
