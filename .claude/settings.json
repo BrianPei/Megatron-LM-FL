@@ -1,0 +1,9 @@
+{
+  "description": "Megatron-LM-FL 项目配置 - 工作目录隔离",
+  "workingDirectory": "/Users/mahanting/Desktop/cicd/Megatron-LM-FL",
+  "context": {
+    "repository": "Megatron-LM-FL",
+    "role": "训练核心消费者 - 分布式 launcher、平台配置、单测/功能测试",
+    "isolation": "默认只读当前仓库，跨仓库操作需明确声明"
+  }
+}

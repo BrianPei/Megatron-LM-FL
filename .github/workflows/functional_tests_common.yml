@@ -112,8 +112,8 @@ jobs:
           set -euo pipefail
 
           if [ ! -f ".github/scripts/verify_te_runtime.sh" ]; then
-            echo "::warning::TE-FL runtime verification script not found, skipping"
-            exit 0
+            echo "::error::TE-FL runtime verification script not found: .github/scripts/verify_te_runtime.sh"
+            exit 1
           fi
 
           bash .github/scripts/verify_te_runtime.sh

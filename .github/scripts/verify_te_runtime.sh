@@ -10,10 +10,10 @@ set -euo pipefail
 # This script runs INSIDE the test container after platform setup to verify:
 # 1. The resolved container image
 # 2. transformer_engine installation and path
-# 3. Native extension presence
-# 4. TE-FL commit match (if expected)
-# 5. Platform/vendor implementation registration
-# 6. Actual operator backend selection
+# 3. Native extension presence (actual .so files)
+# 4. TE-FL commit match with provenance validation
+# 5. Platform/vendor implementation registration (explicit check)
+# 6. Actual operator backend selection (execution verification)
 # ==============================================================================
 
 EXIT_CODE=0
@@ -35,20 +35,15 @@ msg "==========================================="
 # ==============================================================================
 msg "1. Resolved Container Image"
 
-# Try to read from various sources
 if [[ -n "${MEGATRON_CI_IMAGE:-}" ]]; then
     msg "   Input image: ${MEGATRON_CI_IMAGE}"
+else
+    err "MEGATRON_CI_IMAGE not set"
 fi
 
 if [[ -f /etc/hostname ]]; then
     HOSTNAME=$(cat /etc/hostname)
     msg "   Hostname: ${HOSTNAME}"
-fi
-
-# Check for OCI labels if available
-if command -v skopeo &>/dev/null && [[ -n "${MEGATRON_CI_IMAGE:-}" ]]; then
-    IMAGE_DIGEST=$(skopeo inspect --no-creds "docker://${MEGATRON_CI_IMAGE}" 2>/dev/null | jq -r '.Digest // "unknown"' || echo "unknown")
-    msg "   Digest: ${IMAGE_DIGEST}"
 fi
 
 # ==============================================================================
@@ -69,166 +64,270 @@ except ImportError as e:
 PY
 
 # ==============================================================================
-# 3. Verify native extension
+# 3. Verify native extension (STRICT: must be actual .so file)
 # ==============================================================================
-msg "3. Native Extension"
+msg "3. Native Extension (strict .so check)"
 
-python3 - <<'PY' || { err "Native extension not found"; }
+python3 - <<'PY' || { err "Native extension (.so) not found or invalid"; }
 import sys
+import os
 
 native_found = False
 native_path = None
+native_module_name = None
 
-# Try common native module names
+# Try transformer_engine_torch first
 try:
     import transformer_engine_torch
-    native_found = True
     native_path = transformer_engine_torch.__file__
-    print(f"   Module: transformer_engine_torch")
-    print(f"   Path: {native_path}")
+    native_module_name = "transformer_engine_torch"
+    native_found = True
 except ImportError:
     pass
 
+# Try transformer_engine.pytorch as fallback
 if not native_found:
     try:
-        import transformer_engine.pytorch
-        native_found = True
-        native_path = transformer_engine.pytorch.__file__
-        print(f"   Module: transformer_engine.pytorch")
-        print(f"   Path: {native_path}")
-    except ImportError:
+        import transformer_engine.pytorch as te_pytorch
+        native_path = te_pytorch.__file__
+        native_module_name = "transformer_engine.pytorch"
+        # Verify it's not just a Python __init__.py
+        if native_path and os.path.isfile(native_path):
+            native_found = True
+    except (ImportError, AttributeError):
         pass
 
-if not native_found:
-    print("ERROR: No native extension found", file=sys.stderr)
-    print("   Tried: transformer_engine_torch, transformer_engine.pytorch", file=sys.stderr)
+if not native_found or not native_path:
+    print("ERROR: No native extension module found", file=sys.stderr)
+    sys.exit(1)
+
+# STRICT: Verify the path points to a native library (.so, .pyd, .dylib)
+native_extensions = ('.so', '.pyd', '.dylib')
+if not any(native_path.endswith(ext) for ext in native_extensions):
+    print(f"ERROR: Module path is not a native library: {native_path}", file=sys.stderr)
+    print(f"  Expected extensions: {native_extensions}", file=sys.stderr)
+    sys.exit(1)
+
+if not os.path.isfile(native_path):
+    print(f"ERROR: Native library file does not exist: {native_path}", file=sys.stderr)
+    sys.exit(1)
+
+print(f"   Module: {native_module_name}")
+print(f"   Path: {native_path}")
+print(f"   Verified: native library file exists")
+PY
+
+# ==============================================================================
+# 4. TE-FL Commit Verification with Provenance
+# ==============================================================================
+msg "4. TE-FL Commit Verification"
+
+if [[ -n "${EXPECTED_TE_FL_COMMIT:-}" ]]; then
+    # Expected commit provided, must verify
+
+    if [[ ! "${EXPECTED_TE_FL_COMMIT}" =~ ^[0-9a-f]{40}$ ]]; then
+        err "EXPECTED_TE_FL_COMMIT invalid format: ${EXPECTED_TE_FL_COMMIT} (expected 40 hex chars)"
+    fi
+
+    # Read commit from environment
+    ACTUAL_COMMIT="${TE_FL_COMMIT:-}"
+
+    if [[ -z "$ACTUAL_COMMIT" ]]; then
+        err "TE_FL_COMMIT environment variable not set, cannot verify commit"
+    elif [[ ! "$ACTUAL_COMMIT" =~ ^[0-9a-f]{40}$ ]]; then
+        err "TE_FL_COMMIT invalid format: ${ACTUAL_COMMIT}"
+    else
+        msg "   Expected commit: ${EXPECTED_TE_FL_COMMIT}"
+        msg "   Actual commit (env): ${ACTUAL_COMMIT}"
+
+        if [[ "$ACTUAL_COMMIT" == "$EXPECTED_TE_FL_COMMIT" ]]; then
+            msg "   Status: MATCH"
+        else
+            err "Commit mismatch: expected ${EXPECTED_TE_FL_COMMIT}, got ${ACTUAL_COMMIT}"
+        fi
+    fi
+
+    # Additional provenance check: verify TE-FL package metadata if available
+    python3 - <<'PY' || msg "   Warning: Could not read package metadata"
+import sys
+try:
+    import importlib.metadata
+    te_metadata = importlib.metadata.metadata('transformer-engine')
+    version = te_metadata.get('Version', 'unknown')
+    print(f"   Package version: {version}")
+except Exception:
+    # metadata not available, not fatal
+    pass
+PY
+
+else
+    msg "   No expected commit provided, skipping commit verification"
+    msg "   Note: TE_FL_COMMIT=${TE_FL_COMMIT:-not_set}"
+fi
+
+# ==============================================================================
+# 5. Platform/Vendor Implementation Registration (EXPLICIT CHECK)
+# ==============================================================================
+msg "5. Platform/Vendor Implementation Registration"
+
+python3 - <<'PY' || { err "Platform implementation not properly registered"; }
+import sys
+import os
+
+# Check TE_FL_PLATFORM environment variable
+platform = os.getenv("TE_FL_PLATFORM", "")
+if not platform:
+    print("ERROR: TE_FL_PLATFORM environment variable not set", file=sys.stderr)
+    sys.exit(1)
+
+print(f"   TE_FL_PLATFORM: {platform}")
+
+# Import TE and check for vendor backend registration
+try:
+    import transformer_engine as te
+
+    # Check if TE has implementation registry/manager
+    has_registry = False
+    registry_info = []
+
+    # Try to access TE-FL's implementation manager
+    if hasattr(te, 'impl_manager') or hasattr(te, 'implementation_manager'):
+        manager = getattr(te, 'impl_manager', None) or getattr(te, 'implementation_manager', None)
+        if manager:
+            has_registry = True
+            registry_info.append(f"Implementation manager found: {type(manager).__name__}")
+
+            # Try to get registered implementations
+            if hasattr(manager, 'get_registered_implementations'):
+                impls = manager.get_registered_implementations()
+                registry_info.append(f"Registered implementations: {impls}")
+            elif hasattr(manager, 'list_implementations'):
+                impls = manager.list_implementations()
+                registry_info.append(f"Registered implementations: {impls}")
+
+    # Alternative: check for backend/device manager
+    if hasattr(te, 'backend'):
+        backend = te.backend
+        registry_info.append(f"Backend module found: {backend}")
+        has_registry = True
+
+    # Check torch device availability as secondary indicator
+    import torch
+    device_available = torch.cuda.is_available()
+    device_count = torch.cuda.device_count() if device_available else 0
+
+    print(f"   Has implementation registry: {has_registry}")
+    if registry_info:
+        for info in registry_info:
+            print(f"   {info}")
+
+    print(f"   Torch device available: {device_available}")
+    print(f"   Device count: {device_count}")
+
+    # For non-CUDA platforms, require explicit vendor implementation
+    if platform.lower() != "cuda":
+        if not has_registry and not device_available:
+            print(f"ERROR: Platform '{platform}' requires vendor implementation, but no registry or devices found", file=sys.stderr)
+            sys.exit(1)
+        elif device_count == 0:
+            print(f"ERROR: Platform '{platform}' has no available devices", file=sys.stderr)
+            sys.exit(1)
+
+except ImportError as e:
+    print(f"ERROR: Failed to check implementation registration: {e}", file=sys.stderr)
     sys.exit(1)
 PY
 
 # ==============================================================================
-# 4. Check TE-FL commit (if expected value provided)
+# 6. Operator Backend Selection (EXECUTION VERIFICATION)
 # ==============================================================================
-msg "4. TE-FL Commit Verification"
+msg "6. Operator Backend Selection (execution verification)"
 
-EXPECTED_COMMIT="${EXPECTED_TE_FL_COMMIT:-}"
-
-if [[ -n "${EXPECTED_COMMIT}" ]]; then
-    msg "   Expected commit: ${EXPECTED_COMMIT}"
-
-    # Check environment variable
-    ACTUAL_COMMIT="${TE_FL_COMMIT:-}"
-
-    if [[ -z "${ACTUAL_COMMIT}" ]]; then
-        err "TE_FL_COMMIT environment variable not set"
-    elif [[ "${ACTUAL_COMMIT}" != "${EXPECTED_COMMIT}" ]]; then
-        err "TE-FL commit mismatch: expected ${EXPECTED_COMMIT}, got ${ACTUAL_COMMIT}"
-    else
-        msg "   Actual commit: ${ACTUAL_COMMIT} (MATCH)"
-    fi
-else
-    msg "   No expected commit provided (skipping verification)"
-    if [[ -n "${TE_FL_COMMIT:-}" ]]; then
-        msg "   Found TE_FL_COMMIT: ${TE_FL_COMMIT}"
-    fi
-fi
-
-# ==============================================================================
-# 5. Check platform/vendor implementation registration
-# ==============================================================================
-msg "5. Platform Implementation Registration"
-
-python3 - <<'PY' || { err "Failed to check platform registration"; }
-import sys
-import os
-
-platform = os.getenv("TE_FL_PLATFORM", "unknown")
-print(f"   TE_FL_PLATFORM: {platform}")
-
-# Try to introspect available backends
-try:
-    import transformer_engine.pytorch as te
-
-    # Check for common platform-specific attributes or modules
-    has_cuda = hasattr(te, 'fp8_autocast') or hasattr(te, 'DotProductAttention')
-    print(f"   Has TE operators: {has_cuda}")
-
-    # Try to detect vendor backend
-    try:
-        import torch
-        if torch.cuda.is_available():
-            device_count = torch.cuda.device_count()
-            device_name = torch.cuda.get_device_name(0) if device_count > 0 else "unknown"
-            print(f"   Torch CUDA available: True")
-            print(f"   Device count: {device_count}")
-            print(f"   Device name: {device_name}")
-        else:
-            print(f"   Torch CUDA available: False")
-    except Exception as e:
-        print(f"   Warning: Could not detect torch device: {e}")
-
-except Exception as e:
-    print(f"WARNING: Could not fully introspect platform: {e}", file=sys.stderr)
-PY
-
-# ==============================================================================
-# 6. Verify operator backend selection
-# ==============================================================================
-msg "6. Operator Backend Selection"
-
-python3 - <<'PY' || { err "Failed to verify operator backend"; }
+python3 - <<'PY' || { err "Operator backend selection failed or fallback to reference"; }
 import sys
 import os
 
 try:
     from transformer_engine.pytorch import Linear
+    print("   Linear operator imported successfully")
 
-    print(f"   Linear operator imported successfully")
+    # Instantiate the operator
+    layer = Linear(in_features=4, out_features=8)
+    print(f"   Linear layer instantiated: in_features=4, out_features=8")
 
-    # Try to instantiate (doesn't allocate device memory in constructor)
-    try:
-        layer = Linear(4, 8)
-        print(f"   Linear layer instantiated: in_features=4, out_features=8")
+    # Check the layer type and module
+    layer_type = type(layer).__name__
+    layer_module = type(layer).__module__
+    print(f"   Layer type: {layer_type}")
+    print(f"   Layer module: {layer_module}")
 
-        # Check if this is using vendor backend or falling back
-        layer_type = type(layer).__name__
-        layer_module = type(layer).__module__
-        print(f"   Layer type: {layer_module}.{layer_type}")
+    # CRITICAL: Detect reference.torch fallback
+    if 'reference' in layer_module.lower() or 'torch' in layer_module.lower():
+        # Check if this is actually a vendor implementation or just torch fallback
+        platform = os.getenv("TE_FL_PLATFORM", "").lower()
 
-        # Detect if using reference implementation
-        if "reference" in layer_module.lower() or "torch" in layer_module.lower():
-            print(f"   WARNING: May be using reference/torch fallback")
+        if platform and platform != "cuda":
+            # Non-CUDA platform should NOT use reference/torch backend
+            print(f"ERROR: Platform '{platform}' is using reference/torch backend: {layer_module}", file=sys.stderr)
+            print(f"  This indicates vendor implementation is not active", file=sys.stderr)
+            sys.exit(1)
 
-    except Exception as e:
-        print(f"   Warning: Could not instantiate layer: {e}")
+    # Try to execute a forward pass to confirm backend is functional
+    import torch
+    if torch.cuda.is_available():
+        device = torch.device('cuda:0')
+        try:
+            layer = layer.to(device)
+            x = torch.randn(2, 4, device=device)
+            y = layer(x)
+            print(f"   Forward pass successful: input shape {tuple(x.shape)} -> output shape {tuple(y.shape)}")
+            print("   Backend execution verified")
+        except Exception as e:
+            print(f"ERROR: Forward pass failed: {e}", file=sys.stderr)
+            sys.exit(1)
+    else:
+        print("   Warning: CUDA not available, skipping forward pass execution test")
 
 except ImportError as e:
     print(f"ERROR: Failed to import Linear operator: {e}", file=sys.stderr)
     sys.exit(1)
+except Exception as e:
+    print(f"ERROR: Operator instantiation or execution failed: {e}", file=sys.stderr)
+    sys.exit(1)
 PY
 
 # ==============================================================================
-# 7. Platform-specific checks
+# 7. Platform-Specific Checks
 # ==============================================================================
 msg "7. Platform-Specific Checks"
 
 PLATFORM="${TE_FL_PLATFORM:-unknown}"
 msg "   Platform: ${PLATFORM}"
 
-case "${PLATFORM}" in
+case "${PLATFORM,,}" in
     cuda)
-        python3 -c "import torch; print(f'   CUDA version: {torch.version.cuda}')" 2>/dev/null || true
+        python3 - <<'PY' || msg "   Warning: CUDA check failed"
+import torch
+if torch.cuda.is_available():
+    print(f"   CUDA available: True")
+    print(f"   CUDA version: {torch.version.cuda}")
+    print(f"   Device count: {torch.cuda.device_count()}")
+else:
+    print("   CUDA available: False")
+PY
         ;;
     musa)
-        python3 -c "import torch_musa; print(f'   MUSA available: {torch_musa.is_available()}')" 2>/dev/null || msg "   (torch_musa not available)"
-        ;;
-    ascend)
-        python3 -c "import torch_npu; print(f'   NPU available: {torch_npu.npu.is_available()}')" 2>/dev/null || msg "   (torch_npu not available)"
-        ;;
-    metax)
-        msg "   MetaX platform (checks TBD)"
+        python3 - <<'PY' || msg "   Warning: MUSA check failed"
+import torch
+if hasattr(torch, 'musa') and torch.musa.is_available():
+    print(f"   MUSA available: True")
+    print(f"   MUSA device count: {torch.musa.device_count()}")
+else:
+    print("   MUSA available: False (or torch.musa not found)")
+PY
         ;;
     *)
-        msg "   Platform: ${PLATFORM} (no specific checks)"
+        msg "   Generic platform, skipping specific device checks"
         ;;
 esac
 
@@ -236,7 +335,6 @@ esac
 # Summary
 # ==============================================================================
 msg "==========================================="
-
 if [[ ${EXIT_CODE} -eq 0 ]]; then
     msg "SUCCESS: TE-FL runtime verification passed"
 else
