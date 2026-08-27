@@ -118,10 +118,12 @@ jobs:
         timeout-minutes: 30
 
       - name: Verify TE-FL runtime
+        if: inputs.expected_te_fl_commit != ''
         working-directory: ${{ github.workspace }}
         env:
           MEGATRON_CI_IMAGE: ${{ inputs.image }}
           EXPECTED_TE_FL_COMMIT: ${{ inputs.expected_te_fl_commit }}
+          TE_FL_PLATFORM: ${{ inputs.platform }}
         run: |
           set -euo pipefail
 

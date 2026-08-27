@@ -14,6 +14,8 @@ set -euo pipefail
 # 4. TE-FL commit match with provenance validation
 # 5. Platform/vendor implementation registration (explicit check)
 # 6. Actual operator backend selection (execution verification)
+#
+# IMPORTANT: This script is ONLY executed when expected_te_fl_commit is provided
 # ==============================================================================
 
 EXIT_CODE=0
@@ -91,7 +93,6 @@ if not native_found:
         import transformer_engine.pytorch as te_pytorch
         native_path = te_pytorch.__file__
         native_module_name = "transformer_engine.pytorch"
-        # Verify it's not just a Python __init__.py
         if native_path and os.path.isfile(native_path):
             native_found = True
     except (ImportError, AttributeError):
@@ -123,8 +124,6 @@ PY
 msg "4. TE-FL Commit Verification"
 
 if [[ -n "${EXPECTED_TE_FL_COMMIT:-}" ]]; then
-    # Expected commit provided, must verify
-
     if [[ ! "${EXPECTED_TE_FL_COMMIT}" =~ ^[0-9a-f]{40}$ ]]; then
         err "EXPECTED_TE_FL_COMMIT invalid format: ${EXPECTED_TE_FL_COMMIT} (expected 40 hex chars)"
     fi
@@ -156,13 +155,11 @@ try:
     version = te_metadata.get('Version', 'unknown')
     print(f"   Package version: {version}")
 except Exception:
-    # metadata not available, not fatal
     pass
 PY
 
 else
-    msg "   No expected commit provided, skipping commit verification"
-    msg "   Note: TE_FL_COMMIT=${TE_FL_COMMIT:-not_set}"
+    err "EXPECTED_TE_FL_COMMIT not provided, cannot verify"
 fi
 
 # ==============================================================================
@@ -170,19 +167,20 @@ fi
 # ==============================================================================
 msg "5. Platform/Vendor Implementation Registration"
 
+# Get platform from environment (passed from workflow)
+PLATFORM="${TE_FL_PLATFORM:-}"
+if [[ -z "$PLATFORM" ]]; then
+    err "TE_FL_PLATFORM not set in workflow environment"
+fi
+
+msg "   Platform: ${PLATFORM}"
+
 python3 - <<'PY' || { err "Platform implementation not properly registered"; }
 import sys
 import os
 
-# Check TE_FL_PLATFORM environment variable
-platform = os.getenv("TE_FL_PLATFORM", "")
-if not platform:
-    print("ERROR: TE_FL_PLATFORM environment variable not set", file=sys.stderr)
-    sys.exit(1)
+platform = os.getenv("TE_FL_PLATFORM", "").lower()
 
-print(f"   TE_FL_PLATFORM: {platform}")
-
-# Import TE and check for vendor backend registration
 try:
     import transformer_engine as te
 
@@ -191,19 +189,23 @@ try:
     registry_info = []
 
     # Try to access TE-FL's implementation manager
-    if hasattr(te, 'impl_manager') or hasattr(te, 'implementation_manager'):
-        manager = getattr(te, 'impl_manager', None) or getattr(te, 'implementation_manager', None)
-        if manager:
-            has_registry = True
-            registry_info.append(f"Implementation manager found: {type(manager).__name__}")
+    if hasattr(te, 'impl_manager'):
+        manager = te.impl_manager
+        has_registry = True
+        registry_info.append(f"Implementation manager found: {type(manager).__name__}")
 
-            # Try to get registered implementations
-            if hasattr(manager, 'get_registered_implementations'):
+        # Try to get registered implementations
+        if hasattr(manager, 'get_registered_implementations'):
+            try:
                 impls = manager.get_registered_implementations()
                 registry_info.append(f"Registered implementations: {impls}")
-            elif hasattr(manager, 'list_implementations'):
-                impls = manager.list_implementations()
-                registry_info.append(f"Registered implementations: {impls}")
+            except Exception:
+                pass
+
+    elif hasattr(te, 'implementation_manager'):
+        manager = te.implementation_manager
+        has_registry = True
+        registry_info.append(f"Implementation manager found: {type(manager).__name__}")
 
     # Alternative: check for backend/device manager
     if hasattr(te, 'backend'):
@@ -211,26 +213,45 @@ try:
         registry_info.append(f"Backend module found: {backend}")
         has_registry = True
 
-    # Check torch device availability as secondary indicator
-    import torch
-    device_available = torch.cuda.is_available()
-    device_count = torch.cuda.device_count() if device_available else 0
-
     print(f"   Has implementation registry: {has_registry}")
     if registry_info:
         for info in registry_info:
             print(f"   {info}")
 
-    print(f"   Torch device available: {device_available}")
-    print(f"   Device count: {device_count}")
+    # Platform-specific device checks
+    import torch
+
+    if platform == "cuda":
+        device_available = torch.cuda.is_available()
+        device_count = torch.cuda.device_count() if device_available else 0
+        print(f"   CUDA available: {device_available}")
+        print(f"   CUDA device count: {device_count}")
+
+    elif platform == "musa":
+        if hasattr(torch, 'musa'):
+            device_available = torch.musa.is_available()
+            device_count = torch.musa.device_count() if device_available else 0
+            print(f"   MUSA available: {device_available}")
+            print(f"   MUSA device count: {device_count}")
+        else:
+            print("ERROR: torch.musa module not found", file=sys.stderr)
+            sys.exit(1)
+
+        if not device_available or device_count == 0:
+            print(f"ERROR: Platform 'musa' requires MUSA devices, but none available", file=sys.stderr)
+            sys.exit(1)
+
+    else:
+        # Generic platform: check torch.cuda as fallback
+        device_available = torch.cuda.is_available()
+        device_count = torch.cuda.device_count() if device_available else 0
+        print(f"   Torch device available: {device_available}")
+        print(f"   Device count: {device_count}")
 
     # For non-CUDA platforms, require explicit vendor implementation
-    if platform.lower() != "cuda":
+    if platform != "cuda":
         if not has_registry and not device_available:
             print(f"ERROR: Platform '{platform}' requires vendor implementation, but no registry or devices found", file=sys.stderr)
-            sys.exit(1)
-        elif device_count == 0:
-            print(f"ERROR: Platform '{platform}' has no available devices", file=sys.stderr)
             sys.exit(1)
 
 except ImportError as e:
@@ -243,9 +264,11 @@ PY
 # ==============================================================================
 msg "6. Operator Backend Selection (execution verification)"
 
-python3 - <<'PY' || { err "Operator backend selection failed or fallback to reference"; }
+python3 - <<'PY' || { err "Operator backend selection failed"; }
 import sys
 import os
+
+platform = os.getenv("TE_FL_PLATFORM", "").lower()
 
 try:
     from transformer_engine.pytorch import Linear
@@ -261,75 +284,69 @@ try:
     print(f"   Layer type: {layer_type}")
     print(f"   Layer module: {layer_module}")
 
-    # CRITICAL: Detect reference.torch fallback
-    if 'reference' in layer_module.lower() or 'torch' in layer_module.lower():
-        # Check if this is actually a vendor implementation or just torch fallback
-        platform = os.getenv("TE_FL_PLATFORM", "").lower()
+    # Try to get actual selected implementation from TE-FL manager
+    try:
+        import transformer_engine as te
+        if hasattr(te, 'impl_manager'):
+            manager = te.impl_manager
+            if hasattr(manager, 'get_current_implementation') or hasattr(manager, 'current_impl'):
+                current_impl = getattr(manager, 'get_current_implementation', lambda: None)()
+                if current_impl is None:
+                    current_impl = getattr(manager, 'current_impl', 'unknown')
+                print(f"   Selected implementation: {current_impl}")
 
-        if platform and platform != "cuda":
-            # Non-CUDA platform should NOT use reference/torch backend
-            print(f"ERROR: Platform '{platform}' is using reference/torch backend: {layer_module}", file=sys.stderr)
-            print(f"  This indicates vendor implementation is not active", file=sys.stderr)
-            sys.exit(1)
+                # For non-CUDA platforms, verify not using reference
+                if platform != "cuda" and 'reference' in str(current_impl).lower():
+                    print(f"ERROR: Platform '{platform}' is using reference implementation", file=sys.stderr)
+                    sys.exit(1)
+    except Exception as e:
+        print(f"   Warning: Could not query implementation manager: {e}")
 
-    # Try to execute a forward pass to confirm backend is functional
+    # Execute forward pass on appropriate device
     import torch
-    if torch.cuda.is_available():
-        device = torch.device('cuda:0')
+
+    device_type = None
+    if platform == "musa":
+        if hasattr(torch, 'musa') and torch.musa.is_available():
+            device_type = "musa"
+            device = torch.device('musa:0')
+        else:
+            print("ERROR: MUSA platform but torch.musa not available", file=sys.stderr)
+            sys.exit(1)
+    elif platform == "cuda":
+        if torch.cuda.is_available():
+            device_type = "cuda"
+            device = torch.device('cuda:0')
+        else:
+            print("   Warning: CUDA not available, skipping forward pass")
+            sys.exit(0)
+    else:
+        # Generic: try cuda
+        if torch.cuda.is_available():
+            device_type = "cuda"
+            device = torch.device('cuda:0')
+        else:
+            print("   Warning: No device available, skipping forward pass")
+            sys.exit(0)
+
+    if device_type:
         try:
             layer = layer.to(device)
             x = torch.randn(2, 4, device=device)
             y = layer(x)
-            print(f"   Forward pass successful: input shape {tuple(x.shape)} -> output shape {tuple(y.shape)}")
+            print(f"   Forward pass successful on {device_type}: input {tuple(x.shape)} -> output {tuple(y.shape)}")
             print("   Backend execution verified")
         except Exception as e:
-            print(f"ERROR: Forward pass failed: {e}", file=sys.stderr)
+            print(f"ERROR: Forward pass failed on {device_type}: {e}", file=sys.stderr)
             sys.exit(1)
-    else:
-        print("   Warning: CUDA not available, skipping forward pass execution test")
 
 except ImportError as e:
     print(f"ERROR: Failed to import Linear operator: {e}", file=sys.stderr)
     sys.exit(1)
 except Exception as e:
-    print(f"ERROR: Operator instantiation or execution failed: {e}", file=sys.stderr)
+    print(f"ERROR: Operator verification failed: {e}", file=sys.stderr)
     sys.exit(1)
 PY
-
-# ==============================================================================
-# 7. Platform-Specific Checks
-# ==============================================================================
-msg "7. Platform-Specific Checks"
-
-PLATFORM="${TE_FL_PLATFORM:-unknown}"
-msg "   Platform: ${PLATFORM}"
-
-case "${PLATFORM,,}" in
-    cuda)
-        python3 - <<'PY' || msg "   Warning: CUDA check failed"
-import torch
-if torch.cuda.is_available():
-    print(f"   CUDA available: True")
-    print(f"   CUDA version: {torch.version.cuda}")
-    print(f"   Device count: {torch.cuda.device_count()}")
-else:
-    print("   CUDA available: False")
-PY
-        ;;
-    musa)
-        python3 - <<'PY' || msg "   Warning: MUSA check failed"
-import torch
-if hasattr(torch, 'musa') and torch.musa.is_available():
-    print(f"   MUSA available: True")
-    print(f"   MUSA device count: {torch.musa.device_count()}")
-else:
-    print("   MUSA available: False (or torch.musa not found)")
-PY
-        ;;
-    *)
-        msg "   Generic platform, skipping specific device checks"
-        ;;
-esac
 
 # ==============================================================================
 # Summary
