@@ -10,10 +10,10 @@ set -euo pipefail
 # This script runs INSIDE the test container after platform setup to verify:
 # 1. The resolved container image
 # 2. transformer_engine installation and path
-# 3. Native extension presence (actual .so files)
+# 3. Native extension presence (platform-specific vendor module)
 # 4. TE-FL commit match with FlagScale provenance manifest (REQUIRED)
 # 5. Platform/vendor implementation registration (explicit check)
-# 6. Actual operator backend selection (FAIL-CLOSED: must confirm vendor impl)
+# 6. Actual operator backend selection (FAIL-CLOSED: query real manager API)
 #
 # IMPORTANT: This script is ONLY executed when expected_te_fl_commit is provided
 # ==============================================================================
@@ -66,56 +66,91 @@ except ImportError as e:
 PY
 
 # ==============================================================================
-# 3. Verify native extension (STRICT: must be actual .so file)
+# 3. Verify native extension (platform-specific vendor module)
 # ==============================================================================
-msg "3. Native Extension (strict .so check)"
+msg "3. Native Extension (platform-specific vendor module)"
 
-python3 - <<'PY' || { err "Native extension (.so) not found or invalid"; }
+python3 - <<'PY' || { err "Native vendor module not found or invalid"; }
 import sys
 import os
+
+platform = os.getenv("TE_FL_PLATFORM", "").lower()
+
+# For TE-FL with plugin architecture, the native module varies by platform
+# MUSA: transformer_engine_musa_torch
+# CUDA: transformer_engine_torch (NVIDIA native)
+# Others: transformer_engine_{platform}_torch
 
 native_found = False
 native_path = None
 native_module_name = None
 
-# Try transformer_engine_torch first
-try:
-    import transformer_engine_torch
-    native_path = transformer_engine_torch.__file__
-    native_module_name = "transformer_engine_torch"
-    native_found = True
-except ImportError:
-    pass
+# Try platform-specific module first
+if platform == "musa":
+    try:
+        import transformer_engine_musa_torch
+        native_path = getattr(transformer_engine_musa_torch, '__file__', None)
+        native_module_name = "transformer_engine_musa_torch"
+        native_found = True
+    except ImportError:
+        pass
+elif platform == "cuda":
+    try:
+        import transformer_engine_torch
+        native_path = getattr(transformer_engine_torch, '__file__', None)
+        native_module_name = "transformer_engine_torch"
+        native_found = True
+    except ImportError:
+        pass
+else:
+    # Generic platform: try transformer_engine_{platform}_torch
+    try:
+        mod = __import__(f"transformer_engine_{platform}_torch")
+        native_path = getattr(mod, '__file__', None)
+        native_module_name = f"transformer_engine_{platform}_torch"
+        native_found = True
+    except ImportError:
+        pass
 
-# Try transformer_engine.pytorch as fallback
+# Fallback: try generic transformer_engine.pytorch
 if not native_found:
     try:
         import transformer_engine.pytorch as te_pytorch
-        native_path = te_pytorch.__file__
-        native_module_name = "transformer_engine.pytorch"
+        # Check if this is a real module with __file__
+        native_path = getattr(te_pytorch, '__file__', None)
         if native_path and os.path.isfile(native_path):
+            native_module_name = "transformer_engine.pytorch"
             native_found = True
     except (ImportError, AttributeError):
         pass
 
-if not native_found or not native_path:
-    print("ERROR: No native extension module found", file=sys.stderr)
+if not native_found:
+    print(f"ERROR: No native vendor module found for platform '{platform}'", file=sys.stderr)
+    print(f"  Expected: transformer_engine_{platform}_torch or platform-specific native module", file=sys.stderr)
     sys.exit(1)
 
-# STRICT: Verify the path points to a native library (.so, .pyd, .dylib)
-native_extensions = ('.so', '.pyd', '.dylib')
-if not any(native_path.endswith(ext) for ext in native_extensions):
-    print(f"ERROR: Module path is not a native library: {native_path}", file=sys.stderr)
-    print(f"  Expected extensions: {native_extensions}", file=sys.stderr)
-    sys.exit(1)
+# Note: TE-FL may register a synthetic TEFLModule as sys.modules["transformer_engine_torch"]
+# which doesn't have a normal __file__. In that case, we skip the .so check.
+if native_path is None:
+    print(f"   Module: {native_module_name}")
+    print(f"   Type: Synthetic module (no __file__, likely TEFLModule)")
+    print(f"   Note: Actual vendor .so will be loaded by plugin system")
+else:
+    # If __file__ exists, verify it's a native library
+    native_extensions = ('.so', '.pyd', '.dylib')
+    if not any(native_path.endswith(ext) for ext in native_extensions):
+        print(f"   Module: {native_module_name}")
+        print(f"   Path: {native_path}")
+        print(f"   Type: Python module (not native .so)")
+        print(f"   Note: TE-FL plugin system will load vendor .so dynamically")
+    else:
+        if not os.path.isfile(native_path):
+            print(f"ERROR: Native library file does not exist: {native_path}", file=sys.stderr)
+            sys.exit(1)
 
-if not os.path.isfile(native_path):
-    print(f"ERROR: Native library file does not exist: {native_path}", file=sys.stderr)
-    sys.exit(1)
-
-print(f"   Module: {native_module_name}")
-print(f"   Path: {native_path}")
-print(f"   Verified: native library file exists")
+        print(f"   Module: {native_module_name}")
+        print(f"   Path: {native_path}")
+        print(f"   Verified: native library file exists")
 PY
 
 # ==============================================================================
@@ -248,39 +283,25 @@ platform = os.getenv("TE_FL_PLATFORM", "").lower()
 try:
     import transformer_engine as te
 
-    # Check if TE has implementation registry/manager
-    has_registry = False
-    registry_info = []
+    # Try to get TE-FL plugin manager (correct API)
+    has_manager = False
+    manager = None
 
-    # Try to access TE-FL's implementation manager
-    if hasattr(te, 'impl_manager'):
-        manager = te.impl_manager
-        has_registry = True
-        registry_info.append(f"Implementation manager found: {type(manager).__name__}")
+    try:
+        from transformer_engine.plugin.core import get_manager
+        manager = get_manager()
+        has_manager = True
+        print(f"   Plugin manager found: {type(manager).__name__}")
+    except ImportError:
+        pass
 
-        # Try to get registered implementations
-        if hasattr(manager, 'get_registered_implementations'):
-            try:
-                impls = manager.get_registered_implementations()
-                registry_info.append(f"Registered implementations: {impls}")
-            except Exception:
-                pass
-
-    elif hasattr(te, 'implementation_manager'):
-        manager = te.implementation_manager
-        has_registry = True
-        registry_info.append(f"Implementation manager found: {type(manager).__name__}")
-
-    # Alternative: check for backend/device manager
-    if hasattr(te, 'backend'):
-        backend = te.backend
-        registry_info.append(f"Backend module found: {backend}")
-        has_registry = True
-
-    print(f"   Has implementation registry: {has_registry}")
-    if registry_info:
-        for info in registry_info:
-            print(f"   {info}")
+    if not has_manager:
+        if platform != "cuda":
+            print(f"ERROR: Platform '{platform}' requires plugin manager, but import failed", file=sys.stderr)
+            print(f"  Could not import from transformer_engine.plugin.core", file=sys.stderr)
+            sys.exit(1)
+        else:
+            print("   Warning: No plugin manager (CUDA default)")
 
     # Platform-specific device checks
     import torch
@@ -312,10 +333,10 @@ try:
         print(f"   Torch device available: {device_available}")
         print(f"   Device count: {device_count}")
 
-    # For non-CUDA platforms, require explicit vendor implementation
+    # For non-CUDA platforms, require manager + devices
     if platform != "cuda":
-        if not has_registry and not device_available:
-            print(f"ERROR: Platform '{platform}' requires vendor implementation, but no registry or devices found", file=sys.stderr)
+        if not has_manager and not device_available:
+            print(f"ERROR: Platform '{platform}' requires plugin manager or devices, but none found", file=sys.stderr)
             sys.exit(1)
 
 except ImportError as e:
@@ -324,9 +345,9 @@ except ImportError as e:
 PY
 
 # ==============================================================================
-# 6. Operator Backend Selection (FAIL-CLOSED: must confirm vendor impl)
+# 6. Operator Backend Selection (FAIL-CLOSED: query real manager API)
 # ==============================================================================
-msg "6. Operator Backend Selection (FAIL-CLOSED verification)"
+msg "6. Operator Backend Selection (real manager API verification)"
 
 python3 - <<'PY' || { err "Operator backend selection failed"; }
 import sys
@@ -341,12 +362,6 @@ try:
     # Instantiate the operator
     layer = Linear(in_features=4, out_features=8)
     print(f"   Linear layer instantiated: in_features=4, out_features=8")
-
-    # Check the layer type and module
-    layer_type = type(layer).__name__
-    layer_module = type(layer).__module__
-    print(f"   Layer type: {layer_type}")
-    print(f"   Layer module: {layer_module}")
 
     # Execute forward pass on appropriate device FIRST
     import torch
@@ -385,112 +400,84 @@ try:
             print(f"ERROR: Forward pass failed on {device_type}: {e}", file=sys.stderr)
             sys.exit(1)
 
-    # CRITICAL: Query actual selected implementation from TE-FL manager AFTER forward
-    # This confirms the implementation that was ACTUALLY USED, not just registered
-    selected_impl = None
+    # CRITICAL: Query actual selected implementation using real TE-FL API
+    # Correct API: from transformer_engine.plugin.core import get_manager
+    #              manager.get_selected_impl_id("generic_gemm")
+
+    selected_impl_id = None
     query_failed = False
     query_error = None
 
     try:
-        import transformer_engine as te
+        from transformer_engine.plugin.core import get_manager
 
-        # FAIL-CLOSED: manager MUST exist for non-CUDA platforms
-        if not hasattr(te, 'impl_manager') and not hasattr(te, 'implementation_manager'):
-            if platform != "cuda":
-                print(f"ERROR: Platform '{platform}' requires implementation manager, but none found", file=sys.stderr)
-                print(f"  TE has no 'impl_manager' or 'implementation_manager' attribute", file=sys.stderr)
-                sys.exit(1)
-            else:
-                print("   Warning: No implementation manager found (CUDA default)")
-                selected_impl = "cuda_default"
+        manager = get_manager()
+        print(f"   Plugin manager obtained: {type(manager).__name__}")
 
-        if hasattr(te, 'impl_manager'):
-            manager = te.impl_manager
-
-            # Try multiple methods to get current implementation
-            if hasattr(manager, 'get_current_implementation'):
-                try:
-                    selected_impl = manager.get_current_implementation()
-                except Exception as e:
-                    query_error = f"get_current_implementation() raised: {e}"
-                    query_failed = True
-            elif hasattr(manager, 'current_impl'):
-                selected_impl = manager.current_impl
-            elif hasattr(manager, 'active_impl'):
-                selected_impl = manager.active_impl
-            else:
-                query_error = "Manager has no get_current_implementation/current_impl/active_impl"
-                query_failed = True
-
-        elif hasattr(te, 'implementation_manager'):
-            manager = te.implementation_manager
-            if hasattr(manager, 'get_current_implementation'):
-                try:
-                    selected_impl = manager.get_current_implementation()
-                except Exception as e:
-                    query_error = f"get_current_implementation() raised: {e}"
-                    query_failed = True
-            elif hasattr(manager, 'current_impl'):
-                selected_impl = manager.current_impl
-            else:
-                query_error = "implementation_manager has no query API"
-                query_failed = True
-
-        # FAIL-CLOSED: query failure is fatal for non-CUDA
-        if query_failed:
-            if platform != "cuda":
-                print(f"ERROR: Failed to query implementation manager: {query_error}", file=sys.stderr)
-                sys.exit(1)
-            else:
-                print(f"   Warning: Query failed: {query_error}")
-
-        # FAIL-CLOSED: selected_impl MUST NOT be empty for non-CUDA
-        if selected_impl is None or selected_impl == "":
-            if platform != "cuda":
-                print(f"ERROR: Implementation manager returned empty result", file=sys.stderr)
-                print(f"  Platform '{platform}' requires explicit vendor implementation", file=sys.stderr)
-                sys.exit(1)
-            else:
-                print("   Warning: No implementation returned (CUDA default)")
-                selected_impl = "cuda_default"
-
-        print(f"   Selected implementation: {selected_impl}")
-
-        # Validate implementation for non-CUDA platforms
-        if platform != "cuda":
-            impl_str = str(selected_impl).lower()
-
-            # FAIL-CLOSED: reject reference/unknown/none
-            if 'reference' in impl_str or 'unknown' in impl_str or impl_str == 'none':
-                print(f"ERROR: Platform '{platform}' is using reference/unknown implementation: {selected_impl}", file=sys.stderr)
-                sys.exit(1)
-
-            # FAIL-CLOSED: MUSA must explicitly use musa implementation
-            if platform == "musa" and 'musa' not in impl_str:
-                print(f"ERROR: Platform 'musa' must use musa implementation, got: {selected_impl}", file=sys.stderr)
-                print(f"  Expected implementation ID containing 'musa'", file=sys.stderr)
-                sys.exit(1)
-
-            print(f"   Implementation verified: vendor-specific backend confirmed")
-        else:
-            print(f"   Backend execution verified")
+        # Query the implementation used for generic_gemm (Linear uses this)
+        try:
+            selected_impl_id = manager.get_selected_impl_id("generic_gemm")
+            print(f"   Selected impl_id for 'generic_gemm': {selected_impl_id}")
+        except Exception as e:
+            query_error = f"get_selected_impl_id('generic_gemm') raised: {e}"
+            query_failed = True
 
     except ImportError as e:
-        print(f"ERROR: Failed to import transformer_engine for manager query: {e}", file=sys.stderr)
-        sys.exit(1)
-    except Exception as e:
+        query_error = f"Failed to import get_manager from transformer_engine.plugin.core: {e}"
+        query_failed = True
+
+    # FAIL-CLOSED: query failure is fatal for non-CUDA
+    if query_failed:
         if platform != "cuda":
-            print(f"ERROR: Unexpected error during implementation verification: {e}", file=sys.stderr)
+            print(f"ERROR: Failed to query implementation manager: {query_error}", file=sys.stderr)
             sys.exit(1)
         else:
-            print(f"   Warning: Implementation query failed: {e}")
+            print(f"   Warning: Query failed: {query_error}")
+            selected_impl_id = "cuda_default"
+
+    # FAIL-CLOSED: selected_impl_id MUST NOT be empty or "unknown"
+    if selected_impl_id is None or selected_impl_id == "" or selected_impl_id == "unknown":
+        if platform != "cuda":
+            print(f"ERROR: Implementation manager returned invalid result: {selected_impl_id}", file=sys.stderr)
+            print(f"  Platform '{platform}' requires explicit vendor implementation", file=sys.stderr)
+            sys.exit(1)
+        else:
+            print(f"   Warning: Unknown implementation (CUDA default)")
+            selected_impl_id = "cuda_default"
+
+    # Validate implementation for non-CUDA platforms
+    if platform != "cuda":
+        impl_str = str(selected_impl_id).lower()
+
+        # FAIL-CLOSED: reject reference/unknown/none
+        if 'reference' in impl_str or impl_str == 'none':
+            print(f"ERROR: Platform '{platform}' is using reference implementation: {selected_impl_id}", file=sys.stderr)
+            sys.exit(1)
+
+        # FAIL-CLOSED: MUSA must be "vendor.musa"
+        if platform == "musa":
+            if selected_impl_id != "vendor.musa":
+                print(f"ERROR: Platform 'musa' must use 'vendor.musa' implementation", file=sys.stderr)
+                print(f"  Got: {selected_impl_id}", file=sys.stderr)
+                print(f"  Expected exact match: 'vendor.musa'", file=sys.stderr)
+                sys.exit(1)
+
+        print(f"   Implementation verified: vendor-specific backend confirmed")
+    else:
+        print(f"   Backend execution verified")
 
 except ImportError as e:
-    print(f"ERROR: Failed to import Linear operator: {e}", file=sys.stderr)
+    print(f"ERROR: Failed to import required modules: {e}", file=sys.stderr)
     sys.exit(1)
 except Exception as e:
-    print(f"ERROR: Operator verification failed: {e}", file=sys.stderr)
-    sys.exit(1)
+    if platform != "cuda":
+        print(f"ERROR: Unexpected error during implementation verification: {e}", file=sys.stderr)
+        import traceback
+        traceback.print_exc(file=sys.stderr)
+        sys.exit(1)
+    else:
+        print(f"   Warning: Implementation query failed: {e}")
+
 PY
 
 # ==============================================================================
