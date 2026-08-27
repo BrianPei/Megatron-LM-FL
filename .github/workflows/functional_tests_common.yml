@@ -131,7 +131,7 @@ jobs:
       - name: Checkout TransformerEngine-FL
         uses: actions/checkout@v4
         with:
-          repository: FlagOpen/TransformerEngine-FL
+          repository: flagos-ai/TransformerEngine-FL
           ref: ${{ inputs.te_fl_commit }}
           path: te-fl
           fetch-depth: 0

@@ -39,6 +39,9 @@ on:
 jobs:
   prepare:
     name: te-fl-${{ inputs.platform }}
+    defaults:
+      run:
+        shell: bash
     runs-on: ${{ fromJson(inputs.runs_on) }}
     container:
       image: ${{ inputs.image }}
@@ -54,12 +57,9 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Resolve TE-FL ref
-        id: resolve
+      - name: Validate TE-FL ref
         env:
           TE_FL_REF: ${{ inputs.te_fl_ref }}
-          TE_FL_REPOSITORY: https://github.com/FlagOpen/TransformerEngine-FL.git
-          EXPECTED_TE_FL_COMMIT: ${{ inputs.expected_te_fl_commit }}
         run: |
           set -euo pipefail
           case "$TE_FL_REF" in
@@ -70,13 +70,25 @@ jobs:
               fi
               ;;
           esac
-          if [[ "$TE_FL_REF" =~ ^[0-9a-f]{40}$ ]]; then
-            commit="$TE_FL_REF"
-          else
-            commit=$(git ls-remote "$TE_FL_REPOSITORY" "refs/heads/$TE_FL_REF" | awk 'NR==1 {print $1}')
-          fi
+
+      - name: Checkout TE-FL source
+        uses: actions/checkout@v4
+        with:
+          repository: flagos-ai/TransformerEngine-FL
+          ref: ${{ inputs.te_fl_ref }}
+          path: te-fl
+          fetch-depth: 0
+          submodules: recursive
+
+      - name: Resolve checked-out TE-FL commit
+        id: resolve
+        env:
+          EXPECTED_TE_FL_COMMIT: ${{ inputs.expected_te_fl_commit }}
+        run: |
+          set -euo pipefail
+          commit=$(git -C "$GITHUB_WORKSPACE/te-fl" rev-parse HEAD)
           if ! [[ "$commit" =~ ^[0-9a-f]{40}$ ]]; then
-            echo "::error::could not resolve TE-FL ref: $TE_FL_REF" >&2
+            echo "::error::could not resolve checked-out TE-FL commit" >&2
             exit 1
           fi
           if [ -n "$EXPECTED_TE_FL_COMMIT" ] && \
@@ -85,15 +97,6 @@ jobs:
             exit 1
           fi
           echo "commit=$commit" >> "$GITHUB_OUTPUT"
-
-      - name: Checkout TE-FL source
-        uses: actions/checkout@v4
-        with:
-          repository: FlagOpen/TransformerEngine-FL
-          ref: ${{ steps.resolve.outputs.commit }}
-          path: te-fl
-          fetch-depth: 0
-          submodules: recursive
 
       - name: Setup platform environment
         env:
