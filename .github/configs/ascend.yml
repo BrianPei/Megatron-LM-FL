@@ -384,8 +384,9 @@ te_fl:
 
   # Runtime verification configuration
   runtime:
-    # Expected TE-FL backend implementation
-    expected_backend: vendor.npu
+    # Ascend currently uses TE-FL's NPU-patched reference implementation.
+    # Keep this explicit so registration of an unexpected backend still fails.
+    expected_backend: reference.torch
 
     # Device API module for verification
     device_module: torch.npu
@@ -395,5 +396,5 @@ te_fl:
     native_module: transformer_engine
     environment:
       TE_FL_SKIP_CUDA: "1"
-      TE_FL_PREFER: vendor
+      TE_FL_PREFER: reference
     install_pip_args: []

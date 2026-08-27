@@ -183,6 +183,8 @@ te_fl:
       NVTE_FRAMEWORK: pytorch
       NVTE_WITH_USERBUFFERS: "0"
       NVTE_WITH_CUDA: "1"
+      NVTE_WITH_NCCL_EP: "0"
+      NVTE_CUDA_ARCHS: "80"
       CMAKE_CUDA_ARCHITECTURES: "80"
       TORCH_CUDA_ARCH_LIST: "8.0"
     build_pip_args: []

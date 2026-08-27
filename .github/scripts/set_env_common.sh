@@ -46,14 +46,18 @@ for key, value in values.items():
     text = str(value)
     if any(character in text for character in ("\n", "\r", "\t")):
         raise SystemExit(f"environment value contains unsupported control characters: {key}")
-    print(f"{key}\t{text}")
+    print(f"__CI_ENV__\t{key}\t{text}")
 PY
   ); then
     echo "::error::Invalid environment JSON" >&2
     return 1
   fi
 
-  while IFS=$'\t' read -r name value; do
+  while IFS=$'\t' read -r record_type name value; do
+    if [ "$record_type" != "__CI_ENV__" ]; then
+      [ -z "$record_type" ] || printf '%s\n' "$record_type" >&2
+      continue
+    fi
     [ -n "$name" ] || continue
     ci_export_env "$name" "$value"
   done <<< "$entries"

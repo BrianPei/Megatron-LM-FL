@@ -153,8 +153,13 @@ jobs:
             --runtime-modules-json "$RUNTIME_MODULES" \
             --require-shared-library "$REQUIRE_SHARED_LIBRARY" \
             --build-recipe-hash "$BUILD_RECIPE_HASH" \
-            --output te-fl-fingerprint.json
-          FINGERPRINT=$(python3 -c 'import json; print(json.load(open("te-fl-fingerprint.json"))["fingerprint"])')
+            --output te-fl-fingerprint.json \
+            --fingerprint-output te-fl-native-fingerprint.txt
+          IFS= read -r FINGERPRINT < te-fl-native-fingerprint.txt
+          if ! [[ "$FINGERPRINT" =~ ^[0-9a-f]{64}$ ]]; then
+            echo "::error::native fingerprint output is invalid" >&2
+            exit 1
+          fi
           echo "fingerprint=$FINGERPRINT" >> "$GITHUB_OUTPUT"
 
       - name: Set cache key

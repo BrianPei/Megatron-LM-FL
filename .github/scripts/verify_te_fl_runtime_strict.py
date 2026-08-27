@@ -151,10 +151,19 @@ def verify_operator(device_name: str, expected_backend: str) -> None:
     from transformer_engine.pytorch import Linear
 
     device = device_name
-    layer = Linear(64, 128).to(device)
-    inputs = torch.randn(8, 64, device=device, requires_grad=True)
-    output = layer(inputs)
-    output.sum().backward()
+    try:
+        # TE Linear defaults to CUDA when no device is provided. Construct it
+        # directly on the configured device so non-CUDA runtimes never enter
+        # torch.cuda initialization before a later .to(device) call.
+        layer = Linear(64, 128, device=device)
+        inputs = torch.randn(8, 64, device=device, requires_grad=True)
+        output = layer(inputs)
+        output.sum().backward()
+    except Exception as error:
+        fail(
+            "TE forward/backward failed on the configured device "
+            f"(device={device}, expected_backend={expected_backend}): {error}"
+        )
     if not bool(torch.isfinite(output).all()) or inputs.grad is None or not bool(torch.isfinite(inputs.grad).all()):
         fail("TE forward/backward produced non-finite output or gradient")
 

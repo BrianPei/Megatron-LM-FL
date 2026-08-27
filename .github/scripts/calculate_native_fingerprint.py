@@ -206,6 +206,7 @@ def main() -> int:
     parser.add_argument("--require-shared-library", choices=("true", "false"), required=True)
     parser.add_argument("--build-recipe-hash", required=True)
     parser.add_argument("--output", required=True, type=Path)
+    parser.add_argument("--fingerprint-output", required=True, type=Path)
     args = parser.parse_args()
     if len(args.build_recipe_hash) != 64 or any(
         character not in "0123456789abcdef" for character in args.build_recipe_hash
@@ -265,6 +266,7 @@ def main() -> int:
         "components": components,
     }
     args.output.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n")
+    args.fingerprint_output.write_text(result["fingerprint"] + "\n")
     print(json.dumps(result, indent=2, sort_keys=True))
     return 0
 
