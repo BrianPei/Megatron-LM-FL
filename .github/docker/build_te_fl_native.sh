@@ -22,37 +22,45 @@ fi
 rm -rf "$OUTPUT_DIR"
 mkdir -p "$OUTPUT_DIR"
 
-build_env_exports=$(python3 - "$BUILD_ENV_JSON" <<'PY'
+build_env_file="$OUTPUT_DIR/.build-env.sh"
+python3 - "$BUILD_ENV_JSON" "$build_env_file" <<'PY'
 import json
 import shlex
 import sys
+from pathlib import Path
 
 values = json.loads(sys.argv[1])
 if not isinstance(values, dict):
     raise SystemExit("build environment must be a JSON object")
+lines = []
 for key, value in values.items():
     if not isinstance(key, str) or not key or not key.replace("_", "").isascii() or not key.replace("_", "").isalnum() or key[0].isdigit():
         raise SystemExit(f"invalid environment variable name: {key}")
-    print(f"export {key}={shlex.quote(str(value))}")
+    text = str(value)
+    if any(character in text for character in ("\n", "\r", "\t")):
+        raise SystemExit(f"environment value contains unsupported control characters: {key}")
+    lines.append(f"export {key}={shlex.quote(text)}")
+Path(sys.argv[2]).write_text("\n".join(lines) + "\n")
 PY
-)
+source "$build_env_file"
 
 build_pip_args=()
-while IFS= read -r arg; do
-  build_pip_args+=("$arg")
-done < <(python3 - "$BUILD_PIP_ARGS_JSON" <<'PY'
+build_pip_args_file="$OUTPUT_DIR/.build-pip-args"
+python3 - "$BUILD_PIP_ARGS_JSON" "$build_pip_args_file" <<'PY'
 import json
 import sys
+from pathlib import Path
 
 values = json.loads(sys.argv[1])
 if not isinstance(values, list) or not all(isinstance(value, str) for value in values):
     raise SystemExit("build pip args must be a JSON array of strings")
-if any(not value for value in values):
-    raise SystemExit("build pip args must not contain empty strings")
-sys.stdout.write("".join(f"{value}\n" for value in values))
+if any(not value or any(character in value for character in ("\n", "\r")) for value in values):
+    raise SystemExit("build pip args must contain non-empty single-line strings")
+Path(sys.argv[2]).write_text("".join(f"{value}\n" for value in values))
 PY
-)
-eval "$build_env_exports"
+while IFS= read -r arg; do
+  build_pip_args+=("$arg")
+done < "$build_pip_args_file"
 
 if [ -n "${TARGET_ARCH:-}" ]; then
   export TE_FL_TARGET_ARCH="$TARGET_ARCH"
@@ -133,16 +141,17 @@ else
   exit 1
 fi
 
-export ARTIFACT_FILES_JSON
-ARTIFACT_FILES_JSON=$(python3 - "${artifact_files[@]}" <<'PY'
+artifact_files_json="$OUTPUT_DIR/.artifact-files.json"
+python3 - "$artifact_files_json" "${artifact_files[@]}" <<'PY'
 import hashlib
 import json
 import pathlib
 import sys
 
-print(json.dumps([{"filename": pathlib.Path(value).name, "sha256": hashlib.sha256(pathlib.Path(value).read_bytes()).hexdigest(), "size": pathlib.Path(value).stat().st_size} for value in sys.argv[1:]]))
+pathlib.Path(sys.argv[1]).write_text(json.dumps([{"filename": pathlib.Path(value).name, "sha256": hashlib.sha256(pathlib.Path(value).read_bytes()).hexdigest(), "size": pathlib.Path(value).stat().st_size} for value in sys.argv[2:]]))
 PY
-)
+export ARTIFACT_FILES_JSON
+ARTIFACT_FILES_JSON=$(<"$artifact_files_json")
 
 python3 - "$OUTPUT_DIR/manifest.json" <<'PY'
 import json
@@ -177,3 +186,4 @@ PY
 
 cat "$OUTPUT_DIR/manifest.json"
 cat "$OUTPUT_DIR/checksums.txt"
+rm -f "$build_env_file" "$build_pip_args_file" "$artifact_files_json"

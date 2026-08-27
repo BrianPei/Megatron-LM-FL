@@ -33,8 +33,6 @@ on:
         value: ${{ jobs.prepare.outputs.te_fl_commit }}
       native_fingerprint:
         value: ${{ jobs.prepare.outputs.native_fingerprint }}
-      cache_key:
-        value: ${{ jobs.prepare.outputs.cache_key }}
 
 jobs:
   prepare:
@@ -50,7 +48,6 @@ jobs:
     outputs:
       te_fl_commit: ${{ steps.resolve.outputs.commit }}
       native_fingerprint: ${{ steps.fingerprint.outputs.fingerprint }}
-      cache_key: ${{ steps.key.outputs.key }}
     steps:
       - name: Checkout Megatron source
         uses: actions/checkout@v4
@@ -258,6 +255,14 @@ jobs:
             --runtime-env-json "$TE_FL_RUNTIME_ENV_JSON" \
             --source-root "$TE_FL_SOURCE_ROOT"
         timeout-minutes: 5
+
+      - name: Publish native artifact for this run
+        uses: actions/upload-artifact@v4
+        with:
+          name: te-fl-native-${{ inputs.platform }}-${{ steps.fingerprint.outputs.fingerprint }}
+          path: te-fl-native
+          if-no-files-found: error
+          retention-days: 1
 
       - name: Save native artifact
         if: steps.cache.outputs.cache-hit != 'true'

@@ -18,64 +18,86 @@ checksums="$TE_FL_NATIVE_DIR/checksums.txt"
 test -f "$manifest"
 test -f "$checksums"
 
-read_manifest() {
-  python3 - "$manifest" "$1" <<'PY'
+manifest_env=$(mktemp)
+python3 - "$manifest" "$manifest_env" <<'PY'
 import json
+import shlex
 import sys
-value = json.load(open(sys.argv[1]))
-for part in sys.argv[2].split("."):
-    value = value[part]
-print(value)
-PY
-}
+from pathlib import Path
 
-test "$(read_manifest platform)" = "$PLATFORM"
-test "$(read_manifest native_source_fingerprint)" = "$TE_FL_NATIVE_FINGERPRINT"
-test "$(read_manifest native_fingerprint)" = "$TE_FL_NATIVE_FINGERPRINT"
-test -n "$(read_manifest te_fl_python_commit)"
+manifest = json.load(open(sys.argv[1]))
+keys = ("platform", "native_source_fingerprint", "native_fingerprint", "te_fl_python_commit", "mode")
+lines = []
+for key in keys:
+    value = manifest.get(key)
+    if not isinstance(value, str) or not value:
+        raise SystemExit(f"artifact manifest field is missing: {key}")
+    lines.append(f"TE_FL_ARTIFACT_{key.upper()}={shlex.quote(value)}")
+Path(sys.argv[2]).write_text("\n".join(lines) + "\n")
+PY
+source "$manifest_env"
+rm -f "$manifest_env"
+
+test "$TE_FL_ARTIFACT_PLATFORM" = "$PLATFORM"
+test "$TE_FL_ARTIFACT_NATIVE_SOURCE_FINGERPRINT" = "$TE_FL_NATIVE_FINGERPRINT"
+test "$TE_FL_ARTIFACT_NATIVE_FINGERPRINT" = "$TE_FL_NATIVE_FINGERPRINT"
+test -n "$TE_FL_ARTIFACT_TE_FL_PYTHON_COMMIT"
 test "$(git -C "$TE_FL_SOURCE" rev-parse HEAD)" = "$TE_FL_PYTHON_COMMIT"
 (cd "$TE_FL_NATIVE_DIR" && sha256sum -c checksums.txt)
 
-native_mode=$(read_manifest mode)
+native_mode=$TE_FL_ARTIFACT_MODE
 ci_apply_env_json "$TE_FL_RUNTIME_ENV_JSON"
 
 install_pip_args=()
-while IFS= read -r arg; do
-  install_pip_args+=("$arg")
-done < <(python3 - "$TE_FL_INSTALL_PIP_ARGS_JSON" <<'PY'
+install_pip_args_file=$(mktemp)
+python3 - "$TE_FL_INSTALL_PIP_ARGS_JSON" "$install_pip_args_file" <<'PY'
 import json
 import sys
+from pathlib import Path
 
 values = json.loads(sys.argv[1])
 if not isinstance(values, list) or not all(isinstance(value, str) for value in values):
     raise SystemExit("install pip args must be a JSON array of strings")
-if any(not value for value in values):
-    raise SystemExit("install pip args must not contain empty strings")
-sys.stdout.write("".join(f"{value}\n" for value in values))
+if any(not value or any(character in value for character in ("\n", "\r")) for value in values):
+    raise SystemExit("install pip args must contain non-empty single-line strings")
+Path(sys.argv[2]).write_text("".join(f"{value}\n" for value in values))
 PY
-)
+while IFS= read -r arg; do
+  install_pip_args+=("$arg")
+done < "$install_pip_args_file"
+rm -f "$install_pip_args_file"
 if [ "$native_mode" = source ]; then
   wheels=()
-  while IFS= read -r wheel; do wheels+=("$wheel"); done < <(
-    python3 - "$manifest" "$TE_FL_NATIVE_DIR" <<'PY'
+  wheel_list_file=$(mktemp)
+  python3 - "$manifest" "$TE_FL_NATIVE_DIR" "$wheel_list_file" <<'PY'
 import json
 import sys
 from pathlib import Path
 
 manifest = json.load(open(sys.argv[1]))
 artifact_root = Path(sys.argv[2])
+wheels = []
 for record in manifest.get("files", []):
     filename = record.get("filename")
     if not isinstance(filename, str) or Path(filename).name != filename:
         raise SystemExit(f"unsafe artifact filename: {filename!r}")
     if filename.endswith(".whl"):
-        print(artifact_root / filename)
+        wheels.append(str(artifact_root / filename))
+Path(sys.argv[3]).write_text("".join(f"{wheel}\n" for wheel in wheels))
 PY
-  )
+  while IFS= read -r wheel; do wheels+=("$wheel"); done < "$wheel_list_file"
+  rm -f "$wheel_list_file"
   if [ "${#wheels[@]}" -eq 0 ]; then
     echo "::error::source-mode artifact contains no wheel" >&2
     exit 1
   fi
+  # Source-built TE-FL provides its own native extension. Remove the complete
+  # NVIDIA TE distribution set first so TE-FL does not detect mixed metadata
+  # or a stale transformer_engine_torch extension from the base image.
+  python3 -m pip uninstall -y \
+    transformer-engine transformer-engine-torch \
+    transformer-engine-cu11 transformer-engine-cu12 transformer-engine-cu13 \
+    >/dev/null 2>&1 || true
   if [ "${#install_pip_args[@]}" -eq 0 ]; then
     python3 -m pip install --force-reinstall --no-deps --no-cache-dir \
       "${wheels[@]}"

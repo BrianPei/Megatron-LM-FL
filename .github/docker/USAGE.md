@@ -77,11 +77,19 @@ actual backend verification.
 ## Cache Behavior
 
 The cache key is `te-fl-native-<platform>-<native_fingerprint>`.
+The prepare job uses this cache across runs, then uploads the validated native
+directory as a workflow artifact for deterministic consumption by unit and
+functional jobs in the current run. Downstream jobs do not use the cache as a
+same-run message bus.
 
 - Python-only TE-FL change: same fingerprint, cache hit, Python overlay update.
 - C++/CUDA/header/build-file change: new fingerprint, wheel rebuild.
 - Torch/vendor runtime/toolchain change: new fingerprint, wheel rebuild.
 - Corrupt or mismatched artifact: checksum or manifest failure before tests.
+
+Strict device execution and backend selection are verified once in the prepare
+job. Matrix test jobs repeat only installation-time commit, fingerprint,
+manifest, and checksum validation before running their tests.
 
 ## Hardware Acceptance
 

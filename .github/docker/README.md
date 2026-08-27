@@ -28,12 +28,19 @@ wheel.
 `.github/workflows/all_tests_common.yml` calls
 `.github/workflows/prepare_te_fl.yml` on the platform runner and test image.
 The prepare job resolves TE-FL, calculates the fingerprint, restores or builds
-the native artifact, and validates its manifest and checksums.
+the native artifact, installs the current Python overlay, and runs strict
+device/backend verification once. It then publishes a one-day workflow
+artifact for jobs in the same run.
 
-Every unit and functional matrix job restores the same cache key, installs the
-wheel, overlays Python files from the resolved TE-FL commit, and runs strict
-runtime verification before tests. Benchmark cases are entries in the existing
-functional training matrix, so they use the same runtime path.
+Every unit and functional matrix job downloads that same-run workflow artifact,
+validates its checksums and identity, installs the wheel, overlays Python files
+from the resolved TE-FL commit, and runs tests. The expensive device/backend
+verification is not repeated by every matrix job. Benchmark cases are entries
+in the existing functional training matrix, so they use the same runtime path.
+
+GitHub cache is only a cross-run build accelerator. Workflow artifacts are the
+delivery mechanism within one run, avoiding cache visibility races between the
+prepare job and its downstream jobs.
 
 `.github/workflows/te_fl_daily.yml` runs the prepare path on the default branch
 without tests. It detects independent TE-FL `main` updates and creates a
@@ -56,4 +63,5 @@ scripts only. It does not modify Megatron model or training source code.
 
 Local syntax checks do not prove that every vendor image can build the latest
 TE-FL commit. The first hardware CI run for each platform is the required
-evidence for native build, cache restore, device execution, and backend ID.
+evidence for native build, cache restore/save, workflow artifact delivery,
+device execution, and backend ID.

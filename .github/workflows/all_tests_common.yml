@@ -321,11 +321,6 @@ jobs:
       ignored_tests: ${{ needs.checkout_and_config.outputs.ignored_tests }}
       te_fl_commit: ${{ needs.te_fl_prepare.outputs.te_fl_commit }}
       te_fl_native_fingerprint: ${{ needs.te_fl_prepare.outputs.native_fingerprint }}
-      te_fl_cache_key: ${{ needs.te_fl_prepare.outputs.cache_key }}
-      te_fl_native_module: ${{ needs.checkout_and_config.outputs.te_fl_native_module }}
-      te_fl_device_module: ${{ needs.checkout_and_config.outputs.te_fl_device_module }}
-      te_fl_bootstrap_modules: ${{ needs.checkout_and_config.outputs.te_fl_bootstrap_modules }}
-      te_fl_expected_backend: ${{ needs.checkout_and_config.outputs.te_fl_expected_backend }}
       te_fl_runtime_env: ${{ needs.checkout_and_config.outputs.te_fl_runtime_env }}
       te_fl_install_pip_args: ${{ needs.checkout_and_config.outputs.te_fl_install_pip_args }}
 
@@ -380,11 +375,6 @@ jobs:
       test_matrix: ${{ needs.checkout_and_config.outputs.train_test_matrix }}
       te_fl_commit: ${{ needs.te_fl_prepare.outputs.te_fl_commit }}
       te_fl_native_fingerprint: ${{ needs.te_fl_prepare.outputs.native_fingerprint }}
-      te_fl_cache_key: ${{ needs.te_fl_prepare.outputs.cache_key }}
-      te_fl_native_module: ${{ needs.checkout_and_config.outputs.te_fl_native_module }}
-      te_fl_device_module: ${{ needs.checkout_and_config.outputs.te_fl_device_module }}
-      te_fl_bootstrap_modules: ${{ needs.checkout_and_config.outputs.te_fl_bootstrap_modules }}
-      te_fl_expected_backend: ${{ needs.checkout_and_config.outputs.te_fl_expected_backend }}
       te_fl_runtime_env: ${{ needs.checkout_and_config.outputs.te_fl_runtime_env }}
       te_fl_install_pip_args: ${{ needs.checkout_and_config.outputs.te_fl_install_pip_args }}
 

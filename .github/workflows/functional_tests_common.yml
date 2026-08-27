@@ -37,21 +37,6 @@ on:
       te_fl_native_fingerprint:
         required: true
         type: string
-      te_fl_cache_key:
-        required: true
-        type: string
-      te_fl_native_module:
-        required: true
-        type: string
-      te_fl_device_module:
-        required: true
-        type: string
-      te_fl_bootstrap_modules:
-        required: true
-        type: string
-      te_fl_expected_backend:
-        required: true
-        type: string
       te_fl_runtime_env:
         required: true
         type: string
@@ -136,18 +121,11 @@ jobs:
           path: te-fl
           fetch-depth: 0
 
-      - name: Restore TE-FL native artifact
-        id: te_fl_cache
-        uses: actions/cache/restore@v4
+      - name: Download TE-FL native artifact
+        uses: actions/download-artifact@v4
         with:
           path: te-fl-native
-          key: ${{ inputs.te_fl_cache_key }}
-
-      - name: Require TE-FL native cache hit
-        if: steps.te_fl_cache.outputs.cache-hit != 'true'
-        run: |
-          echo "::error::TE-FL native artifact was not restored: ${{ inputs.te_fl_cache_key }}"
-          exit 1
+          name: te-fl-native-${{ inputs.platform }}-${{ inputs.te_fl_native_fingerprint }}
 
       - name: Install TE-FL runtime
         working-directory: ${{ github.workspace }}
@@ -160,32 +138,6 @@ jobs:
           TE_FL_RUNTIME_ENV_JSON: ${{ inputs.te_fl_runtime_env }}
           TE_FL_INSTALL_PIP_ARGS_JSON: ${{ inputs.te_fl_install_pip_args }}
         run: .github/scripts/install_te_fl_runtime.sh
-
-      - name: Verify TE-FL runtime
-        working-directory: ${{ github.workspace }}
-        env:
-          TE_FL_PLATFORM: ${{ inputs.platform }}
-          TE_FL_EXPECTED_COMMIT: ${{ inputs.te_fl_commit }}
-          TE_FL_EXPECTED_FINGERPRINT: ${{ inputs.te_fl_native_fingerprint }}
-          TE_FL_NATIVE_MODULE: ${{ inputs.te_fl_native_module }}
-          TE_FL_DEVICE_MODULE: ${{ inputs.te_fl_device_module }}
-          TE_FL_BOOTSTRAP_MODULES_JSON: ${{ inputs.te_fl_bootstrap_modules }}
-          TE_FL_EXPECTED_BACKEND: ${{ inputs.te_fl_expected_backend }}
-          TE_FL_RUNTIME_ENV_JSON: ${{ inputs.te_fl_runtime_env }}
-          TE_FL_SOURCE_ROOT: ${{ github.workspace }}/te-fl
-        run: |
-          set -euo pipefail
-          python3 .github/scripts/verify_te_fl_runtime_strict.py \
-            --platform "$TE_FL_PLATFORM" \
-            --expected-commit "$TE_FL_EXPECTED_COMMIT" \
-            --expected-fingerprint "$TE_FL_EXPECTED_FINGERPRINT" \
-            --native-module "$TE_FL_NATIVE_MODULE" \
-            --device-module "$TE_FL_DEVICE_MODULE" \
-            --bootstrap-modules-json "$TE_FL_BOOTSTRAP_MODULES_JSON" \
-            --expected-backend "$TE_FL_EXPECTED_BACKEND" \
-            --runtime-env-json "$TE_FL_RUNTIME_ENV_JSON" \
-            --source-root "$TE_FL_SOURCE_ROOT"
-        timeout-minutes: 5
 
       - name: Run functional tests
         id: functional_test
