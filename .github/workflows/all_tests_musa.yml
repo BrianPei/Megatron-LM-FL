@@ -5,7 +5,28 @@ on:
     branches: ["main", "dev", "dev-musa"]
   pull_request:
     branches: ["main"]
-  workflow_dispatch: # Allows manual triggering
+  workflow_dispatch:
+    inputs:
+      image_override:
+        description: 'Optional image override (must be image@sha256:digest format)'
+        required: false
+        type: string
+        default: ''
+      expected_te_fl_commit:
+        description: 'Expected TE-FL commit SHA (40 hex chars)'
+        required: false
+        type: string
+        default: ''
+      run_unit_tests:
+        description: 'Run unit tests'
+        required: false
+        type: boolean
+        default: true
+      run_functional_tests:
+        description: 'Run functional tests'
+        required: false
+        type: boolean
+        default: true
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}-${{ github.actor }}
@@ -17,8 +38,10 @@ jobs:
     uses: ./.github/workflows/all_tests_common.yml
     with:
       platform: musa
-      run_unit_tests: true
-      run_functional_tests: true
+      run_unit_tests: ${{ github.event.inputs.run_unit_tests != 'false' }}
+      run_functional_tests: ${{ github.event.inputs.run_functional_tests != 'false' }}
+      image_override: ${{ github.event.inputs.image_override || '' }}
+      expected_te_fl_commit: ${{ github.event.inputs.expected_te_fl_commit || '' }}
 
   all_tests:
     needs: run_tests

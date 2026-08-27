@@ -31,6 +31,11 @@ on:
         required: true
         type: string
         description: JSON array of test configurations
+      expected_te_fl_commit:
+        required: false
+        type: string
+        default: ''
+        description: Expected TE-FL commit SHA for runtime verification
 
 jobs:
   functional_test_train:
@@ -81,6 +86,7 @@ jobs:
         env:
           CI_TEST_SUITE: functional
           CI_NPROC_PER_NODE: ${{ matrix.test_config.gpus_per_node }}
+          MEGATRON_CI_IMAGE: ${{ inputs.image }}
         run: |
           set -euo pipefail
 
@@ -96,6 +102,22 @@ jobs:
 
           bash "$GITHUB_WORKSPACE/$SETUP_SCRIPT"
         timeout-minutes: 30
+
+      - name: Verify TE-FL runtime
+        working-directory: ${{ github.workspace }}
+        env:
+          MEGATRON_CI_IMAGE: ${{ inputs.image }}
+          EXPECTED_TE_FL_COMMIT: ${{ inputs.expected_te_fl_commit }}
+        run: |
+          set -euo pipefail
+
+          if [ ! -f ".github/scripts/verify_te_runtime.sh" ]; then
+            echo "::warning::TE-FL runtime verification script not found, skipping"
+            exit 0
+          fi
+
+          bash .github/scripts/verify_te_runtime.sh
+        timeout-minutes: 5
 
       - name: Run functional tests
         id: functional_test

@@ -17,6 +17,16 @@ on:
         type: boolean
         default: true
         description: Whether to run functional tests in this workflow
+      image_override:
+        required: false
+        type: string
+        default: ''
+        description: 'Optional immutable image override (must be image@sha256:digest format)'
+      expected_te_fl_commit:
+        required: false
+        type: string
+        default: ''
+        description: 'Expected TE-FL commit SHA (40 hex chars) for verification'
 
 jobs:
   checkout_and_config:
@@ -27,6 +37,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       ci_image: ${{ steps.config.outputs.ci_image }}
+      expected_te_fl_commit: ${{ steps.config.outputs.expected_te_fl_commit }}
       runs_on: ${{ steps.config.outputs.runs_on }}
       container_volumes: ${{ steps.config.outputs.container_volumes }}
       container_options: ${{ steps.config.outputs.container_options }}
@@ -55,9 +66,29 @@ jobs:
           /usr/local/bin/yq --version
           echo "Loading configuration from $CONFIG_FILE"
 
-          # Read CI image
-          CI_IMAGE=$(yq '.ci_image' "$CONFIG_FILE")
+          # Resolve CI image (override takes precedence)
+          IMAGE_OVERRIDE="${{ inputs.image_override }}"
+
+          if [[ -n "${IMAGE_OVERRIDE}" ]]; then
+            # Validate digest format: image@sha256:64-hex-chars
+            if ! [[ "${IMAGE_OVERRIDE}" =~ ^[^@]+@sha256:[0-9a-f]{64}$ ]]; then
+              echo "::error::image_override must be in format: image@sha256:digest"
+              echo "::error::Got: ${IMAGE_OVERRIDE}"
+              exit 1
+            fi
+            CI_IMAGE="${IMAGE_OVERRIDE}"
+            echo "Using image override: ${CI_IMAGE}"
+          else
+            # Fallback to platform config
+            CI_IMAGE=$(yq '.ci_image' "$CONFIG_FILE")
+            echo "Using platform config image: ${CI_IMAGE}"
+          fi
+
           echo "ci_image=$CI_IMAGE" >> $GITHUB_OUTPUT
+
+          # Pass through expected TE-FL commit for verification
+          EXPECTED_COMMIT="${{ inputs.expected_te_fl_commit }}"
+          echo "expected_te_fl_commit=$EXPECTED_COMMIT" >> $GITHUB_OUTPUT
 
           # Read runner labels and format as JSON array
           RUNS_ON=$(yq '.runner_labels | tojson(0)' "$CONFIG_FILE")
@@ -139,6 +170,7 @@ jobs:
       nproc_per_node: ${{ needs.checkout_and_config.outputs.unit_nproc_per_node }}
       pytest_extra_args: ${{ needs.checkout_and_config.outputs.unit_pytest_extra_args }}
       ignored_tests: ${{ needs.checkout_and_config.outputs.ignored_tests }}
+      expected_te_fl_commit: ${{ needs.checkout_and_config.outputs.expected_te_fl_commit }}
 
   unit_tests_complete:
     name: unit_tests_complete
@@ -187,6 +219,7 @@ jobs:
       container_options: ${{ needs.checkout_and_config.outputs.container_options }}
       setup_script: ${{ needs.checkout_and_config.outputs.setup_script }}
       test_matrix: ${{ needs.checkout_and_config.outputs.train_test_matrix }}
+      expected_te_fl_commit: ${{ needs.checkout_and_config.outputs.expected_te_fl_commit }}
 
   functional_tests_complete:
     name: functional_tests_complete

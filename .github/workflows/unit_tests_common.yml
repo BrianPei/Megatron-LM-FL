@@ -45,6 +45,11 @@ on:
         type: string
         default: '[]'
         description: JSON array of test files or node IDs to ignore
+      expected_te_fl_commit:
+        required: false
+        type: string
+        default: ''
+        description: Expected TE-FL commit SHA for runtime verification
 
 jobs:
   unit_test:
@@ -95,6 +100,7 @@ jobs:
           CI_TEST_SUITE: unit
           CI_TEST_GROUP: ${{ matrix.test_group.name }}
           CI_NPROC_PER_NODE: ${{ inputs.nproc_per_node }}
+          MEGATRON_CI_IMAGE: ${{ inputs.image }}
         run: |
           set -euo pipefail
 
@@ -110,6 +116,22 @@ jobs:
 
           bash "$GITHUB_WORKSPACE/$SETUP_SCRIPT"
         timeout-minutes: 30
+
+      - name: Verify TE-FL runtime
+        working-directory: ${{ github.workspace }}
+        env:
+          MEGATRON_CI_IMAGE: ${{ inputs.image }}
+          EXPECTED_TE_FL_COMMIT: ${{ inputs.expected_te_fl_commit }}
+        run: |
+          set -euo pipefail
+
+          if [ ! -f ".github/scripts/verify_te_runtime.sh" ]; then
+            echo "::warning::TE-FL runtime verification script not found, skipping"
+            exit 0
+          fi
+
+          bash .github/scripts/verify_te_runtime.sh
+        timeout-minutes: 5
 
       - name: Run unit tests - ${{ matrix.test_group.name }}
         id: unit_test
