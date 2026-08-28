@@ -54,6 +54,20 @@ prepare_musa_te_runtime() {
     "import onnxscript; print(f'onnxscript import passed: {onnxscript.__file__}')"
 }
 
+install_flash_attn_collection_stub() {
+  if [ "${CI_TEST_GROUP:-}" != "models" ]; then
+    return
+  fi
+
+  # MUSA cannot use the NVIDIA FlashAttention package.  Keep a collection-only
+  # version marker so Megatron's version-gated tests are skipped cleanly.
+  local stub_dir=/tmp/megatron-ci-stubs
+  mkdir -p "$stub_dir/flash_attn"
+  printf '__version__ = "0.0.0"\n' > "$stub_dir/flash_attn/__init__.py"
+  ci_export_env PYTHONPATH "$stub_dir:${PYTHONPATH:-}"
+  python3 -c "import flash_attn; assert flash_attn.__version__ == '0.0.0'"
+}
+
 install_musa_compatibility_layer() {
   # Keep the image-provided torch/torch_musa pair intact while redirecting
   # legacy CUDA APIs and device strings used by Megatron tests to MUSA.
@@ -123,10 +137,19 @@ setup_unit_environment() {
   )
   python3 -m pip install "${test_dependencies[@]}" --no-cache-dir
   python3 -m pip install fastapi uvicorn --no-cache-dir
+  if [ "${CI_TEST_GROUP:-}" = "models" ]; then
+    # rl_utils imports SummaryWriter while model tests are being collected.
+    # Install only the frontend so the image-provided torch/MUSA, NumPy, and
+    # protobuf versions remain unchanged.
+    python3 -m pip install "tensorboard==2.17.1" --no-deps --no-cache-dir
+    python3 -c \
+      "from torch.utils.tensorboard import SummaryWriter; print('MUSA TensorBoard dependency validated')"
+  fi
   prepare_musa_te_runtime
 
   echo "Skipping NVIDIA CUPTI and Emerging-Optimizers dependencies on MUSA."
   ci_install_project --ignore-requires-python
+  install_flash_attn_collection_stub
   install_musa_compatibility_layer
   validate_musa_capacity
 }
