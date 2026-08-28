@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - dev-hygon
+      - image_change
   pull_request:
     branches:
       - main
