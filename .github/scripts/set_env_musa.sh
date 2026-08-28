@@ -38,9 +38,14 @@ validate_musa_capacity() {
   ci_validate_device_capacity "$device_count"
 }
 
-install_musa_te_runtime_dependencies() {
+prepare_musa_te_runtime() {
+  # The MUSA image can carry NVIDIA FlashAttention package metadata without
+  # its CUDA extension. TE treats the metadata as availability and imports the
+  # missing flash_attn_*_cuda module before backend selection.
+  python3 -m pip uninstall -y flash-attn flash-attn-3 flash-attn-4
+
   # Megatron and TE-FL are installed with --no-deps to preserve the
-  # image-provided Torch/MUSA pair. Install the pure-Python TE dependency
+  # image-provided Torch/MUSA pair. Install the Python-level TE dependency
   # required when transformer_engine.pytorch imports its ONNX extensions.
   python3 -m pip install onnxscript --no-cache-dir
 }
@@ -114,7 +119,7 @@ setup_unit_environment() {
   )
   python3 -m pip install "${test_dependencies[@]}" --no-cache-dir
   python3 -m pip install fastapi uvicorn --no-cache-dir
-  install_musa_te_runtime_dependencies
+  prepare_musa_te_runtime
 
   echo "Skipping NVIDIA CUPTI and Emerging-Optimizers dependencies on MUSA."
   ci_install_project --ignore-requires-python
@@ -125,7 +130,7 @@ setup_unit_environment() {
 setup_build_environment() {
   ci_activate_python_environment
   configure_musa_runtime
-  install_musa_te_runtime_dependencies
+  prepare_musa_te_runtime
   ci_install_project --ignore-requires-python
   install_musa_compatibility_layer
   validate_musa_capacity
@@ -141,7 +146,7 @@ case "$CI_TEST_SUITE" in
 
     # Functional test toolchain and Python 3.10-compatible project install.
     ci_setup_functional_environment --ignore-requires-python
-    install_musa_te_runtime_dependencies
+    prepare_musa_te_runtime
     ci_install_local_tokenizer_dependencies
     ci_validate_qwen_assets /opt/data/datasets /opt/data/tokenizers
     install_musa_compatibility_layer
