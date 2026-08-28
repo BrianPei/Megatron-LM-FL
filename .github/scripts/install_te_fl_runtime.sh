@@ -5,7 +5,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/set_env_common.sh"
 
-required=(PLATFORM TE_FL_SOURCE TE_FL_PYTHON_COMMIT TE_FL_NATIVE_DIR TE_FL_NATIVE_FINGERPRINT TE_FL_RUNTIME_ENV_JSON TE_FL_INSTALL_PIP_ARGS_JSON)
+required=(PLATFORM TE_FL_SOURCE TE_FL_PYTHON_COMMIT TE_FL_NATIVE_DIR TE_FL_NATIVE_FINGERPRINT TE_FL_RUNTIME_ENV_JSON TE_FL_INSTALL_PIP_ARGS_JSON TE_FL_BASE_IMAGE_REF)
 for name in "${required[@]}"; do
   if [ -z "${!name:-}" ]; then
     echo "::error::$name is required" >&2
@@ -26,7 +26,18 @@ import sys
 from pathlib import Path
 
 manifest = json.load(open(sys.argv[1]))
-keys = ("platform", "native_source_fingerprint", "native_fingerprint", "te_fl_python_commit", "mode")
+if manifest.get("schema_version") != 2:
+    raise SystemExit(f"unsupported artifact manifest schema: {manifest.get('schema_version')!r}")
+if manifest.get("artifact_type") != "te-fl-native-runtime":
+    raise SystemExit(f"unsupported artifact type: {manifest.get('artifact_type')!r}")
+keys = (
+    "platform",
+    "native_source_fingerprint",
+    "native_fingerprint",
+    "native_build_commit",
+    "base_image_ref",
+    "mode",
+)
 lines = []
 for key in keys:
     value = manifest.get(key)
@@ -41,12 +52,149 @@ rm -f "$manifest_env"
 test "$TE_FL_ARTIFACT_PLATFORM" = "$PLATFORM"
 test "$TE_FL_ARTIFACT_NATIVE_SOURCE_FINGERPRINT" = "$TE_FL_NATIVE_FINGERPRINT"
 test "$TE_FL_ARTIFACT_NATIVE_FINGERPRINT" = "$TE_FL_NATIVE_FINGERPRINT"
-test -n "$TE_FL_ARTIFACT_TE_FL_PYTHON_COMMIT"
+test "$TE_FL_ARTIFACT_BASE_IMAGE_REF" = "$TE_FL_BASE_IMAGE_REF"
+if ! [[ "$TE_FL_ARTIFACT_NATIVE_BUILD_COMMIT" =~ ^[0-9a-f]{40}$ ]]; then
+  echo "::error::artifact native build commit is invalid" >&2
+  exit 1
+fi
 test "$(git -C "$TE_FL_SOURCE" rev-parse HEAD)" = "$TE_FL_PYTHON_COMMIT"
 (cd "$TE_FL_NATIVE_DIR" && sha256sum -c checksums.txt)
 
 native_mode=$TE_FL_ARTIFACT_MODE
 ci_apply_env_json "$TE_FL_RUNTIME_ENV_JSON"
+
+runtime_abi_fingerprint_file=$(mktemp)
+python3 - \
+  "$TE_FL_NATIVE_DIR/fingerprint.json" \
+  "$TE_FL_BASE_IMAGE_REF" \
+  "$TE_FL_ARTIFACT_NATIVE_BUILD_COMMIT" \
+  "$PLATFORM" \
+  "$native_mode" \
+  "$runtime_abi_fingerprint_file" <<'PY'
+import hashlib
+import importlib
+import json
+import pathlib
+import sys
+import sysconfig
+
+
+def fail(message: str) -> None:
+    raise SystemExit(f"runtime ABI mismatch: {message}")
+
+
+def file_sha256(path: pathlib.Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def module_identity(module_name: str) -> dict:
+    try:
+        module = importlib.import_module(module_name)
+    except Exception as error:
+        fail(f"cannot import runtime module {module_name!r}: {error}")
+    origin = getattr(module, "__file__", None)
+    record = {
+        "module": module_name,
+        "version": str(getattr(module, "__version__", "unknown")),
+        "sha256": "synthetic-module",
+    }
+    if origin and pathlib.Path(origin).is_file():
+        record["sha256"] = file_sha256(pathlib.Path(origin))
+    native_files = []
+    for package_path in getattr(module, "__path__", ()):
+        root = pathlib.Path(package_path)
+        for path in root.rglob("*"):
+            if path.is_file() and (".so" in path.name or path.suffix in {".pyd", ".dylib"}):
+                native_files.append({
+                    "path": path.relative_to(root).as_posix(),
+                    "sha256": file_sha256(path),
+                })
+    record["native_files"] = sorted(native_files, key=lambda item: item["path"])
+    return record
+
+
+def module_summary(record: dict) -> dict:
+    native_files = record.get("native_files", [])
+    native_digest = hashlib.sha256(
+        json.dumps(native_files, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    return {
+        "version": record.get("version"),
+        "module_sha256": record.get("sha256"),
+        "native_file_count": len(native_files),
+        "native_files_sha256": native_digest,
+    }
+
+
+fingerprint = json.load(open(sys.argv[1]))
+components = fingerprint.get("components", {})
+expected_fingerprint = __import__("os").environ["TE_FL_NATIVE_FINGERPRINT"]
+canonical = json.dumps(components, sort_keys=True, separators=(",", ":"))
+if hashlib.sha256(canonical.encode()).hexdigest() != expected_fingerprint:
+    fail("fingerprint components do not reproduce the requested artifact key")
+if fingerprint.get("fingerprint") != expected_fingerprint:
+    fail("fingerprint document does not match the requested artifact")
+if components.get("base_image_ref") != sys.argv[2]:
+    fail("base image reference differs from the native build environment")
+if fingerprint.get("te_fl_python_commit") != sys.argv[3]:
+    fail("native build commit differs from fingerprint provenance")
+if components.get("platform") != sys.argv[4]:
+    fail("platform differs from fingerprint provenance")
+if components.get("mode") != sys.argv[5]:
+    fail("native mode differs from fingerprint provenance")
+
+expected_runtime = components.get("runtime", {})
+try:
+    import torch
+except Exception as error:
+    fail(f"cannot import torch: {error}")
+
+actual_runtime = {
+    "python": sys.version.split()[0],
+    "python_soabi": sysconfig.get_config_var("SOABI"),
+    "torch": {
+        "version": str(torch.__version__),
+        "cuda": str(getattr(torch.version, "cuda", None)),
+        "hip": str(getattr(torch.version, "hip", None)),
+    },
+}
+for key in ("python", "python_soabi", "torch"):
+    if actual_runtime[key] != expected_runtime.get(key):
+        fail(f"{key} differs: expected={expected_runtime.get(key)!r} actual={actual_runtime[key]!r}")
+
+actual_modules = []
+for expected in components.get("runtime_modules", []):
+    expected_contract = {
+        key: expected.get(key)
+        for key in ("module", "version", "sha256", "native_files")
+    }
+    actual_contract = module_identity(expected_contract["module"])
+    if actual_contract != expected_contract:
+        fail(
+            f"runtime module differs: {expected_contract['module']}; "
+            f"expected={module_summary(expected_contract)!r} "
+            f"actual={module_summary(actual_contract)!r}"
+        )
+    actual_modules.append(actual_contract)
+
+contract = {
+    "python": actual_runtime["python"],
+    "python_soabi": actual_runtime["python_soabi"],
+    "torch": actual_runtime["torch"],
+    "runtime_modules": actual_modules,
+}
+canonical = json.dumps(contract, sort_keys=True, separators=(",", ":"))
+digest = hashlib.sha256(canonical.encode()).hexdigest()
+pathlib.Path(sys.argv[6]).write_text(digest + "\n")
+print(f"runtime ABI: PASS ({digest})")
+PY
+TE_FL_RUNTIME_ABI_FINGERPRINT=$(<"$runtime_abi_fingerprint_file")
+rm -f "$runtime_abi_fingerprint_file"
+export TE_FL_RUNTIME_ABI_FINGERPRINT
 
 install_pip_args=()
 install_pip_args_file=$(mktemp)
@@ -110,9 +258,12 @@ elif [ "$native_mode" != base_image ]; then
   exit 1
 fi
 
-# Copy only Python/package metadata from the current checkout. An editable pip
-# install would run build_ext and defeat native artifact reuse.
+# Copy Python and non-native package data from the current checkout. An editable
+# pip install would run build_ext and defeat native artifact reuse.
+python_overlay_fingerprint_file=$(mktemp)
+export TE_FL_PYTHON_OVERLAY_FINGERPRINT_FILE="$python_overlay_fingerprint_file"
 python3 - "$TE_FL_SOURCE" <<'PY'
+import hashlib
 import importlib.util
 import json
 import os
@@ -127,12 +278,45 @@ spec = importlib.util.find_spec("transformer_engine")
 if spec is None or not spec.submodule_search_locations:
     raise SystemExit("installed TE-FL Python package is not importable")
 target_root = Path(next(iter(spec.submodule_search_locations)))
-allowed_suffixes = {".py", ".pyi", ".json", ".yaml", ".yml", ".toml", ".txt", ".typed"}
+native_suffixes = {
+    ".a", ".asm", ".c", ".cc", ".cl", ".cmake", ".cpp", ".cu", ".cubin", ".cuh",
+    ".dll", ".dylib", ".fatbin", ".h", ".hip", ".hpp", ".in", ".inc",
+    ".j2", ".jinja", ".jinja2", ".lib", ".metal", ".mk", ".o", ".obj",
+    ".proto", ".ptx", ".pyd", ".pyc", ".pxd", ".pxi", ".pyx", ".s",
+    ".so", ".sycl", ".template", ".tpl",
+}
+native_filenames = {"BUILD", "BUILD.bazel", "CMakeLists.txt", "Makefile", "_build_config.py"}
+
+
+def is_python_package_file(path: Path) -> bool:
+    if (
+        "__pycache__" in path.parts
+        or path.name in native_filenames
+    ):
+        return False
+    if ".so" in path.name or path.suffix.lower() in native_suffixes:
+        return False
+    return True
+
+
+def file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 source_files = {
     source.relative_to(source_root)
     for source in source_root.rglob("*")
-    if source.is_file() and source.suffix in allowed_suffixes
+    if source.is_file() and is_python_package_file(source)
 }
+if not source_files:
+    raise SystemExit("TE-FL Python overlay contains no package files")
+
+# Remove only files owned by the cached TE-FL source commit. Vendor packages may
+# contribute additional modules under the same namespace and must be preserved.
 old_file_list = Path(os.environ["TE_FL_NATIVE_DIR"]) / "python-source-files.json"
 if not old_file_list.is_file():
     raise SystemExit(f"cached Python source manifest is missing: {old_file_list}")
@@ -148,17 +332,27 @@ for relative_name in old_files:
         if target.is_file():
             target.unlink()
 copied = 0
-for source in source_root.rglob("*"):
-    if not source.is_file() or source.suffix not in allowed_suffixes:
-        continue
-    target = target_root / source.relative_to(source_root)
+aggregate = hashlib.sha256()
+for relative in sorted(source_files):
+    source = source_root / relative
+    target = target_root / relative
     target.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(source, target)
+    source_digest = file_sha256(source)
+    if file_sha256(target) != source_digest:
+        raise SystemExit(f"TE-FL Python overlay copy mismatch: {relative}")
+    aggregate.update(relative.as_posix().encode())
+    aggregate.update(b"\0")
+    aggregate.update(source_digest.encode())
     copied += 1
-if copied == 0:
-    raise SystemExit("TE-FL Python overlay contains no package files")
+Path(os.environ["TE_FL_PYTHON_OVERLAY_FINGERPRINT_FILE"]).write_text(
+    aggregate.hexdigest() + "\n"
+)
 print(f"TE-FL Python overlay installed: {copied} files")
 PY
+TE_FL_PYTHON_OVERLAY_FINGERPRINT=$(<"$python_overlay_fingerprint_file")
+rm -f "$python_overlay_fingerprint_file"
+export TE_FL_PYTHON_OVERLAY_FINGERPRINT
 
 runtime_manifest="${TE_FL_RUNTIME_MANIFEST:-/etc/flagos/te-fl.json}"
 mkdir -p "$(dirname "$runtime_manifest")"
@@ -170,11 +364,14 @@ import pathlib
 import sys
 artifact = json.load(open(os.environ["TE_FL_ARTIFACT_MANIFEST"]))
 runtime = {
-    "schema_version": 1,
+    "schema_version": 2,
     "platform": os.environ["PLATFORM"],
+    "native_build_commit": artifact["native_build_commit"],
     "te_fl_python_commit": os.environ["TE_FL_PYTHON_COMMIT"],
     "native_source_fingerprint": artifact["native_source_fingerprint"],
     "native_fingerprint": artifact["native_fingerprint"],
+    "runtime_abi_fingerprint": os.environ["TE_FL_RUNTIME_ABI_FINGERPRINT"],
+    "python_overlay_fingerprint": os.environ["TE_FL_PYTHON_OVERLAY_FINGERPRINT"],
     "native_mode": artifact["mode"],
     "base_image_ref": artifact["base_image_ref"],
     "artifact_files": artifact["files"],

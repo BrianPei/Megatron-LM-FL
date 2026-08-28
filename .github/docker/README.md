@@ -6,17 +6,19 @@ that immutable commit to every unit, functional, and benchmark job.
 
 ## Build Model
 
-The runtime has two identities:
+The runtime records separate native and Python provenance:
 
 - `te_fl_python_commit`: the resolved TE-FL commit used by the test.
+- `native_build_commit`: the TE-FL commit that produced the cached wheel.
 - `native_fingerprint`: the native build and ABI inputs used by the cached
   wheel.
 
 The fingerprint deliberately excludes ordinary TE-FL Python files. It includes
 native source files, build files and environment, target architecture,
-compiler/tool versions, Python SOABI, Torch versions, and hashes of configured
-platform runtime modules and their shared libraries. Runtime installation and
-verification script changes do not invalidate the native artifact.
+compiler/tool versions, Python build-package versions, Python SOABI, Torch
+versions, and hashes of configured platform runtime modules and their shared
+libraries. Runtime installation and verification script changes do not
+invalidate the native artifact.
 
 A Python-only TE-FL change therefore reuses the native artifact and overlays the
 current Python package files. A native source, build configuration, toolchain,
@@ -29,14 +31,17 @@ wheel.
 `.github/workflows/prepare_te_fl.yml` on the platform runner and test image.
 The prepare job resolves TE-FL, calculates the fingerprint, restores or builds
 the native artifact, installs the current Python overlay, and runs strict
-device/backend verification once. It then publishes a one-day workflow
+device/backend verification once. It then publishes a three-day workflow
 artifact for jobs in the same run.
 
 Every unit and functional matrix job downloads that same-run workflow artifact,
 validates its checksums and identity, installs the wheel, overlays Python files
-from the resolved TE-FL commit, and runs tests. The expensive device/backend
-verification is not repeated by every matrix job. Benchmark cases are entries
-in the existing functional training matrix, so they use the same runtime path.
+from the resolved TE-FL commit, removes TE-FL-owned Python files deleted by the
+current commit, verifies the current Python/Torch/vendor-module ABI against the
+native fingerprint, and runs tests. Vendor-added namespace files are preserved.
+The expensive device/backend verification is not repeated by every matrix job.
+Benchmark cases are entries in the existing functional training matrix, so they
+use the same runtime path.
 
 GitHub cache is only a cross-run build accelerator. Workflow artifacts are the
 delivery mechanism within one run, avoiding cache visibility races between the

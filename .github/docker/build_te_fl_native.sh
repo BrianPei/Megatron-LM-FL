@@ -75,11 +75,28 @@ import sys
 from pathlib import Path
 
 root = Path(sys.argv[1]) / "transformer_engine"
-suffixes = {".py", ".pyi", ".json", ".yaml", ".yml", ".toml", ".txt", ".typed"}
+native_suffixes = {
+    ".a", ".asm", ".c", ".cc", ".cl", ".cmake", ".cpp", ".cu", ".cubin", ".cuh",
+    ".dll", ".dylib", ".fatbin", ".h", ".hip", ".hpp", ".in", ".inc",
+    ".j2", ".jinja", ".jinja2", ".lib", ".metal", ".mk", ".o", ".obj",
+    ".proto", ".ptx", ".pyd", ".pyc", ".pxd", ".pxi", ".pyx", ".s",
+    ".so", ".sycl", ".template", ".tpl",
+}
+native_filenames = {
+    "BUILD", "BUILD.bazel", "CMakeLists.txt", "Makefile", "_build_config.py",
+}
+
+
+def is_python_package_file(path: Path) -> bool:
+    if "__pycache__" in path.parts or path.name in native_filenames:
+        return False
+    return ".so" not in path.name and path.suffix.lower() not in native_suffixes
+
+
 files = sorted(
     path.relative_to(root).as_posix()
     for path in root.rglob("*")
-    if path.is_file() and path.suffix in suffixes
+    if path.is_file() and is_python_package_file(path)
 )
 if not files:
     raise SystemExit("TE-FL Python source file list is empty")
@@ -161,14 +178,14 @@ import platform
 import sys
 
 manifest = {
-    "schema_version": 1,
+    "schema_version": 2,
     "artifact_type": "te-fl-native-runtime",
     "platform": os.environ["PLATFORM"],
     "mode": os.environ["NATIVE_MODE"],
     "base_image_ref": os.environ["BASE_IMAGE_REF"],
-    # Python provenance is separate from the native identity. This allows a
-    # Python-only TE-FL commit to reuse the native artifact.
-    "te_fl_python_commit": os.environ["TE_FL_COMMIT"],
+    # This is the commit that produced the cached wheel. Runtime Python may
+    # come from a newer commit with the same native fingerprint.
+    "native_build_commit": os.environ["TE_FL_COMMIT"],
     "native_source_fingerprint": os.environ["NATIVE_FINGERPRINT"],
     "native_fingerprint": os.environ["NATIVE_FINGERPRINT"],
     "files": json.loads(os.environ["ARTIFACT_FILES_JSON"]),

@@ -74,7 +74,7 @@ jobs:
           repository: flagos-ai/TransformerEngine-FL
           ref: ${{ inputs.te_fl_ref }}
           path: te-fl
-          fetch-depth: 0
+          fetch-depth: 1
           submodules: recursive
 
       - name: Resolve checked-out TE-FL commit
@@ -191,35 +191,6 @@ jobs:
           REQUIRE_SHARED_LIBRARY: ${{ inputs.require_shared_library }}
         run: bash .github/docker/build_te_fl_native.sh
 
-      - name: Verify native artifact
-        env:
-          EXPECTED_PLATFORM: ${{ inputs.platform }}
-          EXPECTED_FINGERPRINT: ${{ steps.fingerprint.outputs.fingerprint }}
-        run: |
-          set -euo pipefail
-          test -f te-fl-native/manifest.json
-          test -f te-fl-native/checksums.txt
-          (cd te-fl-native && sha256sum -c checksums.txt)
-          python3 - "$EXPECTED_PLATFORM" "$EXPECTED_FINGERPRINT" <<'PY'
-          import json
-          import sys
-          manifest = json.load(open("te-fl-native/manifest.json"))
-          expected = {
-              "platform": sys.argv[1],
-              "native_source_fingerprint": sys.argv[2],
-          }
-          for key, value in expected.items():
-              if manifest.get(key) != value:
-                  raise SystemExit(f"artifact manifest mismatch for {key}: {manifest.get(key)!r}")
-          fingerprint = json.load(open("te-fl-native/fingerprint.json"))
-          if fingerprint.get("fingerprint") != sys.argv[2]:
-              raise SystemExit("cached fingerprint manifest does not match cache key")
-          for record in manifest.get("files", []):
-              path = __import__("pathlib").Path("te-fl-native") / record["filename"]
-              if not path.is_file() or path.stat().st_size != record["size"]:
-                  raise SystemExit(f"artifact file mismatch: {path}")
-          PY
-
       - name: Install current TE-FL runtime
         env:
           PLATFORM: ${{ inputs.platform }}
@@ -227,6 +198,7 @@ jobs:
           TE_FL_PYTHON_COMMIT: ${{ steps.resolve.outputs.commit }}
           TE_FL_NATIVE_DIR: ${{ github.workspace }}/te-fl-native
           TE_FL_NATIVE_FINGERPRINT: ${{ steps.fingerprint.outputs.fingerprint }}
+          TE_FL_BASE_IMAGE_REF: ${{ inputs.image }}
           TE_FL_RUNTIME_ENV_JSON: ${{ inputs.runtime_env }}
           TE_FL_INSTALL_PIP_ARGS_JSON: ${{ inputs.install_pip_args }}
         run: .github/scripts/install_te_fl_runtime.sh
@@ -262,7 +234,7 @@ jobs:
           name: te-fl-native-${{ inputs.platform }}-${{ steps.fingerprint.outputs.fingerprint }}
           path: te-fl-native
           if-no-files-found: error
-          retention-days: 1
+          retention-days: 3
 
       - name: Save native artifact
         if: steps.cache.outputs.cache-hit != 'true'

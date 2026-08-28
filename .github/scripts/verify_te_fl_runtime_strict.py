@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import importlib
 import json
 import os
@@ -24,12 +25,20 @@ def load_manifest(path: Path) -> dict[str, Any]:
     except json.JSONDecodeError as error:
         fail(f"runtime manifest is invalid JSON: {error}")
     required = {
-        "schema_version", "platform", "te_fl_python_commit",
-        "native_source_fingerprint", "native_fingerprint", "native_mode",
-        "base_image_ref", "artifact_files",
+        "schema_version",
+        "platform",
+        "native_build_commit",
+        "te_fl_python_commit",
+        "native_source_fingerprint",
+        "native_fingerprint",
+        "native_mode",
+        "base_image_ref",
+        "artifact_files",
+        "runtime_abi_fingerprint",
+        "python_overlay_fingerprint",
     }
     missing = sorted(required - manifest.keys())
-    if missing or manifest.get("schema_version") != 1:
+    if missing or manifest.get("schema_version") != 2:
         fail(f"runtime manifest schema is invalid; missing={missing}")
     return manifest
 
@@ -42,14 +51,30 @@ def verify_identity(manifest: dict[str, Any], args: argparse.Namespace) -> None:
     if args.expected_fingerprint and manifest["native_fingerprint"] != args.expected_fingerprint:
         fail("TE-FL native fingerprint mismatch")
     for key, value in (
+        ("native_build_commit", manifest["native_build_commit"]),
         ("te_fl_python_commit", args.expected_commit),
         ("native_source_fingerprint", manifest["native_source_fingerprint"]),
         ("native_fingerprint", manifest["native_fingerprint"]),
+        ("runtime_abi_fingerprint", manifest["runtime_abi_fingerprint"]),
+        ("python_overlay_fingerprint", manifest["python_overlay_fingerprint"]),
     ):
         if not isinstance(value, str) or not value:
             fail(f"manifest identity is empty: {key}")
     if manifest["native_source_fingerprint"] != manifest["native_fingerprint"]:
         fail("native fingerprint fields disagree")
+    for key in ("native_build_commit", "te_fl_python_commit"):
+        value = manifest[key]
+        if len(value) != 40 or any(c not in "0123456789abcdef" for c in value):
+            fail(f"manifest commit is invalid: {key}")
+    for key in (
+        "native_source_fingerprint",
+        "native_fingerprint",
+        "runtime_abi_fingerprint",
+        "python_overlay_fingerprint",
+    ):
+        value = manifest[key]
+        if len(value) != 64 or any(c not in "0123456789abcdef" for c in value):
+            fail(f"manifest fingerprint is invalid: {key}")
     print("manifest identity: PASS")
 
 
@@ -89,6 +114,88 @@ def verify_module(module_name: str, source_root: Path) -> Any:
         fail(f"TE-FL module resolved to source checkout: {origin_path}")
     print(f"TE-FL module: PASS ({module_name} -> {origin_path})")
     return module
+
+
+def verify_python_overlay(manifest: dict[str, Any], source_root: Path, module: Any) -> None:
+    package_source = source_root / "transformer_engine"
+    package_target = Path(module.__file__).parent
+    native_suffixes = {
+        ".a",
+        ".asm",
+        ".c",
+        ".cc",
+        ".cl",
+        ".cmake",
+        ".cpp",
+        ".cu",
+        ".cubin",
+        ".cuh",
+        ".dll",
+        ".dylib",
+        ".fatbin",
+        ".h",
+        ".hip",
+        ".hpp",
+        ".in",
+        ".inc",
+        ".j2",
+        ".jinja",
+        ".jinja2",
+        ".lib",
+        ".metal",
+        ".mk",
+        ".o",
+        ".obj",
+        ".proto",
+        ".ptx",
+        ".pyd",
+        ".pyc",
+        ".pxd",
+        ".pxi",
+        ".pyx",
+        ".s",
+        ".so",
+        ".sycl",
+        ".template",
+        ".tpl",
+    }
+    native_filenames = {"BUILD", "BUILD.bazel", "CMakeLists.txt", "Makefile", "_build_config.py"}
+
+    def included(path: Path) -> bool:
+        if "__pycache__" in path.parts or path.name in native_filenames:
+            return False
+        return ".so" not in path.name and path.suffix.lower() not in native_suffixes
+
+    def file_sha256(path: Path) -> str:
+        digest = hashlib.sha256()
+        with path.open("rb") as stream:
+            for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                digest.update(chunk)
+        return digest.hexdigest()
+
+    aggregate = hashlib.sha256()
+    files = sorted(
+        path.relative_to(package_source)
+        for path in package_source.rglob("*")
+        if path.is_file() and included(path)
+    )
+    if not files:
+        fail("TE-FL Python source contains no overlay files")
+    for relative in files:
+        source = package_source / relative
+        target = package_target / relative
+        if not target.is_file():
+            fail(f"installed TE-FL Python file is missing: {relative}")
+        source_digest = file_sha256(source)
+        if file_sha256(target) != source_digest:
+            fail(f"installed TE-FL Python file differs: {relative}")
+        aggregate.update(relative.as_posix().encode())
+        aggregate.update(b"\0")
+        aggregate.update(source_digest.encode())
+    actual = aggregate.hexdigest()
+    if actual != manifest["python_overlay_fingerprint"]:
+        fail("TE-FL Python overlay fingerprint mismatch")
+    print(f"Python overlay: PASS ({actual})")
 
 
 def parse_string_list(value: str, field: str) -> list[str]:
@@ -134,9 +241,7 @@ def verify_device(module_name: str) -> str:
     return device_name
 
 
-def verify_runtime_environment(
-    manifest: dict[str, Any], environment: dict[str, str]
-) -> None:
+def verify_runtime_environment(manifest: dict[str, Any], environment: dict[str, str]) -> None:
     if manifest.get("runtime_environment") != environment:
         fail("runtime environment does not match the provenance manifest")
     for name, value in environment.items():
@@ -164,11 +269,16 @@ def verify_operator(device_name: str, expected_backend: str) -> None:
             "TE forward/backward failed on the configured device "
             f"(device={device}, expected_backend={expected_backend}): {error}"
         )
-    if not bool(torch.isfinite(output).all()) or inputs.grad is None or not bool(torch.isfinite(inputs.grad).all()):
+    if (
+        not bool(torch.isfinite(output).all())
+        or inputs.grad is None
+        or not bool(torch.isfinite(inputs.grad).all())
+    ):
         fail("TE forward/backward produced non-finite output or gradient")
 
     try:
         from transformer_engine.plugin.core import get_manager
+
         manager = get_manager()
         selected_backend = manager.get_selected_impl_id("generic_gemm")
     except Exception as error:
@@ -177,10 +287,7 @@ def verify_operator(device_name: str, expected_backend: str) -> None:
             f"(expected={expected_backend}): {error}"
         )
     if selected_backend != expected_backend:
-        fail(
-            "selected backend mismatch: "
-            f"expected={expected_backend} actual={selected_backend}"
-        )
+        fail("selected backend mismatch: " f"expected={expected_backend} actual={selected_backend}")
     print(f"operator/selected backend: PASS ({selected_backend})")
 
 
@@ -197,7 +304,9 @@ def main() -> int:
     parser.add_argument("--source-root", required=True, type=Path)
     parser.add_argument("--manifest", type=Path, default=Path("/etc/flagos/te-fl.json"))
     args = parser.parse_args()
-    if len(args.expected_commit) != 40 or any(c not in "0123456789abcdef" for c in args.expected_commit):
+    if len(args.expected_commit) != 40 or any(
+        c not in "0123456789abcdef" for c in args.expected_commit
+    ):
         fail("expected TE-FL commit must be a full lowercase SHA")
 
     manifest = load_manifest(args.manifest)
@@ -206,7 +315,8 @@ def main() -> int:
     bootstrap_modules = parse_string_list(args.bootstrap_modules_json, "bootstrap modules")
     verify_runtime_environment(manifest, runtime_environment)
     bootstrap_runtime(bootstrap_modules)
-    verify_module(args.native_module, args.source_root)
+    module = verify_module(args.native_module, args.source_root)
+    verify_python_overlay(manifest, args.source_root, module)
     device_name = verify_device(args.device_module)
     verify_operator(device_name, args.expected_backend)
     print("TE-FL runtime verification: PASS")

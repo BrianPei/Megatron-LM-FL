@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import importlib
+import importlib.metadata
 import json
 import os
 import shutil
@@ -84,11 +85,52 @@ def hash_configured_paths(
     root: Path, configured_paths: list[str], *, native_only: bool = False
 ) -> dict[str, Any]:
     native_suffixes = {
-        ".c", ".cc", ".cpp", ".cu", ".cuh", ".h", ".hpp", ".hip", ".proto",
+        ".a",
+        ".asm",
+        ".c",
+        ".cc",
+        ".cl",
+        ".cmake",
+        ".cpp",
+        ".cu",
+        ".cubin",
+        ".cuh",
+        ".dll",
+        ".dylib",
+        ".fatbin",
+        ".h",
+        ".hip",
+        ".hpp",
+        ".in",
+        ".inc",
+        ".j2",
+        ".jinja",
+        ".jinja2",
+        ".lib",
+        ".metal",
+        ".mk",
+        ".o",
+        ".obj",
+        ".s",
+        ".proto",
+        ".ptx",
+        ".pxd",
+        ".pxi",
+        ".pyx",
+        ".pyd",
+        ".so",
+        ".sycl",
+        ".template",
+        ".tpl",
     }
+    native_filenames = {"BUILD", "BUILD.bazel", "CMakeLists.txt", "Makefile", "_build_config.py"}
 
     def included(path: Path) -> bool:
-        return not native_only or path.name == "CMakeLists.txt" or path.suffix in native_suffixes
+        return (
+            not native_only
+            or path.name in native_filenames
+            or path.suffix.lower() in native_suffixes
+        )
 
     files: list[Path] = []
     missing: list[str] = []
@@ -121,8 +163,7 @@ def hash_configured_paths(
 def submodule_revisions(root: Path) -> list[dict[str, str]]:
     revisions = []
     for line in output(
-        ["git", "-C", str(root), "submodule", "status", "--recursive"],
-        required=True,
+        ["git", "-C", str(root), "submodule", "status", "--recursive"], required=True
     ).splitlines():
         fields = line.lstrip(" +-U").split()
         if len(fields) >= 2 and len(fields[0]) == 40:
@@ -150,10 +191,9 @@ def module_identity(module_name: str) -> dict[str, Any]:
         root = Path(package_path)
         for path in root.rglob("*"):
             if path.is_file() and (".so" in path.name or path.suffix in {".pyd", ".dylib"}):
-                native_files.append({
-                    "path": path.relative_to(root).as_posix(),
-                    "sha256": file_sha256(path),
-                })
+                native_files.append(
+                    {"path": path.relative_to(root).as_posix(), "sha256": file_sha256(path)}
+                )
     record["native_files"] = sorted(native_files, key=lambda item: item["path"])
     return record
 
@@ -170,6 +210,44 @@ def runtime_identity(compiler: str) -> dict[str, Any]:
     if package_inventory == "unavailable":
         package_inventory = output(["rpm", "-qa", "--qf", "%{NAME}=%{VERSION}-%{RELEASE}\n"])
     package_inventory = "\n".join(sorted(package_inventory.splitlines()))
+    build_python_packages = {}
+    for distribution in (
+        "Cython",
+        "cmake",
+        "ninja",
+        "packaging",
+        "pip",
+        "pybind11",
+        "setuptools",
+        "wheel",
+    ):
+        try:
+            build_python_packages[distribution] = importlib.metadata.version(distribution)
+        except importlib.metadata.PackageNotFoundError:
+            build_python_packages[distribution] = "unavailable"
+    build_environment_names = {
+        "CC",
+        "CMAKE_PREFIX_PATH",
+        "CPATH",
+        "CPLUS_INCLUDE_PATH",
+        "CUDA_HOME",
+        "CUDA_PATH",
+        "CXX",
+        "DTK_HOME",
+        "HIP_CLANG_PATH",
+        "HIP_PATH",
+        "LD_LIBRARY_PATH",
+        "LIBRARY_PATH",
+        "MUSA_HOME",
+        "PATH",
+        "PYTHONPATH",
+        "ROCM_PATH",
+    }
+    effective_build_environment = {
+        name: value
+        for name, value in sorted(os.environ.items())
+        if name in build_environment_names or name.startswith("NVTE_") or name == "TE_FL_SKIP_CUDA"
+    }
     return {
         "python": sys.version.split()[0],
         "python_soabi": sysconfig.get_config_var("SOABI"),
@@ -186,6 +264,8 @@ def runtime_identity(compiler: str) -> dict[str, Any]:
         "cmake": output(["cmake", "--version"]).splitlines()[0],
         "ninja": output(["ninja", "--version"]),
         "system_packages_sha256": hashlib.sha256(package_inventory.encode()).hexdigest(),
+        "build_python_packages": build_python_packages,
+        "effective_build_environment": effective_build_environment,
     }
 
 

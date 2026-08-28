@@ -82,14 +82,25 @@ directory as a workflow artifact for deterministic consumption by unit and
 functional jobs in the current run. Downstream jobs do not use the cache as a
 same-run message bus.
 
+GitHub scopes caches by branch. A cache created by a pull request primarily
+accelerates reruns of that pull request; it is not promoted to other pull
+requests. Shared cache entries are created by `main` push runs and by the daily
+or manually dispatched workflow when it runs on the default branch.
+
 - Python-only TE-FL change: same fingerprint, cache hit, Python overlay update.
 - C++/CUDA/header/build-file change: new fingerprint, wheel rebuild.
-- Torch/vendor runtime/toolchain change: new fingerprint, wheel rebuild.
+- Torch/vendor runtime/toolchain or build-Python-package change: new
+  fingerprint, wheel rebuild.
 - Corrupt or mismatched artifact: checksum or manifest failure before tests.
+- Different Python/Torch/vendor runtime in a test container: runtime ABI failure
+  before the cached wheel is installed.
+- Removed or renamed TE-FL Python file: the old TE-FL-owned copy is deleted
+  before the current overlay is verified; vendor-added namespace files remain.
 
 Strict device execution and backend selection are verified once in the prepare
-job. Matrix test jobs repeat only installation-time commit, fingerprint,
-manifest, and checksum validation before running their tests.
+job. Matrix test jobs repeat installation-time commit, fingerprint, checksum,
+Python overlay, base-image-reference, and runtime ABI validation before running
+their tests.
 
 ## Hardware Acceptance
 

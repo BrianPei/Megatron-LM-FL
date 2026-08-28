@@ -47,7 +47,11 @@ prepare_musa_te_runtime() {
   # Megatron and TE-FL are installed with --no-deps to preserve the
   # image-provided Torch/MUSA pair. Install the Python-level TE dependency
   # required when transformer_engine.pytorch imports its ONNX extensions.
-  python3 -m pip install onnxscript --no-cache-dir
+  if ! python3 -c "import onnxscript" >/dev/null 2>&1; then
+    python3 -m pip install onnxscript --no-deps --no-cache-dir
+  fi
+  python3 -c \
+    "import onnxscript; print(f'onnxscript import passed: {onnxscript.__file__}')"
 }
 
 install_musa_compatibility_layer() {

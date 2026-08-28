@@ -133,7 +133,7 @@ jobs:
           repository: flagos-ai/TransformerEngine-FL
           ref: ${{ inputs.te_fl_commit }}
           path: te-fl
-          fetch-depth: 0
+          fetch-depth: 1
 
       - name: Download TE-FL native artifact
         uses: actions/download-artifact@v4
@@ -149,6 +149,7 @@ jobs:
           TE_FL_PYTHON_COMMIT: ${{ inputs.te_fl_commit }}
           TE_FL_NATIVE_DIR: ${{ github.workspace }}/te-fl-native
           TE_FL_NATIVE_FINGERPRINT: ${{ inputs.te_fl_native_fingerprint }}
+          TE_FL_BASE_IMAGE_REF: ${{ inputs.image }}
           TE_FL_RUNTIME_ENV_JSON: ${{ inputs.te_fl_runtime_env }}
           TE_FL_INSTALL_PIP_ARGS_JSON: ${{ inputs.te_fl_install_pip_args }}
         run: .github/scripts/install_te_fl_runtime.sh
