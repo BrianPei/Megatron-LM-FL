@@ -2,7 +2,7 @@ name: ascend_tests
 
 on:
   push:
-    branches: ["main"]
+    branches: ["main","image_chage"]
   pull_request:
     branches: ["main"]
   workflow_dispatch: # Allows manual triggering
