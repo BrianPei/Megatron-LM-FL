@@ -6,7 +6,7 @@ display_name: 'KunLunXin Tests'
 setup_script: .github/scripts/set_env_kunlunxin.sh
 
 # CI image for KunLunXin P800 environment
-ci_image: harbor.baai.ac.cn/flagos-dev/megatron-lm-fl:manual-20260804-kunlunxin-dev
+ci_image: harbor.baai.ac.cn/flagos-dev/megatron-lm-fl:manual-20260828-kunlunxin-dev
 
 # Runner labels for the KunLunXin node
 runner_labels:

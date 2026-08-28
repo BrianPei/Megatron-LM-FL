@@ -7,7 +7,7 @@ display_name: 'CUDA Tests'
 setup_script: .github/scripts/set_env_cuda.sh
 
 # CI image for online env
-ci_image: harbor.baai.ac.cn/flagscale/megatron-lm-fl:cuda12.8.1-cudnn9.8.0-torch2.7.0-python3.12-dev-02111650
+ci_image: harbor.baai.ac.cn/flagscale/megatron-lm-fl:manual-20260828-cuda-dev
 
 # Runner labels for A100 node
 runner_labels:
