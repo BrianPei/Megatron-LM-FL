@@ -2,7 +2,7 @@ name: kunlunxin_tests
 
 on:
   push:
-    branches: ["main","image_chage"]
+    branches: ["main","image_change"]
   pull_request:
     branches: ["main"]
   workflow_dispatch: # Allows manual triggering
