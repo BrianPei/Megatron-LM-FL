@@ -345,6 +345,11 @@ test_matrix:
 te_fl:
   ref: main
 
+  delivery:
+    mode: artifact
+    runtime_image: ""
+    expected_commit: ""
+
   # Native build configuration
   native:
     mode: source

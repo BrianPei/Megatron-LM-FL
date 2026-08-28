@@ -1,72 +1,80 @@
-# TE-FL Incremental Runtime
+# TE-FL Runtime Delivery
 
-Megatron-LM-FL resolves TransformerEngine-FL (TE-FL) for every hardware test
-run. The default ref is `main`; CI resolves it once to a full commit and passes
-that immutable commit to every unit, functional, and benchmark job.
+Megatron-LM-FL supports two TE-FL delivery modes. Platform configuration is the
+single switch between them.
 
-## Build Model
+## Delivery Modes
 
-The runtime records separate native and Python provenance:
+### Prebuilt image (`image`)
 
-- `te_fl_python_commit`: the resolved TE-FL commit used by the test.
-- `native_build_commit`: the TE-FL commit that produced the cached wheel.
-- `native_fingerprint`: the native build and ABI inputs used by the cached
-  wheel.
+This is the steady-state path. Unit, functional, and benchmark jobs start from
+one immutable Harbor image that already contains the platform runtime and a
+verified TE-FL installation.
 
-The fingerprint deliberately excludes ordinary TE-FL Python files. It includes
-native source files, build files and environment, target architecture,
-compiler/tool versions, Python build-package versions, Python SOABI, Torch
-versions, and hashes of configured platform runtime modules and their shared
-libraries. Runtime installation and verification script changes do not
-invalidate the native artifact.
+Normal test jobs do not check out TransformerEngine-FL, compile a wheel,
+download a native artifact, or reinstall TE-FL. Each job only validates the
+image manifest, required runtime environment, bootstrap modules, and installed
+TE-FL import before running the existing tests.
 
-A Python-only TE-FL change therefore reuses the native artifact and overlays the
-current Python package files. A native source, build configuration, toolchain,
-ABI, or platform runtime change produces a different cache key and rebuilds the
-wheel.
+The image must be pinned by digest and contain `/etc/flagos/te-fl.json`. Its
+configured TE-FL commit must match `te_fl_python_commit` in that manifest.
+Strict device execution and backend selection are acceptance checks for image
+publication, so they are not repeated in every test matrix job.
 
-## CI Flow
+### Workflow artifact (`artifact`)
 
-`.github/workflows/all_tests_common.yml` calls
-`.github/workflows/prepare_te_fl.yml` on the platform runner and test image.
-The prepare job resolves TE-FL, calculates the fingerprint, restores or builds
-the native artifact, installs the current Python overlay, and runs strict
-device/backend verification once. It then publishes a three-day workflow
-artifact for jobs in the same run.
+This is the compatibility and fallback path. The prepare job resolves TE-FL,
+calculates a native fingerprint, restores or builds the native artifact,
+installs the current Python overlay, and runs strict device/backend verification.
+It then uploads the validated native directory as a short-lived workflow
+artifact. Unit and functional jobs download and install that artifact before
+running tests.
 
-Every unit and functional matrix job downloads that same-run workflow artifact,
-validates its checksums and identity, installs the wheel, overlays Python files
-from the resolved TE-FL commit, removes TE-FL-owned Python files deleted by the
-current commit, verifies the current Python/Torch/vendor-module ABI against the
-native fingerprint, and runs tests. Vendor-added namespace files are preserved.
-The expensive device/backend verification is not repeated by every matrix job.
-Benchmark cases are entries in the existing functional training matrix, so they
-use the same runtime path.
+The native fingerprint excludes ordinary TE-FL Python files and includes
+native sources, build files, toolchain, target architecture, Python/Torch ABI,
+base image, and vendor runtime modules. Python-only changes reuse native output;
+C++/CUDA/header/build or ABI changes generate a new fingerprint and rebuild.
 
-GitHub cache is only a cross-run build accelerator. Workflow artifacts are the
-delivery mechanism within one run, avoiding cache visibility races between the
-prepare job and its downstream jobs.
+GitHub cache accelerates native builds across runs. The workflow artifact is
+the deterministic delivery mechanism between jobs in the same run.
 
-`.github/workflows/te_fl_daily.yml` runs the prepare path on the default branch
-without tests. It detects independent TE-FL `main` updates and creates a
-default-branch cache entry that later pull requests can restore.
+## Common Flow
 
-## Verification
+`.github/workflows/all_tests_common.yml` reads the platform configuration and
+resolves three values:
 
-The strict verifier checks the runtime manifest, installed TE-FL module, device
-availability, backend selection environment, TE `Linear` forward/backward, and
-the implementation selected for `generic_gemm` by the TE-FL manager.
+- delivery mode (`artifact` or `image`)
+- whether a TE-FL prepare job is required
+- the immutable image used by test jobs
 
-If the installed TE-FL version cannot report the selected implementation,
-verification fails. The real device forward/backward must complete before the
-implementation ID is accepted.
+In artifact mode, the configured `ci_image` is both the build and test base
+image. In image mode, tests use `te_fl.delivery.runtime_image`; the prepare job
+is skipped for normal test runs.
+
+`.github/workflows/te_fl_daily.yml` explicitly invokes the prepare path without
+tests. It continues to resolve and validate TE-FL `main` independently of
+normal image-mode test consumption. When the resolved commit differs from the
+commit recorded for the configured runtime image, the daily run fails with an
+explicit stale-image error after validating the latest runtime.
+
+## Verification Boundary
+
+Image publication must prove the full runtime contract on real hardware:
+
+- manifest identity and TE-FL commit
+- Python/Torch/vendor runtime ABI
+- installed Python overlay
+- device availability
+- TE `Linear` forward and backward
+- selected backend implementation ID
+
+Normal image-mode tests recheck the immutable image identity and imports in the
+actual test container. The package must resolve outside the checked-out
+Megatron workspace, preventing a source tree from shadowing the image runtime.
 
 ## Scope
 
-This implementation changes CI configuration, workflows, and installation
-scripts only. It does not modify Megatron model or training source code.
-
-Local syntax checks do not prove that every vendor image can build the latest
-TE-FL commit. The first hardware CI run for each platform is the required
-evidence for native build, cache restore/save, workflow artifact delivery,
-device execution, and backend ID.
+This implementation changes CI configuration, workflows, and environment
+scripts only. It does not modify Megatron model or training source code. All
+platforms remain in artifact mode until a verified Harbor image digest and its
+matching 40-character TE-FL commit are added to that platform configuration.

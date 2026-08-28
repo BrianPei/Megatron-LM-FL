@@ -172,6 +172,14 @@ test_matrix:
 te_fl:
   ref: main
 
+  # Keep artifact delivery until a verified TE-FL runtime image is published.
+  # Switching to image mode makes regular tests consume the immutable image
+  # directly without preparing or downloading native artifacts.
+  delivery:
+    mode: artifact
+    runtime_image: ""
+    expected_commit: ""
+
   # Native build configuration
   native:
     mode: source

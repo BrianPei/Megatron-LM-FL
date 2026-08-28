@@ -46,3 +46,12 @@ test_matrix:
 
   functional:
     train: []
+
+te_fl:
+  ref: main
+  delivery:
+    # artifact: build/restore TE-FL and deliver it inside each workflow run.
+    # image: consume a prebuilt, verified runtime image directly in test jobs.
+    mode: artifact
+    runtime_image: ""
+    expected_commit: ""

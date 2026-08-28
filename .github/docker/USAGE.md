@@ -1,39 +1,17 @@
 # TE-FL CI Usage
 
-## Normal Runs
-
-Platform workflows call `all_tests_common.yml`. No TE-FL input is required:
-
-```yaml
-jobs:
-  run_tests:
-    uses: ./.github/workflows/all_tests_common.yml
-    with:
-      platform: musa
-      run_unit_tests: true
-      run_functional_tests: true
-```
-
-The common workflow resolves TE-FL `main` and uses the resolved commit for all
-test jobs in that run.
-
-The scheduled `te_fl_daily.yml` workflow resolves the same ref and warms native
-cache entries on the default branch. It can also be started manually when a
-TE-FL native change needs immediate validation.
-
-## Pin A Revision
-
-Set `te_fl_ref` to a branch or full commit when reproducing a failure.
-`expected_te_fl_commit` is an optional assertion; when set, resolution must
-produce exactly that full commit.
-
 ## Platform Configuration
 
-Each `.github/configs/<platform>.yml` contains a `te_fl` block:
+Each `.github/configs/<platform>.yml` owns its TE-FL build, runtime, and delivery
+contract:
 
 ```yaml
 te_fl:
   ref: main
+  delivery:
+    mode: artifact
+    runtime_image: ""
+    expected_commit: ""
   native:
     mode: source
     source_paths: [transformer_engine]
@@ -53,57 +31,87 @@ te_fl:
     environment:
       TE_FL_PREFER: vendor
     install_pip_args: []
-  ```
+```
 
-`native.environment` is applied before fingerprint imports and native wheel
-builds. Include `TE_FL_SKIP_CUDA: "1"` for non-NVIDIA platforms when TE-FL
-must not probe the CUDA vendor backend; do not set it for CUDA.
+Non-CUDA platforms that must disable CUDA probing set
+`TE_FL_SKIP_CUDA: "1"` in the configured TE-FL environment. The setting is
+applied before TE-FL is imported or built.
 
-`build_pip_args` are used only when a cache miss builds the native wheel.
-`install_pip_args` are used by unit and functional jobs when installing that
-cached wheel. Keep these lists platform-specific when the image's Python
-version requires pip compatibility flags.
+## Artifact Mode
 
-`runtime_modules` must name importable modules that carry the platform ABI.
-Their module files and package shared libraries participate in the fingerprint.
-`bootstrap_modules` are imported before `transformer_engine` in the strict
-runtime verifier so vendor torch extensions can establish their device APIs.
+`mode: artifact` preserves the incremental workflow:
 
-Set `require_shared_library: true` only when the TE-FL wheel itself must contain
-a native extension. Vendor plugin platforms may use `false` when native kernels
-come from the vendor runtime, but they still must pass device execution and
-actual backend verification.
+1. Resolve `te_fl.ref` to one full commit.
+2. Restore or build `te-fl-native-<platform>-<fingerprint>`.
+3. Install the current Python overlay and run strict hardware verification.
+4. Upload the native directory once for downstream jobs in that run.
+5. Each unit and functional job downloads and installs it.
 
-## Cache Behavior
+`expected_te_fl_commit` can assert the resolved revision. `image_override`
+overrides `ci_image` and must use `image@sha256:<64 lowercase hex>`.
 
-The cache key is `te-fl-native-<platform>-<native_fingerprint>`.
-The prepare job uses this cache across runs, then uploads the validated native
-directory as a workflow artifact for deterministic consumption by unit and
-functional jobs in the current run. Downstream jobs do not use the cache as a
-same-run message bus.
+GitHub caches are branch-scoped build accelerators. A PR cache mainly helps
+reruns of that PR; shared entries come from default-branch or daily runs.
 
-GitHub scopes caches by branch. A cache created by a pull request primarily
-accelerates reruns of that pull request; it is not promoted to other pull
-requests. Shared cache entries are created by `main` push runs and by the daily
-or manually dispatched workflow when it runs on the default branch.
+After a platform switches to image mode, normal PR tests no longer query
+TE-FL `main`. The daily prepare run still resolves and validates `main`; it
+fails if that commit differs from the commit recorded for the runtime image.
+That failure is the signal to publish and pin a replacement image.
 
-- Python-only TE-FL change: same fingerprint, cache hit, Python overlay update.
-- C++/CUDA/header/build-file change: new fingerprint, wheel rebuild.
-- Torch/vendor runtime/toolchain or build-Python-package change: new
-  fingerprint, wheel rebuild.
-- Corrupt or mismatched artifact: checksum or manifest failure before tests.
-- Different Python/Torch/vendor runtime in a test container: runtime ABI failure
-  before the cached wheel is installed.
-- Removed or renamed TE-FL Python file: the old TE-FL-owned copy is deleted
-  before the current overlay is verified; vendor-added namespace files remain.
+## Switch To Image Mode
 
-Strict device execution and backend selection are verified once in the prepare
-job. Matrix test jobs repeat installation-time commit, fingerprint, checksum,
-Python overlay, base-image-reference, and runtime ABI validation before running
-their tests.
+After the platform image has passed strict device/backend verification and is
+published to Harbor, update only its delivery block:
 
-## Hardware Acceptance
+```yaml
+delivery:
+  mode: image
+  runtime_image: harbor.baai.ac.cn/example/megatron-te-fl@sha256:<64-hex-digest>
+  expected_commit: <40-hex-te-fl-commit>
+```
 
-For each platform, confirm one cache-miss run and one cache-hit rerun. Evidence
-must include the resolved TE-FL commit, fingerprint, artifact manifest, runtime
-verification output, and the existing unit/functional/benchmark result.
+The digest and commit are both mandatory. A tag-only image is rejected.
+`expected_commit` must match `/etc/flagos/te-fl.json` in the image.
+
+In image mode, `image_override` overrides `runtime_image`; it does not replace
+the artifact build base image. `expected_te_fl_commit` is an optional runtime
+assertion and overrides the configured expected commit for that manual run.
+
+Expected normal-run logs must show that these artifact steps are skipped:
+
+- `te_fl_prepare`
+- `Checkout TransformerEngine-FL`
+- `Download TE-FL native artifact`
+- `Install TE-FL runtime`
+
+The job still runs `Verify prebuilt TE-FL runtime image`, then the existing
+unit or functional test command.
+
+## Image Publication Contract
+
+Before changing a platform to image mode, confirm the image contains:
+
+- the platform Torch/vendor runtime and TE-FL runtime dependencies
+- the intended TE-FL native build and Python overlay
+- `/etc/flagos/te-fl.json` with schema version 2
+- the runtime environment recorded in the platform configuration
+- all configured bootstrap modules
+
+The publication run must record a successful strict verifier result on real
+hardware. For MUSA, the image must also import `onnxscript` and `torchada`, and
+must not contain NVIDIA `flash-attn`, `flash-attn-3`, or `flash-attn-4`
+distributions.
+
+## Acceptance And Rollback
+
+For the first image of each platform:
+
+1. Run unit tests with the digest-pinned image.
+2. Confirm manifest/import verification passes in every container.
+3. Confirm no TE-FL artifact is downloaded or installed by test jobs.
+4. Run the existing functional/benchmark matrix.
+5. Keep the image digest and TE-FL commit together in the platform config.
+
+If the image fails, restore `mode: artifact` and clear `runtime_image` and
+`expected_commit`. The incremental artifact path remains available while the
+image is rebuilt.

@@ -39,6 +39,19 @@ validate_musa_capacity() {
 }
 
 prepare_musa_te_runtime() {
+  if [ "${CI_TE_FL_DELIVERY_MODE:-artifact}" = "image" ]; then
+    local package
+    for package in flash-attn flash-attn-3 flash-attn-4; do
+      if python3 -m pip show "$package" >/dev/null 2>&1; then
+        echo "::error::Prebuilt MUSA TE-FL image contains incompatible package: $package"
+        exit 1
+      fi
+    done
+    python3 -c \
+      "import onnxscript; print(f'prebuilt onnxscript import passed: {onnxscript.__file__}')"
+    return
+  fi
+
   # The MUSA image can carry NVIDIA FlashAttention package metadata without
   # its CUDA extension. TE treats the metadata as availability and imports the
   # missing flash_attn_*_cuda module before backend selection.
@@ -71,10 +84,14 @@ install_flash_attn_collection_stub() {
 install_musa_compatibility_layer() {
   # Keep the image-provided torch/torch_musa pair intact while redirecting
   # legacy CUDA APIs and device strings used by Megatron tests to MUSA.
-  python3 -m pip install \
-    torchada==0.1.40 \
-    --no-deps \
-    --no-cache-dir
+  if [ "${CI_TE_FL_DELIVERY_MODE:-artifact}" = "image" ]; then
+    python3 -c "import torchada; print(f'prebuilt torchada import passed: {torchada.__file__}')"
+  else
+    python3 -m pip install \
+      torchada==0.1.40 \
+      --no-deps \
+      --no-cache-dir
+  fi
 
   # Create this only after installing the project so pip cannot import Megatron
   # through the compatibility layer while it is still building editable metadata.

@@ -8,7 +8,9 @@ on:
   workflow_dispatch:
     inputs:
       image_override:
-        description: 'Optional image override (must be image@sha256:digest format)'
+        description: >-
+          Optional immutable image override. Replaces ci_image in artifact mode
+          and the prebuilt runtime image in image mode.
         required: false
         type: string
         default: ''

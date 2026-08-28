@@ -40,6 +40,29 @@ def load_manifest(path: Path) -> dict[str, Any]:
     missing = sorted(required - manifest.keys())
     if missing or manifest.get("schema_version") != 2:
         fail(f"runtime manifest schema is invalid; missing={missing}")
+    if manifest.get("native_mode") not in {"source", "base_image"}:
+        fail(f"runtime manifest native mode is invalid: {manifest.get('native_mode')!r}")
+    if not isinstance(manifest.get("base_image_ref"), str) or not manifest["base_image_ref"]:
+        fail("runtime manifest base image reference is empty")
+    artifact_files = manifest.get("artifact_files")
+    if not isinstance(artifact_files, list) or not artifact_files:
+        fail("runtime manifest artifact file list is empty")
+    for record in artifact_files:
+        if not isinstance(record, dict):
+            fail("runtime manifest artifact file record is invalid")
+        filename = record.get("filename")
+        digest = record.get("sha256")
+        size = record.get("size")
+        if not isinstance(filename, str) or Path(filename).name != filename:
+            fail(f"runtime manifest artifact filename is invalid: {filename!r}")
+        if not isinstance(digest, str) or len(digest) != 64 or any(
+            character not in "0123456789abcdef" for character in digest
+        ):
+            fail(f"runtime manifest artifact digest is invalid: {filename}")
+        if not isinstance(size, int) or size < 0:
+            fail(f"runtime manifest artifact size is invalid: {filename}")
+    if not isinstance(manifest.get("runtime_environment"), dict):
+        fail("runtime manifest environment is invalid")
     return manifest
 
 
@@ -95,7 +118,7 @@ def parse_environment(value: str) -> dict[str, str]:
     return environment
 
 
-def verify_module(module_name: str, source_root: Path) -> Any:
+def verify_module(module_name: str, forbidden_root: Path | None) -> Any:
     try:
         module = importlib.import_module(module_name)
     except Exception as error:
@@ -106,12 +129,13 @@ def verify_module(module_name: str, source_root: Path) -> Any:
     origin_path = Path(origin)
     if not origin_path.is_file():
         fail(f"TE-FL module file does not exist: {origin_path}")
-    try:
-        origin_path.resolve().relative_to(source_root.resolve())
-    except ValueError:
-        pass
-    else:
-        fail(f"TE-FL module resolved to source checkout: {origin_path}")
+    if forbidden_root is not None:
+        try:
+            origin_path.resolve().relative_to(forbidden_root.resolve())
+        except ValueError:
+            pass
+        else:
+            fail(f"TE-FL module resolved inside a forbidden source tree: {origin_path}")
     print(f"TE-FL module: PASS ({module_name} -> {origin_path})")
     return module
 
@@ -297,12 +321,18 @@ def main() -> int:
     parser.add_argument("--expected-commit", required=True)
     parser.add_argument("--expected-fingerprint")
     parser.add_argument("--native-module", required=True)
-    parser.add_argument("--device-module", required=True)
+    parser.add_argument("--device-module")
     parser.add_argument("--bootstrap-modules-json", default="[]")
-    parser.add_argument("--expected-backend", required=True)
+    parser.add_argument("--expected-backend")
     parser.add_argument("--runtime-env-json", required=True)
-    parser.add_argument("--source-root", required=True, type=Path)
+    parser.add_argument("--source-root", type=Path)
+    parser.add_argument("--forbidden-import-root", type=Path)
     parser.add_argument("--manifest", type=Path, default=Path("/etc/flagos/te-fl.json"))
+    parser.add_argument(
+        "--image-manifest-only",
+        action="store_true",
+        help="Verify a prebuilt runtime image without repeating device/backend execution",
+    )
     args = parser.parse_args()
     if len(args.expected_commit) != 40 or any(
         c not in "0123456789abcdef" for c in args.expected_commit
@@ -315,7 +345,14 @@ def main() -> int:
     bootstrap_modules = parse_string_list(args.bootstrap_modules_json, "bootstrap modules")
     verify_runtime_environment(manifest, runtime_environment)
     bootstrap_runtime(bootstrap_modules)
-    module = verify_module(args.native_module, args.source_root)
+    forbidden_root = args.forbidden_import_root or args.source_root
+    module = verify_module(args.native_module, forbidden_root)
+    if args.image_manifest_only:
+        print("TE-FL runtime image verification: PASS")
+        return 0
+    for name in ("source_root", "device_module", "expected_backend"):
+        if getattr(args, name) is None:
+            fail(f"--{name.replace('_', '-')} is required for strict runtime verification")
     verify_python_overlay(manifest, args.source_root, module)
     device_name = verify_device(args.device_module)
     verify_operator(device_name, args.expected_backend)
