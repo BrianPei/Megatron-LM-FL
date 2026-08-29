@@ -302,7 +302,7 @@ test_matrix:
         enable_lightweight_mode: false
         data_cache_path: /tmp/megatron-data-cache
         gpus_per_node: 1
-      # Benchmark disabled: with TE_FL_PREFER=vendor, the first iteration takes
+      # Benchmark disabled: with the KunLunXin vendor backend, the first iteration takes
       # 40+ minutes on seq=4096/TP2/PP2 (likely vendor kernel shape config or
       # fallback compilation overhead at long sequence). The 20-iteration run
       # would exceed the 60-minute functional test timeout. Regular (seq=256)
@@ -349,8 +349,9 @@ te_fl:
 
   # Runtime verification configuration
   runtime:
-    # Expected TE-FL backend implementation
-    expected_backend: default.flagos
+    # KunLunXin uses its vendor implementation because the FlagOS path is not
+    # the validated runtime path on this platform.
+    expected_backend: vendor.kunlunxin
 
     # Device API module for verification
     device_module: torch.cuda  # Kunlunxin uses torch.cuda API
@@ -360,5 +361,5 @@ te_fl:
     native_module: transformer_engine
     environment:
       TE_FL_SKIP_CUDA: "1"
-      TE_FL_PREFER: flagos
+      TE_FL_PREFER: vendor
     install_pip_args: [--ignore-requires-python]

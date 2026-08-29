@@ -205,8 +205,8 @@ te_fl:
 
   # Runtime verification configuration
   runtime:
-    # Expected TE-FL backend implementation
-    expected_backend: vendor.cuda
+    # CUDA uses the FlagOS implementation in the unified FL path.
+    expected_backend: default.flagos
 
     # Device API module for verification
     device_module: torch.cuda
@@ -215,5 +215,5 @@ te_fl:
     # Installed TE-FL package module
     native_module: transformer_engine
     environment:
-      TE_FL_PREFER: vendor
+      TE_FL_PREFER: flagos
     install_pip_args: []

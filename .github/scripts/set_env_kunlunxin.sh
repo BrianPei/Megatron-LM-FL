@@ -150,8 +150,8 @@ install_kunlunxin_functional_dependencies() {
 configure_kunlunxin_runtime() {
   # KunLunXin P800 uses XMLIR to expose XPU as a CUDA-compatible device.
   # FlagCx is the collective communication library (KunLunXin's equivalent
-  # of NCCL).  TE_FL_SKIP_CUDA tells TransformerEngine-FL not to probe the
-  # CUDA vendor backend so it falls through to the kunlunxin vendor path.
+  # of NCCL). TE_FL_SKIP_CUDA prevents NVIDIA CUDA backend probing; KunLunXin
+  # intentionally uses its own vendor implementation in CI.
   ci_export_env XPU 1
   # DISTRIBUTED_BACKEND is NOT exported: XMLIR's mock_torch intercepts NCCL
   # calls at the C++ layer and redirects them to FlagCX, but PyTorch sees
@@ -162,14 +162,9 @@ configure_kunlunxin_runtime() {
   # ci_export_env DISTRIBUTED_BACKEND flagcx
   ci_export_env TE_FL_SKIP_CUDA 1
   ci_export_env KLX_USE_AUTOTUNE 0
-  # TE_FL_PREFER=vendor routes ops to vendor.kunlunxin (hydrax/XDNN tuned
-  # kernels, 21 ops registered). However vendor.kunlunxin does not support
-  # BF16 in softmax_with_mask (XDNN_PYTORCH error "scalar type of output:
-  # kbfloat16 is unsupported"), and the error does not propagate to Python
-  # so TE-FL policy cannot fall back to FlagGems. The training hangs silently
-  # at the first attention forward. Disable vendor routing until kunlunxin
-  # fixes the BF16 support or raises NotImplementedError correctly.
-  # ci_export_env TE_FL_PREFER vendor
+  # Use the validated KunLunXin vendor path. The long-sequence benchmark
+  # remains disabled because this backend has high startup cost for that case.
+  ci_export_env TE_FL_PREFER vendor
 }
 
 validate_kunlunxin_capacity() {

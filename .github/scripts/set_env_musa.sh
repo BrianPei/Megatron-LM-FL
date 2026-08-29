@@ -151,6 +151,7 @@ setup_unit_environment() {
     openai
     httpx
     nltk
+    absl-py
   )
   python3 -m pip install "${test_dependencies[@]}" --no-cache-dir
   python3 -m pip install fastapi uvicorn --no-cache-dir
