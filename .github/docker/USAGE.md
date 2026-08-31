@@ -54,14 +54,16 @@ overrides `ci_image` and must use `image@sha256:<64 lowercase hex>`.
 GitHub caches are branch-scoped build accelerators. A PR cache mainly helps
 reruns of that PR; shared entries come from default-branch or daily runs.
 
-In image mode, the normal PR still runs one `te_fl_prepare` job to query and
-strictly validate the latest TE-FL `main`. That job is a watcher; its temporary
-Python overlay and native cache are not passed to the test matrix. The watcher
-also performs a lightweight manifest check for the fixed image. Unit and
-functional jobs consume only the configured digest-pinned runtime image and do
-not install or verify TE-FL again. If the resolved commit differs from the
-commit recorded for the runtime image, `te_fl_gate` stops the expensive test
-matrix and reports a stale-image failure.
+In image mode, the normal PR still runs one `te_fl_prepare` job to resolve and
+watch the latest TE-FL `main`. It first compares the resolved commit with the
+commit recorded for the image; when they match, it continues with strict
+validation. The temporary Python overlay and native cache are not passed to the
+test matrix. The watcher also performs a lightweight manifest check for the
+fixed image. Unit and functional jobs consume only the configured
+digest-pinned runtime image and do not install or verify TE-FL again. If the
+resolved commit differs from the commit recorded for the runtime image,
+`te_fl_prepare` fails before any native build and stops the expensive test
+matrix.
 
 ## Switch To Image Mode
 
@@ -91,8 +93,8 @@ Expected image-mode test-job logs must show that these TE-FL steps are skipped:
 - strict TE-FL runtime verification
 
 The job starts from the configured runtime image and runs the existing unit or
-functional test command. The `te_fl_prepare` and `te_fl_gate` jobs are visible
-once per workflow and own the latest-TE-FL watch and freshness decision.
+functional test command. The single `te_fl_prepare` job owns the latest-TE-FL
+watch and freshness decision.
 
 ## Image Publication Contract
 

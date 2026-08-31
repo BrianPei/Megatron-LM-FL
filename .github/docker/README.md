@@ -58,10 +58,11 @@ image as the TE-FL `main` watcher, while its installed overlay is local to the
 prepare container and is not copied into test jobs.
 
 `.github/workflows/te_fl_daily.yml` explicitly invokes the prepare path without
-tests. It resolves, builds/reuses, installs, and strictly validates TE-FL `main`
-once per platform. When the resolved commit differs from the commit recorded
-for a configured runtime image, the daily run fails with an explicit
-stale-image error after validating the latest runtime. After a new runtime
+tests. It resolves TE-FL `main` once per platform and, when the image commit is
+current, builds/reuses, installs, and strictly validates that runtime. When the
+resolved commit differs from the commit recorded for a configured runtime
+image, the prepare job fails with an explicit stale-image error before building
+the latest runtime. After a new runtime
 image is published and pinned, the next PR consumes that fixed digest directly.
 
 ## Verification Boundary

@@ -99,6 +99,25 @@ jobs:
           fi
           echo "commit=$commit" >> "$GITHUB_OUTPUT"
 
+      - name: Check prebuilt image freshness
+        if: inputs.delivery_mode == 'image'
+        env:
+          RESOLVED_COMMIT: ${{ steps.resolve.outputs.commit }}
+          RUNTIME_EXPECTED_COMMIT: ${{ inputs.runtime_expected_commit }}
+        run: |
+          set -euo pipefail
+          if ! [[ "$RUNTIME_EXPECTED_COMMIT" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::runtime_expected_commit must be a full lowercase SHA for image delivery" >&2
+            exit 1
+          fi
+          if [ "$RESOLVED_COMMIT" != "$RUNTIME_EXPECTED_COMMIT" ]; then
+            echo "::error::prebuilt TE-FL image is stale" >&2
+            echo "  image commit: $RUNTIME_EXPECTED_COMMIT" >&2
+            echo "  resolved commit: $RESOLVED_COMMIT" >&2
+            exit 1
+          fi
+          echo "prebuilt TE-FL image freshness: PASS ($RESOLVED_COMMIT)"
+
       - name: Setup platform environment
         env:
           CI_TEST_SUITE: build

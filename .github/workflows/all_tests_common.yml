@@ -355,73 +355,6 @@ jobs:
       verify_image_manifest: ${{ needs.checkout_and_config.outputs.te_fl_delivery_mode == 'image' }}
       publish_artifact: ${{ needs.checkout_and_config.outputs.te_fl_delivery_mode == 'artifact' && !inputs.prepare_te_fl_only }}
 
-  te_fl_gate:
-    name: te_fl_gate
-    if: always()
-    needs:
-      - checkout_and_config
-      - te_fl_prepare
-    runs-on: ubuntu-latest
-    steps:
-      - name: Check TE-FL prepare and image freshness
-        env:
-          CHECKOUT_RESULT: ${{ needs.checkout_and_config.result }}
-          DELIVERY_MODE: ${{ needs.checkout_and_config.outputs.te_fl_delivery_mode }}
-          PREPARE_REQUIRED: ${{ needs.checkout_and_config.outputs.te_fl_prepare_required }}
-          PREPARE_RESULT: ${{ needs.te_fl_prepare.result }}
-          PREPARED_COMMIT: ${{ needs.te_fl_prepare.outputs.te_fl_commit }}
-          PREPARED_FINGERPRINT: ${{ needs.te_fl_prepare.outputs.native_fingerprint }}
-          RUNTIME_EXPECTED_COMMIT: ${{ needs.checkout_and_config.outputs.te_fl_runtime_expected_commit }}
-        run: |
-          set -euo pipefail
-          failed=false
-
-          if [ "$CHECKOUT_RESULT" != "success" ]; then
-            echo "::error::configuration failed or was cancelled: $CHECKOUT_RESULT"
-            failed=true
-          fi
-
-          if [[ "$DELIVERY_MODE" != "artifact" && "$DELIVERY_MODE" != "image" ]]; then
-            echo "::error::TE-FL gate received an invalid delivery mode: $DELIVERY_MODE"
-            failed=true
-          fi
-          if [[ "$PREPARE_REQUIRED" != "true" && "$PREPARE_REQUIRED" != "false" ]]; then
-            echo "::error::TE-FL gate received an invalid prepare requirement: $PREPARE_REQUIRED"
-            failed=true
-          fi
-
-          if { [ "$PREPARE_REQUIRED" = "true" ] && [ "$PREPARE_RESULT" != "success" ]; } || \
-             { [ "$PREPARE_REQUIRED" = "false" ] && [ "$PREPARE_RESULT" != "skipped" ]; }; then
-            echo "::error::unexpected TE-FL prepare result: required=$PREPARE_REQUIRED result=$PREPARE_RESULT"
-            failed=true
-          fi
-
-          if [ "$PREPARE_REQUIRED" = "true" ] && [ "$PREPARE_RESULT" = "success" ]; then
-            if ! [[ "$PREPARED_COMMIT" =~ ^[0-9a-f]{40}$ ]]; then
-              echo "::error::TE-FL prepare did not expose a valid commit output"
-              failed=true
-            fi
-            if ! [[ "$PREPARED_FINGERPRINT" =~ ^[0-9a-f]{64}$ ]]; then
-              echo "::error::TE-FL prepare did not expose a valid native fingerprint output"
-              failed=true
-            fi
-          fi
-
-          if [ "$DELIVERY_MODE" = "image" ] && \
-             [ "$PREPARE_REQUIRED" = "true" ] && \
-             [ "$PREPARE_RESULT" = "success" ] && \
-             [ "$PREPARED_COMMIT" != "$RUNTIME_EXPECTED_COMMIT" ]; then
-            echo "::error::prebuilt TE-FL image is stale"
-            echo "  image commit: $RUNTIME_EXPECTED_COMMIT"
-            echo "  resolved commit: $PREPARED_COMMIT"
-            failed=true
-          fi
-
-          if [ "$failed" = "true" ]; then
-            exit 1
-          fi
-          echo "TE-FL gate: PASS"
-
   lint:
     name: lint
     if: ${{ !inputs.prepare_te_fl_only }}
@@ -436,11 +369,13 @@ jobs:
       inputs.run_unit_tests &&
       needs.checkout_and_config.result == 'success' &&
       needs.lint.result == 'success' &&
-      needs.te_fl_gate.result == 'success'
+      ((needs.checkout_and_config.outputs.te_fl_prepare_required == 'true' &&
+        needs.te_fl_prepare.result == 'success') ||
+       (needs.checkout_and_config.outputs.te_fl_prepare_required == 'false' &&
+        needs.te_fl_prepare.result == 'skipped'))
     needs: 
       - checkout_and_config
       - te_fl_prepare
-      - te_fl_gate
       - lint
     strategy:
       fail-fast: false
@@ -472,7 +407,6 @@ jobs:
     if: always()
     needs: 
       - unit_tests
-      - te_fl_gate
     runs-on: ubuntu-latest
     steps:
       - name: Check unit tests result
@@ -480,10 +414,6 @@ jobs:
           if [ "${{ inputs.run_unit_tests }}" != "true" ]; then
             echo "Unit tests disabled; allowing functional tests to proceed"
             exit 0
-          fi
-          if [ "${{ needs.te_fl_gate.result }}" != "success" ]; then
-            echo "❌ TE-FL gate failed; unit tests were not started"
-            exit 1
           fi
           if [ "${{ needs.unit_tests.result }}" != "success" ]; then
             echo "❌ Unit tests failed: ${{ needs.unit_tests.result }}"
@@ -499,11 +429,13 @@ jobs:
       needs.checkout_and_config.result == 'success' &&
       needs.lint.result == 'success' &&
       needs.unit_tests_complete.result == 'success' &&
-      needs.te_fl_gate.result == 'success'
+      ((needs.checkout_and_config.outputs.te_fl_prepare_required == 'true' &&
+        needs.te_fl_prepare.result == 'success') ||
+       (needs.checkout_and_config.outputs.te_fl_prepare_required == 'false' &&
+        needs.te_fl_prepare.result == 'skipped'))
     needs:
       - checkout_and_config
       - te_fl_prepare
-      - te_fl_gate
       - lint
       - unit_tests_complete
     strategy:
@@ -531,15 +463,10 @@ jobs:
     if: always() && inputs.run_functional_tests
     needs: 
       - functional_tests
-      - te_fl_gate
     runs-on: ubuntu-latest
     steps:
       - name: Check functional tests result
         run: |
-          if [ "${{ needs.te_fl_gate.result }}" != "success" ]; then
-            echo "❌ TE-FL gate failed; functional tests were not started"
-            exit 1
-          fi
           if [ "${{ needs.functional_tests.result }}" != "success" ]; then
             echo "❌ Functional tests failed: ${{ needs.functional_tests.result }}"
             exit 1
@@ -553,7 +480,6 @@ jobs:
     needs:
       - checkout_and_config
       - te_fl_prepare
-      - te_fl_gate
       - lint
       - unit_tests_complete
       - functional_tests_complete
@@ -563,7 +489,8 @@ jobs:
       - name: Verify all tests passed
         env:
           CHECKOUT_RESULT: ${{ needs.checkout_and_config.result }}
-          TE_FL_GATE_RESULT: ${{ needs.te_fl_gate.result }}
+          PREPARE_REQUIRED: ${{ needs.checkout_and_config.outputs.te_fl_prepare_required }}
+          PREPARE_RESULT: ${{ needs.te_fl_prepare.result }}
         run: |
           # Check all test jobs
           failed=false
@@ -579,8 +506,9 @@ jobs:
             failed=true
           fi
 
-          if [ "$TE_FL_GATE_RESULT" != "success" ]; then
-            echo "❌ TE-FL gate failed: $TE_FL_GATE_RESULT"
+          if { [ "$PREPARE_REQUIRED" = "true" ] && [ "$PREPARE_RESULT" != "success" ]; } || \
+             { [ "$PREPARE_REQUIRED" = "false" ] && [ "$PREPARE_RESULT" != "skipped" ]; }; then
+            echo "❌ Unexpected TE-FL prepare result: required=$PREPARE_REQUIRED result=$PREPARE_RESULT"
             failed=true
           fi
 
