@@ -5,6 +5,7 @@ on:
     inputs:
       platform: {required: true, type: string}
       image: {required: true, type: string}
+      delivery_mode: {required: true, type: string}
       runs_on: {required: true, type: string}
       container_volumes: {required: true, type: string}
       container_options: {required: true, type: string}
@@ -28,6 +29,9 @@ on:
       runtime_env: {required: true, type: string}
       install_pip_args: {required: true, type: string}
       expected_te_fl_commit: {required: false, type: string, default: ''}
+      runtime_expected_commit: {required: false, type: string, default: ''}
+      verify_image_manifest: {required: false, type: boolean, default: false}
+      publish_artifact: {required: false, type: boolean, default: true}
     outputs:
       te_fl_commit:
         value: ${{ jobs.prepare.outputs.te_fl_commit }}
@@ -100,17 +104,47 @@ jobs:
           CI_TEST_SUITE: build
           CI_NPROC_PER_NODE: ${{ inputs.nproc_per_node }}
           MEGATRON_CI_IMAGE: ${{ inputs.image }}
+          CI_TE_FL_DELIVERY_MODE: ${{ inputs.delivery_mode }}
           SETUP_SCRIPT: ${{ inputs.setup_script }}
           TE_FL_BUILD_ENV_JSON: ${{ inputs.build_env }}
+          TE_FL_RUNTIME_ENV_JSON: ${{ inputs.runtime_env }}
         run: |
           set -euo pipefail
+          if [[ "$CI_TE_FL_DELIVERY_MODE" != "artifact" && "$CI_TE_FL_DELIVERY_MODE" != "image" ]]; then
+            echo "::error::invalid TE-FL delivery mode: $CI_TE_FL_DELIVERY_MODE" >&2
+            exit 1
+          fi
           if [[ "$SETUP_SCRIPT" = /* || "$SETUP_SCRIPT" == *..* || ! -f "$GITHUB_WORKSPACE/$SETUP_SCRIPT" ]]; then
             echo "::error::invalid or missing platform setup script: $SETUP_SCRIPT" >&2
             exit 1
           fi
           source "$GITHUB_WORKSPACE/.github/scripts/set_env_common.sh"
           ci_apply_env_json "$TE_FL_BUILD_ENV_JSON"
+          ci_apply_env_json "$TE_FL_RUNTIME_ENV_JSON"
           bash "$GITHUB_WORKSPACE/$SETUP_SCRIPT"
+
+      - name: Verify configured TE-FL runtime image
+        if: inputs.verify_image_manifest
+        env:
+          TE_FL_PLATFORM: ${{ inputs.platform }}
+          TE_FL_EXPECTED_COMMIT: ${{ inputs.runtime_expected_commit }}
+          TE_FL_NATIVE_MODULE: ${{ inputs.native_module }}
+          TE_FL_BOOTSTRAP_MODULES_JSON: ${{ inputs.bootstrap_modules }}
+          TE_FL_RUNTIME_ENV_JSON: ${{ inputs.runtime_env }}
+        run: |
+          set -euo pipefail
+          if ! [[ "$TE_FL_EXPECTED_COMMIT" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::runtime_expected_commit must be a full lowercase SHA for image verification" >&2
+            exit 1
+          fi
+          python3 .github/scripts/verify_te_fl_runtime_strict.py \
+            --platform "$TE_FL_PLATFORM" \
+            --expected-commit "$TE_FL_EXPECTED_COMMIT" \
+            --native-module "$TE_FL_NATIVE_MODULE" \
+            --bootstrap-modules-json "$TE_FL_BOOTSTRAP_MODULES_JSON" \
+            --runtime-env-json "$TE_FL_RUNTIME_ENV_JSON" \
+            --forbidden-import-root "$GITHUB_WORKSPACE" \
+            --image-manifest-only
 
       - name: Calculate native fingerprint
         id: fingerprint
@@ -225,10 +259,12 @@ jobs:
             --bootstrap-modules-json "$TE_FL_BOOTSTRAP_MODULES_JSON" \
             --expected-backend "$TE_FL_EXPECTED_BACKEND" \
             --runtime-env-json "$TE_FL_RUNTIME_ENV_JSON" \
-            --source-root "$TE_FL_SOURCE_ROOT"
+            --source-root "$TE_FL_SOURCE_ROOT" \
+            --forbidden-import-root "$GITHUB_WORKSPACE"
         timeout-minutes: 5
 
       - name: Publish native artifact for this run
+        if: inputs.publish_artifact
         uses: actions/upload-artifact@v4
         with:
           name: te-fl-native-${{ inputs.platform }}-${{ steps.fingerprint.outputs.fingerprint }}

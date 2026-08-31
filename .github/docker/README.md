@@ -11,10 +11,12 @@ This is the steady-state path. Unit, functional, and benchmark jobs start from
 one immutable Harbor image that already contains the platform runtime and a
 verified TE-FL installation.
 
-Normal test jobs do not check out TransformerEngine-FL, compile a wheel,
-download a native artifact, or reinstall TE-FL. Each job only validates the
-image manifest, required runtime environment, bootstrap modules, and installed
-TE-FL import before running the existing tests.
+Normal PR test jobs do not check out TransformerEngine-FL, compile a wheel,
+download a native artifact, reinstall TE-FL, or run the strict TE-FL verifier.
+They start directly from this image and run the existing tests. The separate
+`te_fl_prepare` job still tracks TE-FL `main`, so a normal PR remains a watcher
+for a newer TE-FL revision without making every test matrix job repeat the
+installation work.
 
 The image must be pinned by digest and contain `/etc/flagos/te-fl.json`. Its
 configured TE-FL commit must match `te_fl_python_commit` in that manifest.
@@ -41,21 +43,26 @@ the deterministic delivery mechanism between jobs in the same run.
 ## Common Flow
 
 `.github/workflows/all_tests_common.yml` reads the platform configuration and
-resolves three values:
+resolves the delivery mode, the prepare requirement, and the images used by
+prepare and test jobs.
 
 - delivery mode (`artifact` or `image`)
 - whether a TE-FL prepare job is required
 - the immutable image used by test jobs
 
 In artifact mode, the configured `ci_image` is both the build and test base
-image. In image mode, tests use `te_fl.delivery.runtime_image`; the prepare job
-is skipped for normal test runs.
+image. The prepare job produces the validated native artifact once, and the
+unit/functional jobs consume that artifact. In image mode, tests use
+`te_fl.delivery.runtime_image`; the prepare job runs once against that same
+image as the TE-FL `main` watcher, while its installed overlay is local to the
+prepare container and is not copied into test jobs.
 
 `.github/workflows/te_fl_daily.yml` explicitly invokes the prepare path without
-tests. It continues to resolve and validate TE-FL `main` independently of
-normal image-mode test consumption. When the resolved commit differs from the
-commit recorded for the configured runtime image, the daily run fails with an
-explicit stale-image error after validating the latest runtime.
+tests. It resolves, builds/reuses, installs, and strictly validates TE-FL `main`
+once per platform. When the resolved commit differs from the commit recorded
+for a configured runtime image, the daily run fails with an explicit
+stale-image error after validating the latest runtime. After a new runtime
+image is published and pinned, the next PR consumes that fixed digest directly.
 
 ## Verification Boundary
 
@@ -68,9 +75,17 @@ Image publication must prove the full runtime contract on real hardware:
 - TE `Linear` forward and backward
 - selected backend implementation ID
 
-Normal image-mode tests recheck the immutable image identity and imports in the
-actual test container. The package must resolve outside the checked-out
-Megatron workspace, preventing a source tree from shadowing the image runtime.
+In artifact mode, the prepare job performs the full device/backend verification
+once for the artifact that downstream jobs consume. In image mode, the image's
+full device/backend verification is a publication prerequisite and must be
+recorded when the digest is built. The normal prepare job performs a lightweight
+manifest check for that fixed image, then fully verifies the latest TE-FL
+overlay as the watcher; that overlay is local to the prepare container and is
+not copied into tests. Image-mode test jobs intentionally do not repeat strict
+verification: they consume the exact published digest.
+
+The package must resolve outside the checked-out Megatron workspace, preventing
+a source tree from shadowing the image runtime.
 
 ## Scope
 

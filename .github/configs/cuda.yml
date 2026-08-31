@@ -173,8 +173,8 @@ te_fl:
   ref: main
 
   # Keep artifact delivery until a verified TE-FL runtime image is published.
-  # Switching to image mode makes regular tests consume the immutable image
-  # directly without preparing or downloading native artifacts.
+  # In image mode, regular tests consume the immutable image directly; the
+  # single prepare job remains the latest-TE-FL watcher and strict verifier.
   delivery:
     mode: artifact
     runtime_image: ""

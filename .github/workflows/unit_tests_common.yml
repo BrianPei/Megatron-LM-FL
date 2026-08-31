@@ -55,12 +55,6 @@ on:
         required: false
         type: string
         default: ''
-      te_fl_native_module:
-        required: true
-        type: string
-      te_fl_bootstrap_modules:
-        required: true
-        type: string
       te_fl_runtime_env:
         required: true
         type: string
@@ -167,26 +161,6 @@ jobs:
           TE_FL_RUNTIME_ENV_JSON: ${{ inputs.te_fl_runtime_env }}
           TE_FL_INSTALL_PIP_ARGS_JSON: ${{ inputs.te_fl_install_pip_args }}
         run: .github/scripts/install_te_fl_runtime.sh
-
-      - name: Verify prebuilt TE-FL runtime image
-        if: inputs.te_fl_delivery_mode == 'image'
-        working-directory: ${{ github.workspace }}
-        env:
-          TE_FL_PLATFORM: ${{ inputs.platform }}
-          TE_FL_EXPECTED_COMMIT: ${{ inputs.te_fl_commit }}
-          TE_FL_NATIVE_MODULE: ${{ inputs.te_fl_native_module }}
-          TE_FL_BOOTSTRAP_MODULES_JSON: ${{ inputs.te_fl_bootstrap_modules }}
-          TE_FL_RUNTIME_ENV_JSON: ${{ inputs.te_fl_runtime_env }}
-        run: |
-          set -euo pipefail
-          python3 .github/scripts/verify_te_fl_runtime_strict.py \
-            --platform "$TE_FL_PLATFORM" \
-            --expected-commit "$TE_FL_EXPECTED_COMMIT" \
-            --native-module "$TE_FL_NATIVE_MODULE" \
-            --bootstrap-modules-json "$TE_FL_BOOTSTRAP_MODULES_JSON" \
-            --runtime-env-json "$TE_FL_RUNTIME_ENV_JSON" \
-            --forbidden-import-root "$GITHUB_WORKSPACE" \
-            --image-manifest-only
 
       - name: Run unit tests - ${{ matrix.test_group.name }}
         id: unit_test

@@ -22,14 +22,14 @@ te_fl:
     build_pip_args: []
     environment:
       NVTE_FRAMEWORK: pytorch
-    compiler: gcc
+    compiler: nvcc
   runtime:
-    expected_backend: vendor.cuda
+    expected_backend: default.flagos
     device_module: torch.cuda
     bootstrap_modules: []
     native_module: transformer_engine
     environment:
-      TE_FL_PREFER: vendor
+      TE_FL_PREFER: flagos
     install_pip_args: []
 ```
 
@@ -43,9 +43,10 @@ applied before TE-FL is imported or built.
 
 1. Resolve `te_fl.ref` to one full commit.
 2. Restore or build `te-fl-native-<platform>-<fingerprint>`.
-3. Install the current Python overlay and run strict hardware verification.
+3. Install the current Python overlay and run strict hardware verification once.
 4. Upload the native directory once for downstream jobs in that run.
-5. Each unit and functional job downloads and installs it.
+5. Each unit and functional job downloads and installs it. This is the
+   compatibility path and is not the steady-state image path.
 
 `expected_te_fl_commit` can assert the resolved revision. `image_override`
 overrides `ci_image` and must use `image@sha256:<64 lowercase hex>`.
@@ -53,10 +54,14 @@ overrides `ci_image` and must use `image@sha256:<64 lowercase hex>`.
 GitHub caches are branch-scoped build accelerators. A PR cache mainly helps
 reruns of that PR; shared entries come from default-branch or daily runs.
 
-After a platform switches to image mode, normal PR tests no longer query
-TE-FL `main`. The daily prepare run still resolves and validates `main`; it
-fails if that commit differs from the commit recorded for the runtime image.
-That failure is the signal to publish and pin a replacement image.
+In image mode, the normal PR still runs one `te_fl_prepare` job to query and
+strictly validate the latest TE-FL `main`. That job is a watcher; its temporary
+Python overlay and native cache are not passed to the test matrix. The watcher
+also performs a lightweight manifest check for the fixed image. Unit and
+functional jobs consume only the configured digest-pinned runtime image and do
+not install or verify TE-FL again. If the resolved commit differs from the
+commit recorded for the runtime image, `te_fl_gate` stops the expensive test
+matrix and reports a stale-image failure.
 
 ## Switch To Image Mode
 
@@ -73,19 +78,21 @@ delivery:
 The digest and commit are both mandatory. A tag-only image is rejected.
 `expected_commit` must match `/etc/flagos/te-fl.json` in the image.
 
-In image mode, `image_override` overrides `runtime_image`; it does not replace
-the artifact build base image. `expected_te_fl_commit` is an optional runtime
-assertion and overrides the configured expected commit for that manual run.
+In image mode, `image_override` replaces the configured runtime image for both
+the prepare watcher and test jobs. In artifact mode, it replaces `ci_image` for
+the prepare and test jobs. `expected_te_fl_commit` is an optional assertion and
+overrides the configured expected commit for that manual run.
 
-Expected normal-run logs must show that these artifact steps are skipped:
+Expected image-mode test-job logs must show that these TE-FL steps are skipped:
 
-- `te_fl_prepare`
 - `Checkout TransformerEngine-FL`
 - `Download TE-FL native artifact`
 - `Install TE-FL runtime`
+- strict TE-FL runtime verification
 
-The job still runs `Verify prebuilt TE-FL runtime image`, then the existing
-unit or functional test command.
+The job starts from the configured runtime image and runs the existing unit or
+functional test command. The `te_fl_prepare` and `te_fl_gate` jobs are visible
+once per workflow and own the latest-TE-FL watch and freshness decision.
 
 ## Image Publication Contract
 
@@ -106,11 +113,13 @@ distributions.
 
 For the first image of each platform:
 
-1. Run unit tests with the digest-pinned image.
-2. Confirm manifest/import verification passes in every container.
-3. Confirm no TE-FL artifact is downloaded or installed by test jobs.
-4. Run the existing functional/benchmark matrix.
-5. Keep the image digest and TE-FL commit together in the platform config.
+1. Run a dedicated image acceptance check on real hardware for the candidate digest.
+2. Confirm manifest/import/device/backend verification passes for the image itself.
+3. Run the prepare watcher against the same digest and confirm the latest TE-FL overlay passes.
+4. Run unit tests with the same digest-pinned image.
+5. Confirm no TE-FL artifact is downloaded or installed by image-mode test jobs.
+6. Run the existing functional/benchmark matrix.
+7. Keep the image digest and TE-FL commit together in the platform config.
 
 If the image fails, restore `mode: artifact` and clear `runtime_image` and
 `expected_commit`. The incremental artifact path remains available while the

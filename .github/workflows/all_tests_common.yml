@@ -50,6 +50,7 @@ jobs:
     outputs:
       base_image: ${{ steps.resolve_image.outputs.base_image }}
       test_image: ${{ steps.resolve_image.outputs.test_image }}
+      prepare_image: ${{ steps.resolve_image.outputs.prepare_image }}
       te_fl_delivery_mode: ${{ steps.resolve_image.outputs.te_fl_delivery_mode }}
       te_fl_prepare_required: ${{ steps.resolve_image.outputs.te_fl_prepare_required }}
       te_fl_prepare_expected_commit: ${{ steps.resolve_image.outputs.te_fl_prepare_expected_commit }}
@@ -118,12 +119,12 @@ jobs:
           RUNTIME_IMAGE=$(yq -r '.te_fl.delivery.runtime_image // ""' "$CONFIG_FILE")
           CONFIG_EXPECTED_COMMIT=$(yq -r '.te_fl.delivery.expected_commit // ""' "$CONFIG_FILE")
 
-          if [ -z "$BASE_IMAGE" ]; then
-            echo "::error::ci_image is required in $CONFIG_FILE"
-            exit 1
-          fi
           if ! [[ "$DELIVERY_MODE" =~ ^(artifact|image)$ ]]; then
             echo "::error::te_fl.delivery.mode must be artifact or image"
+            exit 1
+          fi
+          if [ "$DELIVERY_MODE" = "artifact" ] && [ -z "$BASE_IMAGE" ]; then
+            echo "::error::ci_image is required in $CONFIG_FILE"
             exit 1
           fi
           if [[ -n "$EXPECTED_COMMIT" ]] && \
@@ -131,28 +132,36 @@ jobs:
             echo "::error::expected_te_fl_commit must be 40 lowercase hex characters"
             exit 1
           fi
+          if [[ -n "$CONFIG_EXPECTED_COMMIT" ]] && \
+             ! [[ "$CONFIG_EXPECTED_COMMIT" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::te_fl.delivery.expected_commit must be 40 lowercase hex characters"
+            exit 1
+          fi
           if [[ -n "$IMAGE_OVERRIDE" ]] && \
              ! [[ "$IMAGE_OVERRIDE" =~ ^[^@]+@sha256:[0-9a-f]{64}$ ]]; then
             echo "::error::image_override must be in format: image@sha256:digest"
-            echo "::error::Got: $IMAGE_OVERRIDE"
             exit 1
           fi
 
+          # Keep the latest TE-FL watch on ordinary PRs. In image mode this
+          # runs beside the immutable test image path; in artifact mode it is
+          # also the producer for downstream test jobs.
           PREPARE_REQUIRED=false
           if [ "$PREPARE_ONLY" = "true" ] || \
-             { [ "$DELIVERY_MODE" = "artifact" ] && \
-               { [ "$RUN_UNIT_TESTS" = "true" ] || \
-                 [ "$RUN_FUNCTIONAL_TESTS" = "true" ]; }; }; then
+             [ "$RUN_UNIT_TESTS" = "true" ] || \
+             [ "$RUN_FUNCTIONAL_TESTS" = "true" ]; then
             PREPARE_REQUIRED=true
           fi
 
           PREPARE_EXPECTED_COMMIT=""
           RUNTIME_EXPECTED_COMMIT=""
+          PREPARE_IMAGE=""
           if [ "$DELIVERY_MODE" = "artifact" ]; then
             if [ -n "$IMAGE_OVERRIDE" ]; then
               BASE_IMAGE="$IMAGE_OVERRIDE"
             fi
             TEST_IMAGE="$BASE_IMAGE"
+            PREPARE_IMAGE="$BASE_IMAGE"
             PREPARE_EXPECTED_COMMIT="$EXPECTED_COMMIT"
           else
             if [ -n "$IMAGE_OVERRIDE" ]; then
@@ -168,6 +177,9 @@ jobs:
               echo "::error::image delivery requires a 40-character TE-FL expected commit"
               exit 1
             fi
+            # Prepare against the exact image consumed by tests so the watch
+            # validates the same Torch/vendor ABI before overlaying TE-FL main.
+            PREPARE_IMAGE="$RUNTIME_IMAGE"
             if [ "$PREPARE_REQUIRED" = "true" ] && [ -n "$EXPECTED_COMMIT" ]; then
               PREPARE_EXPECTED_COMMIT="$EXPECTED_COMMIT"
             fi
@@ -177,8 +189,10 @@ jobs:
           echo "TE-FL prepare required: $PREPARE_REQUIRED"
           echo "Base image: $BASE_IMAGE"
           echo "Test image: $TEST_IMAGE"
+          echo "Prepare image: $PREPARE_IMAGE"
           echo "base_image=$BASE_IMAGE" >> "$GITHUB_OUTPUT"
           echo "test_image=$TEST_IMAGE" >> "$GITHUB_OUTPUT"
+          echo "prepare_image=$PREPARE_IMAGE" >> "$GITHUB_OUTPUT"
           echo "te_fl_delivery_mode=$DELIVERY_MODE" >> "$GITHUB_OUTPUT"
           echo "te_fl_prepare_required=$PREPARE_REQUIRED" >> "$GITHUB_OUTPUT"
           echo "te_fl_prepare_expected_commit=$PREPARE_EXPECTED_COMMIT" >> "$GITHUB_OUTPUT"
@@ -312,7 +326,8 @@ jobs:
     uses: ./.github/workflows/prepare_te_fl.yml
     with:
       platform: ${{ inputs.platform }}
-      image: ${{ needs.checkout_and_config.outputs.base_image }}
+      image: ${{ needs.checkout_and_config.outputs.prepare_image }}
+      delivery_mode: ${{ needs.checkout_and_config.outputs.te_fl_delivery_mode }}
       runs_on: ${{ needs.checkout_and_config.outputs.runs_on }}
       container_volumes: ${{ needs.checkout_and_config.outputs.container_volumes }}
       container_options: ${{ needs.checkout_and_config.outputs.container_options }}
@@ -336,6 +351,76 @@ jobs:
       runtime_env: ${{ needs.checkout_and_config.outputs.te_fl_runtime_env }}
       install_pip_args: ${{ needs.checkout_and_config.outputs.te_fl_install_pip_args }}
       expected_te_fl_commit: ${{ needs.checkout_and_config.outputs.te_fl_prepare_expected_commit }}
+      runtime_expected_commit: ${{ needs.checkout_and_config.outputs.te_fl_runtime_expected_commit }}
+      verify_image_manifest: ${{ needs.checkout_and_config.outputs.te_fl_delivery_mode == 'image' }}
+      publish_artifact: ${{ needs.checkout_and_config.outputs.te_fl_delivery_mode == 'artifact' && !inputs.prepare_te_fl_only }}
+
+  te_fl_gate:
+    name: te_fl_gate
+    if: always()
+    needs:
+      - checkout_and_config
+      - te_fl_prepare
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check TE-FL prepare and image freshness
+        env:
+          CHECKOUT_RESULT: ${{ needs.checkout_and_config.result }}
+          DELIVERY_MODE: ${{ needs.checkout_and_config.outputs.te_fl_delivery_mode }}
+          PREPARE_REQUIRED: ${{ needs.checkout_and_config.outputs.te_fl_prepare_required }}
+          PREPARE_RESULT: ${{ needs.te_fl_prepare.result }}
+          PREPARED_COMMIT: ${{ needs.te_fl_prepare.outputs.te_fl_commit }}
+          PREPARED_FINGERPRINT: ${{ needs.te_fl_prepare.outputs.native_fingerprint }}
+          RUNTIME_EXPECTED_COMMIT: ${{ needs.checkout_and_config.outputs.te_fl_runtime_expected_commit }}
+        run: |
+          set -euo pipefail
+          failed=false
+
+          if [ "$CHECKOUT_RESULT" != "success" ]; then
+            echo "::error::configuration failed or was cancelled: $CHECKOUT_RESULT"
+            failed=true
+          fi
+
+          if [[ "$DELIVERY_MODE" != "artifact" && "$DELIVERY_MODE" != "image" ]]; then
+            echo "::error::TE-FL gate received an invalid delivery mode: $DELIVERY_MODE"
+            failed=true
+          fi
+          if [[ "$PREPARE_REQUIRED" != "true" && "$PREPARE_REQUIRED" != "false" ]]; then
+            echo "::error::TE-FL gate received an invalid prepare requirement: $PREPARE_REQUIRED"
+            failed=true
+          fi
+
+          if { [ "$PREPARE_REQUIRED" = "true" ] && [ "$PREPARE_RESULT" != "success" ]; } || \
+             { [ "$PREPARE_REQUIRED" = "false" ] && [ "$PREPARE_RESULT" != "skipped" ]; }; then
+            echo "::error::unexpected TE-FL prepare result: required=$PREPARE_REQUIRED result=$PREPARE_RESULT"
+            failed=true
+          fi
+
+          if [ "$PREPARE_REQUIRED" = "true" ] && [ "$PREPARE_RESULT" = "success" ]; then
+            if ! [[ "$PREPARED_COMMIT" =~ ^[0-9a-f]{40}$ ]]; then
+              echo "::error::TE-FL prepare did not expose a valid commit output"
+              failed=true
+            fi
+            if ! [[ "$PREPARED_FINGERPRINT" =~ ^[0-9a-f]{64}$ ]]; then
+              echo "::error::TE-FL prepare did not expose a valid native fingerprint output"
+              failed=true
+            fi
+          fi
+
+          if [ "$DELIVERY_MODE" = "image" ] && \
+             [ "$PREPARE_REQUIRED" = "true" ] && \
+             [ "$PREPARE_RESULT" = "success" ] && \
+             [ "$PREPARED_COMMIT" != "$RUNTIME_EXPECTED_COMMIT" ]; then
+            echo "::error::prebuilt TE-FL image is stale"
+            echo "  image commit: $RUNTIME_EXPECTED_COMMIT"
+            echo "  resolved commit: $PREPARED_COMMIT"
+            failed=true
+          fi
+
+          if [ "$failed" = "true" ]; then
+            exit 1
+          fi
+          echo "TE-FL gate: PASS"
 
   lint:
     name: lint
@@ -351,13 +436,11 @@ jobs:
       inputs.run_unit_tests &&
       needs.checkout_and_config.result == 'success' &&
       needs.lint.result == 'success' &&
-      ((needs.checkout_and_config.outputs.te_fl_prepare_required == 'true' &&
-        needs.te_fl_prepare.result == 'success') ||
-       (needs.checkout_and_config.outputs.te_fl_prepare_required == 'false' &&
-        needs.te_fl_prepare.result == 'skipped'))
+      needs.te_fl_gate.result == 'success'
     needs: 
       - checkout_and_config
       - te_fl_prepare
+      - te_fl_gate
       - lint
     strategy:
       fail-fast: false
@@ -379,8 +462,6 @@ jobs:
       te_fl_delivery_mode: ${{ needs.checkout_and_config.outputs.te_fl_delivery_mode }}
       te_fl_commit: ${{ needs.te_fl_prepare.outputs.te_fl_commit || needs.checkout_and_config.outputs.te_fl_runtime_expected_commit }}
       te_fl_native_fingerprint: ${{ needs.te_fl_prepare.outputs.native_fingerprint }}
-      te_fl_native_module: ${{ needs.checkout_and_config.outputs.te_fl_native_module }}
-      te_fl_bootstrap_modules: ${{ needs.checkout_and_config.outputs.te_fl_bootstrap_modules }}
       te_fl_runtime_env: ${{ needs.checkout_and_config.outputs.te_fl_runtime_env }}
       te_fl_install_pip_args: ${{ needs.checkout_and_config.outputs.te_fl_install_pip_args }}
 
@@ -391,6 +472,7 @@ jobs:
     if: always()
     needs: 
       - unit_tests
+      - te_fl_gate
     runs-on: ubuntu-latest
     steps:
       - name: Check unit tests result
@@ -398,6 +480,10 @@ jobs:
           if [ "${{ inputs.run_unit_tests }}" != "true" ]; then
             echo "Unit tests disabled; allowing functional tests to proceed"
             exit 0
+          fi
+          if [ "${{ needs.te_fl_gate.result }}" != "success" ]; then
+            echo "❌ TE-FL gate failed; unit tests were not started"
+            exit 1
           fi
           if [ "${{ needs.unit_tests.result }}" != "success" ]; then
             echo "❌ Unit tests failed: ${{ needs.unit_tests.result }}"
@@ -413,13 +499,11 @@ jobs:
       needs.checkout_and_config.result == 'success' &&
       needs.lint.result == 'success' &&
       needs.unit_tests_complete.result == 'success' &&
-      ((needs.checkout_and_config.outputs.te_fl_prepare_required == 'true' &&
-        needs.te_fl_prepare.result == 'success') ||
-       (needs.checkout_and_config.outputs.te_fl_prepare_required == 'false' &&
-        needs.te_fl_prepare.result == 'skipped'))
+      needs.te_fl_gate.result == 'success'
     needs:
       - checkout_and_config
       - te_fl_prepare
+      - te_fl_gate
       - lint
       - unit_tests_complete
     strategy:
@@ -439,8 +523,6 @@ jobs:
       te_fl_delivery_mode: ${{ needs.checkout_and_config.outputs.te_fl_delivery_mode }}
       te_fl_commit: ${{ needs.te_fl_prepare.outputs.te_fl_commit || needs.checkout_and_config.outputs.te_fl_runtime_expected_commit }}
       te_fl_native_fingerprint: ${{ needs.te_fl_prepare.outputs.native_fingerprint }}
-      te_fl_native_module: ${{ needs.checkout_and_config.outputs.te_fl_native_module }}
-      te_fl_bootstrap_modules: ${{ needs.checkout_and_config.outputs.te_fl_bootstrap_modules }}
       te_fl_runtime_env: ${{ needs.checkout_and_config.outputs.te_fl_runtime_env }}
       te_fl_install_pip_args: ${{ needs.checkout_and_config.outputs.te_fl_install_pip_args }}
 
@@ -449,10 +531,15 @@ jobs:
     if: always() && inputs.run_functional_tests
     needs: 
       - functional_tests
+      - te_fl_gate
     runs-on: ubuntu-latest
     steps:
       - name: Check functional tests result
         run: |
+          if [ "${{ needs.te_fl_gate.result }}" != "success" ]; then
+            echo "❌ TE-FL gate failed; functional tests were not started"
+            exit 1
+          fi
           if [ "${{ needs.functional_tests.result }}" != "success" ]; then
             echo "❌ Functional tests failed: ${{ needs.functional_tests.result }}"
             exit 1
@@ -466,6 +553,7 @@ jobs:
     needs:
       - checkout_and_config
       - te_fl_prepare
+      - te_fl_gate
       - lint
       - unit_tests_complete
       - functional_tests_complete
@@ -475,11 +563,7 @@ jobs:
       - name: Verify all tests passed
         env:
           CHECKOUT_RESULT: ${{ needs.checkout_and_config.result }}
-          DELIVERY_MODE: ${{ needs.checkout_and_config.outputs.te_fl_delivery_mode }}
-          PREPARE_REQUIRED: ${{ needs.checkout_and_config.outputs.te_fl_prepare_required }}
-          PREPARE_RESULT: ${{ needs.te_fl_prepare.result }}
-          PREPARED_COMMIT: ${{ needs.te_fl_prepare.outputs.te_fl_commit }}
-          RUNTIME_EXPECTED_COMMIT: ${{ needs.checkout_and_config.outputs.te_fl_runtime_expected_commit }}
+          TE_FL_GATE_RESULT: ${{ needs.te_fl_gate.result }}
         run: |
           # Check all test jobs
           failed=false
@@ -495,18 +579,8 @@ jobs:
             failed=true
           fi
 
-          if { [ "$PREPARE_REQUIRED" = "true" ] && [ "$PREPARE_RESULT" != "success" ]; } || \
-             { [ "$PREPARE_REQUIRED" = "false" ] && [ "$PREPARE_RESULT" != "skipped" ]; }; then
-            echo "❌ Unexpected TE-FL prepare result: required=$PREPARE_REQUIRED result=$PREPARE_RESULT"
-            failed=true
-          fi
-
-          if [ "$DELIVERY_MODE" = "image" ] && \
-             [ "$PREPARE_RESULT" = "success" ] && \
-             [ "$PREPARED_COMMIT" != "$RUNTIME_EXPECTED_COMMIT" ]; then
-            echo "❌ Prebuilt TE-FL image is stale"
-            echo "  image commit: $RUNTIME_EXPECTED_COMMIT"
-            echo "  resolved commit: $PREPARED_COMMIT"
+          if [ "$TE_FL_GATE_RESULT" != "success" ]; then
+            echo "❌ TE-FL gate failed: $TE_FL_GATE_RESULT"
             failed=true
           fi
 
