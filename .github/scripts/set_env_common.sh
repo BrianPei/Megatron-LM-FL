@@ -169,21 +169,28 @@ if not isinstance(install_args, list) or not all(valid_value(item) for item in i
     raise SystemExit("runtime pip install args must be a JSON string array")
 
 for item in packages:
-    print(f"package\t{item}")
+    print(f"__CI_RUNTIME_PIP__\tpackage\t{item}")
 for item in install_args:
-    print(f"arg\t{item}")
+    print(f"__CI_RUNTIME_PIP__\targ\t{item}")
 PY
   ); then
     echo "::error::Invalid runtime pip package configuration" >&2
     return 1
   fi
 
-  while IFS=$'\t' read -r kind value; do
-    case "$kind" in
-      package) packages+=("$value") ;;
-      arg) install_args+=("$value") ;;
+  while IFS=$'\t' read -r record_type kind value; do
+    case "$record_type" in
+      __CI_RUNTIME_PIP__)
+        case "$kind" in
+          package) packages+=("$value") ;;
+          arg) install_args+=("$value") ;;
+          *) echo "::error::Invalid runtime pip package record: $kind" >&2; return 1 ;;
+        esac
+        ;;
       '') ;;
-      *) echo "::error::Invalid runtime pip package record: $kind" >&2; return 1 ;;
+      *)
+        # Some vendor Python installations print registration banners at startup.
+        ;;
     esac
   done <<< "$parsed"
 
