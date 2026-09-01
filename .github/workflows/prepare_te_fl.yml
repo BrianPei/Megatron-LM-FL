@@ -28,6 +28,7 @@ on:
       expected_backend: {required: true, type: string}
       runtime_env: {required: true, type: string}
       install_pip_args: {required: true, type: string}
+      runtime_pip_packages: {required: true, type: string}
       expected_te_fl_commit: {required: false, type: string, default: ''}
       runtime_expected_commit: {required: false, type: string, default: ''}
       verify_image_manifest: {required: false, type: boolean, default: false}
@@ -164,6 +165,16 @@ jobs:
             --runtime-env-json "$TE_FL_RUNTIME_ENV_JSON" \
             --forbidden-import-root "$GITHUB_WORKSPACE" \
             --image-manifest-only
+
+      - name: Install configured runtime packages
+        if: inputs.delivery_mode == 'artifact'
+        env:
+          CI_RUNTIME_PIP_PACKAGES_JSON: ${{ inputs.runtime_pip_packages }}
+          CI_RUNTIME_PIP_INSTALL_ARGS_JSON: ${{ inputs.install_pip_args }}
+        run: |
+          set -euo pipefail
+          source "$GITHUB_WORKSPACE/.github/scripts/set_env_common.sh"
+          ci_install_runtime_packages
 
       - name: Calculate native fingerprint
         id: fingerprint

@@ -143,6 +143,59 @@ ENVEOF
   chmod 0755 /usr/local/bin/envsubst
 }
 
+ci_install_runtime_packages() {
+  local packages_json="${CI_RUNTIME_PIP_PACKAGES_JSON:-[]}"
+  local install_args_json="${CI_RUNTIME_PIP_INSTALL_ARGS_JSON:-[]}"
+  local parsed
+  local kind
+  local value
+  local -a packages=()
+  local -a install_args=()
+
+  if ! parsed=$(python3 - "$packages_json" "$install_args_json" <<'PY'
+import json
+import sys
+
+packages = json.loads(sys.argv[1])
+install_args = json.loads(sys.argv[2])
+def valid_value(item):
+    return isinstance(item, str) and item and not any(
+        character in item for character in ("\n", "\r", "\t")
+    )
+
+if not isinstance(packages, list) or not all(valid_value(item) for item in packages):
+    raise SystemExit("runtime pip packages must be a JSON string array")
+if not isinstance(install_args, list) or not all(valid_value(item) for item in install_args):
+    raise SystemExit("runtime pip install args must be a JSON string array")
+
+for item in packages:
+    print(f"package\t{item}")
+for item in install_args:
+    print(f"arg\t{item}")
+PY
+  ); then
+    echo "::error::Invalid runtime pip package configuration" >&2
+    return 1
+  fi
+
+  while IFS=$'\t' read -r kind value; do
+    case "$kind" in
+      package) packages+=("$value") ;;
+      arg) install_args+=("$value") ;;
+      '') ;;
+      *) echo "::error::Invalid runtime pip package record: $kind" >&2; return 1 ;;
+    esac
+  done <<< "$parsed"
+
+  if [ "${#packages[@]}" -eq 0 ]; then
+    echo "Configured runtime pip packages: none"
+    return 0
+  fi
+
+  echo "Installing configured runtime pip packages: ${packages[*]}"
+  python3 -m pip install --no-cache-dir "${install_args[@]}" "${packages[@]}"
+}
+
 ci_install_uv_compatibility_shim() {
   local force_shim="${1:-false}"
 

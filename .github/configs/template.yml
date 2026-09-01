@@ -55,3 +55,7 @@ te_fl:
     mode: artifact
     runtime_image: ""
     expected_commit: ""
+  runtime:
+    # Packages installed by artifact-mode prepare and test jobs. In image mode,
+    # these packages must already be included in the published runtime image.
+    pip_packages: []

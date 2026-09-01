@@ -458,7 +458,7 @@ te_fl:
     mode: source
     source_paths: [transformer_engine]
     build_files: [setup.py, pyproject.toml, build_tools]
-    runtime_modules: [torch, flag_gems]
+    runtime_modules: [torch]
     require_shared_library: false
     target_arch: gfx90a
 
@@ -487,3 +487,4 @@ te_fl:
       TE_FL_SKIP_CUDA: "1"
       TE_FL_PREFER: flagos
     install_pip_args: [--ignore-requires-python]
+    pip_packages: [flag-gems, sqlalchemy]

@@ -83,6 +83,7 @@ jobs:
       te_fl_native_module: ${{ steps.config.outputs.te_fl_native_module }}
       te_fl_expected_backend: ${{ steps.config.outputs.te_fl_expected_backend }}
       te_fl_runtime_env: ${{ steps.config.outputs.te_fl_runtime_env }}
+      te_fl_runtime_pip_packages: ${{ steps.config.outputs.te_fl_runtime_pip_packages }}
     steps:
       - name: Checkout source code
         uses: actions/checkout@v4
@@ -287,6 +288,11 @@ jobs:
           TE_FL_NATIVE_MODULE=$(yq -r '.te_fl.runtime.native_module // ""' "$CONFIG_FILE")
           TE_FL_EXPECTED_BACKEND=$(yq -r '.te_fl.runtime.expected_backend // ""' "$CONFIG_FILE")
           TE_FL_RUNTIME_ENV=$(yq -o=json -I=0 '.te_fl.runtime.environment // {}' "$CONFIG_FILE")
+          TE_FL_RUNTIME_PIP_PACKAGES=$(yq -o=json -I=0 '.te_fl.runtime.pip_packages // []' "$CONFIG_FILE")
+          if ! python3 -c 'import json, sys; value = json.loads(sys.argv[1]); raise SystemExit(0 if isinstance(value, list) and all(isinstance(item, str) and item for item in value) else 1)' "$TE_FL_RUNTIME_PIP_PACKAGES"; then
+            echo "::error::TE-FL runtime pip_packages must be a string array" >&2
+            exit 1
+          fi
           for pair in \
             "te_fl_ref=$TE_FL_REF" \
             "te_fl_mode=$TE_FL_MODE" \
@@ -307,6 +313,7 @@ jobs:
             "te_fl_runtime_env=$TE_FL_RUNTIME_ENV"; do
             echo "$pair" >> "$GITHUB_OUTPUT"
           done
+          echo "te_fl_runtime_pip_packages=$TE_FL_RUNTIME_PIP_PACKAGES" >> "$GITHUB_OUTPUT"
 
           if [ -z "$TE_FL_MODE" ] || [ -z "$TE_FL_TARGET_ARCH" ] || [ -z "$TE_FL_COMPILER" ] || \
              [ -z "$TE_FL_DEVICE_MODULE" ] || [ -z "$TE_FL_NATIVE_MODULE" ] || \
@@ -350,6 +357,7 @@ jobs:
       expected_backend: ${{ needs.checkout_and_config.outputs.te_fl_expected_backend }}
       runtime_env: ${{ needs.checkout_and_config.outputs.te_fl_runtime_env }}
       install_pip_args: ${{ needs.checkout_and_config.outputs.te_fl_install_pip_args }}
+      runtime_pip_packages: ${{ needs.checkout_and_config.outputs.te_fl_runtime_pip_packages }}
       expected_te_fl_commit: ${{ needs.checkout_and_config.outputs.te_fl_prepare_expected_commit }}
       runtime_expected_commit: ${{ needs.checkout_and_config.outputs.te_fl_runtime_expected_commit }}
       verify_image_manifest: ${{ needs.checkout_and_config.outputs.te_fl_delivery_mode == 'image' }}
@@ -399,6 +407,7 @@ jobs:
       te_fl_native_fingerprint: ${{ needs.te_fl_prepare.outputs.native_fingerprint }}
       te_fl_runtime_env: ${{ needs.checkout_and_config.outputs.te_fl_runtime_env }}
       te_fl_install_pip_args: ${{ needs.checkout_and_config.outputs.te_fl_install_pip_args }}
+      te_fl_runtime_pip_packages: ${{ needs.checkout_and_config.outputs.te_fl_runtime_pip_packages }}
 
   unit_tests_complete:
     name: unit_tests_complete
@@ -457,6 +466,7 @@ jobs:
       te_fl_native_fingerprint: ${{ needs.te_fl_prepare.outputs.native_fingerprint }}
       te_fl_runtime_env: ${{ needs.checkout_and_config.outputs.te_fl_runtime_env }}
       te_fl_install_pip_args: ${{ needs.checkout_and_config.outputs.te_fl_install_pip_args }}
+      te_fl_runtime_pip_packages: ${{ needs.checkout_and_config.outputs.te_fl_runtime_pip_packages }}
 
   functional_tests_complete:
     name: functional_tests_complete

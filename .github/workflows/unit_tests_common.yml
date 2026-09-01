@@ -61,6 +61,9 @@ on:
       te_fl_install_pip_args:
         required: true
         type: string
+      te_fl_runtime_pip_packages:
+        required: true
+        type: string
 
 jobs:
   unit_test:
@@ -140,6 +143,16 @@ jobs:
           ref: ${{ inputs.te_fl_commit }}
           path: te-fl
           fetch-depth: 1
+
+      - name: Install configured runtime packages
+        if: inputs.te_fl_delivery_mode == 'artifact'
+        env:
+          CI_RUNTIME_PIP_PACKAGES_JSON: ${{ inputs.te_fl_runtime_pip_packages }}
+          CI_RUNTIME_PIP_INSTALL_ARGS_JSON: ${{ inputs.te_fl_install_pip_args }}
+        run: |
+          set -euo pipefail
+          source "$GITHUB_WORKSPACE/.github/scripts/set_env_common.sh"
+          ci_install_runtime_packages
 
       - name: Download TE-FL native artifact
         if: inputs.te_fl_delivery_mode == 'artifact'

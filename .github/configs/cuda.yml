@@ -210,10 +210,11 @@ te_fl:
 
     # Device API module for verification
     device_module: torch.cuda
-    bootstrap_modules: []
+    bootstrap_modules: [flag_gems]
 
     # Installed TE-FL package module
     native_module: transformer_engine
     environment:
       TE_FL_PREFER: flagos
     install_pip_args: []
+    pip_packages: [flag-gems, sqlalchemy]

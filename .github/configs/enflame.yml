@@ -379,7 +379,7 @@ te_fl:
 
     # Device API module for verification
     device_module: torch.gcu
-    bootstrap_modules: [torch_gcu]
+    bootstrap_modules: [torch_gcu, flag_gems]
 
     # Installed TE-FL package module
     native_module: transformer_engine
@@ -387,3 +387,4 @@ te_fl:
       TE_FL_SKIP_CUDA: "1"
       TE_FL_PREFER: flagos
     install_pip_args: [--break-system-packages]
+    pip_packages: [flag-gems, sqlalchemy]
