@@ -293,11 +293,18 @@ def verify_operator(device_name: str, expected_backend: str) -> None:
             "TE forward/backward failed on the configured device "
             f"(device={device}, expected_backend={expected_backend}): {error}"
         )
-    if (
-        not bool(torch.isfinite(output).all())
-        or inputs.grad is None
-        or not bool(torch.isfinite(inputs.grad).all())
-    ):
+
+    # Do the value check on the host. Some vendor backends dispatch this
+    # reduction through their device pipeline and may spend minutes probing
+    # unsupported kernels after the TE forward/backward has already completed.
+    try:
+        output_is_finite = bool(torch.isfinite(output.detach().cpu().float()).all())
+        gradient_is_finite = inputs.grad is not None and bool(
+            torch.isfinite(inputs.grad.detach().cpu().float()).all()
+        )
+    except Exception as error:
+        fail(f"TE output/gradient host validation failed: {error}")
+    if not output_is_finite or not gradient_is_finite:
         fail("TE forward/backward produced non-finite output or gradient")
 
     try:
