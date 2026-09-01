@@ -48,14 +48,10 @@ test_matrix:
     train: []
 
 te_fl:
-  ref: main
-  delivery:
-    # artifact: build/restore TE-FL and deliver it inside each workflow run.
-    # image: consume a prebuilt, verified runtime image directly in test jobs.
-    mode: artifact
-    runtime_image: ""
-    expected_commit: ""
+  build: false
+  # Set build=true only when this platform owns a CUDA TE-FL build.
+  build_environment: {}
   runtime:
-    # Packages installed by artifact-mode prepare and test jobs. In image mode,
-    # these packages must already be included in the published runtime image.
+    environment: {}
+    install_pip_args: []
     pip_packages: []

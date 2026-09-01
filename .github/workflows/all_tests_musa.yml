@@ -9,13 +9,7 @@ on:
     inputs:
       image_override:
         description: >-
-          Optional immutable image override. Replaces ci_image in artifact mode
-          and the prebuilt runtime image in image mode.
-        required: false
-        type: string
-        default: ''
-      expected_te_fl_commit:
-        description: 'Expected TE-FL commit SHA (40 hex chars)'
+          Optional image override for this run. Replaces the configured ci_image.
         required: false
         type: string
         default: ''
@@ -43,7 +37,6 @@ jobs:
       run_unit_tests: ${{ github.event.inputs.run_unit_tests != 'false' }}
       run_functional_tests: ${{ github.event.inputs.run_functional_tests != 'false' }}
       image_override: ${{ github.event.inputs.image_override || '' }}
-      expected_te_fl_commit: ${{ github.event.inputs.expected_te_fl_commit || '' }}
 
   all_tests:
     needs: run_tests

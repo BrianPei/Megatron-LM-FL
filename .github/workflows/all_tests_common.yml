@@ -21,24 +21,12 @@ on:
         required: false
         type: boolean
         default: false
-        description: Resolve TE-FL main and prepare its native cache without running tests
+        description: Prepare the CUDA TE-FL wheel without running tests
       image_override:
         required: false
         type: string
         default: ''
-        description: >-
-          Optional immutable image override. Overrides ci_image in artifact mode
-          and te_fl.delivery.runtime_image in image mode.
-      expected_te_fl_commit:
-        required: false
-        type: string
-        default: ''
-        description: 'Expected TE-FL commit SHA (40 hex chars) for verification'
-      te_fl_ref:
-        required: false
-        type: string
-        default: ''
-        description: 'TransformerEngine-FL branch or immutable commit'
+        description: Optional image override for this run
 
 jobs:
   checkout_and_config:
@@ -48,340 +36,164 @@ jobs:
         shell: bash
     runs-on: ubuntu-latest
     outputs:
-      base_image: ${{ steps.resolve_image.outputs.base_image }}
-      test_image: ${{ steps.resolve_image.outputs.test_image }}
-      prepare_image: ${{ steps.resolve_image.outputs.prepare_image }}
-      te_fl_delivery_mode: ${{ steps.resolve_image.outputs.te_fl_delivery_mode }}
-      te_fl_prepare_required: ${{ steps.resolve_image.outputs.te_fl_prepare_required }}
-      te_fl_prepare_expected_commit: ${{ steps.resolve_image.outputs.te_fl_prepare_expected_commit }}
-      te_fl_runtime_expected_commit: ${{ steps.resolve_image.outputs.te_fl_runtime_expected_commit }}
+      image: ${{ steps.config.outputs.image }}
       runs_on: ${{ steps.config.outputs.runs_on }}
       container_volumes: ${{ steps.config.outputs.container_volumes }}
       container_options: ${{ steps.config.outputs.container_options }}
       device_types: ${{ steps.config.outputs.device_types }}
       setup_script: ${{ steps.config.outputs.setup_script }}
       unit_nproc_per_node: ${{ steps.config.outputs.unit_nproc_per_node }}
-      te_fl_prepare_nproc_per_node: ${{ steps.config.outputs.te_fl_prepare_nproc_per_node }}
       train_test_matrix: ${{ steps.config.outputs.train_test_matrix }}
       unit_test_groups: ${{ steps.config.outputs.unit_test_groups }}
       unit_pytest_extra_args: ${{ steps.config.outputs.unit_pytest_extra_args }}
       ignored_tests: ${{ steps.config.outputs.ignored_tests }}
-      te_fl_ref: ${{ steps.config.outputs.te_fl_ref }}
-      te_fl_mode: ${{ steps.config.outputs.te_fl_mode }}
-      te_fl_target_arch: ${{ steps.config.outputs.te_fl_target_arch }}
-      te_fl_compiler: ${{ steps.config.outputs.te_fl_compiler }}
-      te_fl_require_shared_library: ${{ steps.config.outputs.te_fl_require_shared_library }}
-      te_fl_source_paths: ${{ steps.config.outputs.te_fl_source_paths }}
-      te_fl_build_files: ${{ steps.config.outputs.te_fl_build_files }}
-      te_fl_build_env: ${{ steps.config.outputs.te_fl_build_env }}
-      te_fl_build_pip_args: ${{ steps.config.outputs.te_fl_build_pip_args }}
+      te_fl_build: ${{ steps.config.outputs.te_fl_build }}
+      te_fl_build_environment: ${{ steps.config.outputs.te_fl_build_environment }}
+      te_fl_runtime_environment: ${{ steps.config.outputs.te_fl_runtime_environment }}
       te_fl_install_pip_args: ${{ steps.config.outputs.te_fl_install_pip_args }}
-      te_fl_native_modules: ${{ steps.config.outputs.te_fl_native_modules }}
-      te_fl_runtime_modules: ${{ steps.config.outputs.te_fl_runtime_modules }}
-      te_fl_bootstrap_modules: ${{ steps.config.outputs.te_fl_bootstrap_modules }}
-      te_fl_device_module: ${{ steps.config.outputs.te_fl_device_module }}
-      te_fl_native_module: ${{ steps.config.outputs.te_fl_native_module }}
-      te_fl_expected_backend: ${{ steps.config.outputs.te_fl_expected_backend }}
-      te_fl_runtime_env: ${{ steps.config.outputs.te_fl_runtime_env }}
       te_fl_runtime_pip_packages: ${{ steps.config.outputs.te_fl_runtime_pip_packages }}
     steps:
       - name: Checkout source code
         uses: actions/checkout@v4
 
-      - name: Setup environment
+      - name: Install yq
         run: |
           set -euo pipefail
+          if ! command -v yq >/dev/null 2>&1; then
+            sudo wget -qO /usr/local/bin/yq \
+              https://github.com/mikefarah/yq/releases/download/v4.45.1/yq_linux_amd64
+            sudo chmod 0755 /usr/local/bin/yq
+          fi
+          yq --version
 
-          PLATFORM="${{ inputs.platform }}"
-          CONFIG_FILE=".github/configs/${PLATFORM}.yml"
-
-          # Install mikefarah/yq (v4) for YAML parsing
-          sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/download/v4.45.1/yq_linux_amd64
-          sudo chmod +x /usr/local/bin/yq
-          /usr/local/bin/yq --version
-          echo "Loading configuration from $CONFIG_FILE"
-
-      - name: Validate and resolve image override
-        id: resolve_image
+      - name: Read and validate platform configuration
+        id: config
         env:
-          IMAGE_OVERRIDE: ${{ inputs.image_override }}
-          EXPECTED_COMMIT: ${{ inputs.expected_te_fl_commit }}
           PLATFORM: ${{ inputs.platform }}
-          PREPARE_ONLY: ${{ inputs.prepare_te_fl_only }}
+          IMAGE_OVERRIDE: ${{ inputs.image_override }}
           RUN_UNIT_TESTS: ${{ inputs.run_unit_tests }}
           RUN_FUNCTIONAL_TESTS: ${{ inputs.run_functional_tests }}
         run: |
           set -euo pipefail
 
-          CONFIG_FILE=".github/configs/${PLATFORM}.yml"
-
-          BASE_IMAGE=$(yq -r '.ci_image // ""' "$CONFIG_FILE")
-          DELIVERY_MODE=$(yq -r '.te_fl.delivery.mode // "artifact"' "$CONFIG_FILE")
-          RUNTIME_IMAGE=$(yq -r '.te_fl.delivery.runtime_image // ""' "$CONFIG_FILE")
-          CONFIG_EXPECTED_COMMIT=$(yq -r '.te_fl.delivery.expected_commit // ""' "$CONFIG_FILE")
-
-          if ! [[ "$DELIVERY_MODE" =~ ^(artifact|image)$ ]]; then
-            echo "::error::te_fl.delivery.mode must be artifact or image"
-            exit 1
-          fi
-          if [ "$DELIVERY_MODE" = "artifact" ] && [ -z "$BASE_IMAGE" ]; then
-            echo "::error::ci_image is required in $CONFIG_FILE"
-            exit 1
-          fi
-          if [[ -n "$EXPECTED_COMMIT" ]] && \
-             ! [[ "$EXPECTED_COMMIT" =~ ^[0-9a-f]{40}$ ]]; then
-            echo "::error::expected_te_fl_commit must be 40 lowercase hex characters"
-            exit 1
-          fi
-          if [[ -n "$CONFIG_EXPECTED_COMMIT" ]] && \
-             ! [[ "$CONFIG_EXPECTED_COMMIT" =~ ^[0-9a-f]{40}$ ]]; then
-            echo "::error::te_fl.delivery.expected_commit must be 40 lowercase hex characters"
-            exit 1
-          fi
-          if [[ -n "$IMAGE_OVERRIDE" ]] && \
-             ! [[ "$IMAGE_OVERRIDE" =~ ^[^@]+@sha256:[0-9a-f]{64}$ ]]; then
-            echo "::error::image_override must be in format: image@sha256:digest"
+          config_file=".github/configs/${PLATFORM}.yml"
+          if [ ! -f "$config_file" ]; then
+            echo "::error::Platform configuration not found: $config_file" >&2
             exit 1
           fi
 
-          # Keep the latest TE-FL watch on ordinary PRs. In image mode this
-          # runs beside the immutable test image path; in artifact mode it is
-          # also the producer for downstream test jobs.
-          PREPARE_REQUIRED=false
-          if [ "$PREPARE_ONLY" = "true" ] || \
-             [ "$RUN_UNIT_TESTS" = "true" ] || \
-             [ "$RUN_FUNCTIONAL_TESTS" = "true" ]; then
-            PREPARE_REQUIRED=true
+          image=$(yq -r '.ci_image // ""' "$config_file")
+          if [ -n "$IMAGE_OVERRIDE" ]; then
+            image="$IMAGE_OVERRIDE"
+          fi
+          if [ -z "$image" ]; then
+            echo "::error::ci_image is required in $config_file" >&2
+            exit 1
           fi
 
-          PREPARE_EXPECTED_COMMIT=""
-          RUNTIME_EXPECTED_COMMIT=""
-          PREPARE_IMAGE=""
-          if [ "$DELIVERY_MODE" = "artifact" ]; then
-            if [ -n "$IMAGE_OVERRIDE" ]; then
-              BASE_IMAGE="$IMAGE_OVERRIDE"
-            fi
-            TEST_IMAGE="$BASE_IMAGE"
-            PREPARE_IMAGE="$BASE_IMAGE"
-            PREPARE_EXPECTED_COMMIT="$EXPECTED_COMMIT"
-          else
-            if [ -n "$IMAGE_OVERRIDE" ]; then
-              RUNTIME_IMAGE="$IMAGE_OVERRIDE"
-            fi
-            if ! [[ "$RUNTIME_IMAGE" =~ ^[^@]+@sha256:[0-9a-f]{64}$ ]]; then
-              echo "::error::image delivery requires te_fl.delivery.runtime_image pinned by digest"
+          build=$(yq -r '.te_fl.build // false' "$config_file")
+          case "$build" in
+            true|false) ;;
+            *)
+              echo "::error::.te_fl.build must be true or false" >&2
+              exit 1
+              ;;
+          esac
+
+          runs_on=$(yq -o=json -I=0 '.runner_labels // []' "$config_file")
+          volumes=$(yq -o=json -I=0 '.container_volumes // []' "$config_file")
+          options=$(yq -r '.container_options // ""' "$config_file")
+          devices=$(yq -o=json -I=0 '.device_types // []' "$config_file")
+          setup_script=$(yq -r '.setup_script // ""' "$config_file")
+          unit_nproc=$(yq -r '.test_matrix.unit.nproc_per_node // ""' "$config_file")
+          unit_groups=$(yq -o=json -I=0 '.test_matrix.unit.groups // []' "$config_file")
+          unit_extra=$(yq -o=json -I=0 '.test_matrix.unit.pytest_extra_args // []' "$config_file")
+          ignored=$(yq -o=json -I=0 '.test_matrix.unit.ignored_tests // []' "$config_file")
+          train_matrix=$(yq -o=json -I=0 '.test_matrix.functional.train // []' "$config_file")
+          build_environment=$(yq -o=json -I=0 '.te_fl.build_environment // {}' "$config_file")
+          runtime_environment=$(yq -o=json -I=0 '.te_fl.runtime.environment // {}' "$config_file")
+          install_pip_args=$(yq -o=json -I=0 '.te_fl.runtime.install_pip_args // []' "$config_file")
+          runtime_packages=$(yq -o=json -I=0 '.te_fl.runtime.pip_packages // []' "$config_file")
+
+          if [ -z "$setup_script" ] || [ "$setup_script" = "null" ]; then
+            echo "::error::setup_script is required" >&2
+            exit 1
+          fi
+          if [ "$runs_on" = "[]" ] || [ "$devices" = "[]" ]; then
+            echo "::error::runner_labels and device_types must not be empty" >&2
+            exit 1
+          fi
+          if [ "$RUN_UNIT_TESTS" = true ]; then
+            if [ "$unit_groups" = "[]" ]; then
+              echo "::error::unit test groups are empty" >&2
               exit 1
             fi
-            TEST_IMAGE="$RUNTIME_IMAGE"
-            RUNTIME_EXPECTED_COMMIT="${EXPECTED_COMMIT:-$CONFIG_EXPECTED_COMMIT}"
-            if ! [[ "$RUNTIME_EXPECTED_COMMIT" =~ ^[0-9a-f]{40}$ ]]; then
-              echo "::error::image delivery requires a 40-character TE-FL expected commit"
+            if ! [[ "$unit_nproc" =~ ^[1-9][0-9]*$ ]]; then
+              echo "::error::unit nproc_per_node must be a positive integer" >&2
               exit 1
             fi
-            # Prepare against the exact image consumed by tests so the watch
-            # validates the same Torch/vendor ABI before overlaying TE-FL main.
-            PREPARE_IMAGE="$RUNTIME_IMAGE"
-            if [ "$PREPARE_REQUIRED" = "true" ] && [ -n "$EXPECTED_COMMIT" ]; then
-              PREPARE_EXPECTED_COMMIT="$EXPECTED_COMMIT"
-            fi
           fi
-
-          echo "TE-FL delivery mode: $DELIVERY_MODE"
-          echo "TE-FL prepare required: $PREPARE_REQUIRED"
-          echo "Base image: $BASE_IMAGE"
-          echo "Test image: $TEST_IMAGE"
-          echo "Prepare image: $PREPARE_IMAGE"
-          echo "base_image=$BASE_IMAGE" >> "$GITHUB_OUTPUT"
-          echo "test_image=$TEST_IMAGE" >> "$GITHUB_OUTPUT"
-          echo "prepare_image=$PREPARE_IMAGE" >> "$GITHUB_OUTPUT"
-          echo "te_fl_delivery_mode=$DELIVERY_MODE" >> "$GITHUB_OUTPUT"
-          echo "te_fl_prepare_required=$PREPARE_REQUIRED" >> "$GITHUB_OUTPUT"
-          echo "te_fl_prepare_expected_commit=$PREPARE_EXPECTED_COMMIT" >> "$GITHUB_OUTPUT"
-          echo "te_fl_runtime_expected_commit=$RUNTIME_EXPECTED_COMMIT" >> "$GITHUB_OUTPUT"
-
-      - name: Read platform configuration
-        id: config
-        env:
-          PLATFORM: ${{ inputs.platform }}
-          TE_FL_REF_OVERRIDE: ${{ inputs.te_fl_ref }}
-          TE_FL_PREPARE_REQUIRED: ${{ steps.resolve_image.outputs.te_fl_prepare_required }}
-        run: |
-          set -euo pipefail
-
-          CONFIG_FILE=".github/configs/${PLATFORM}.yml"
-
-          # Read runner labels and format as JSON array
-          RUNS_ON=$(yq '.runner_labels | tojson(0)' "$CONFIG_FILE")
-          echo "runs_on=$RUNS_ON" >> $GITHUB_OUTPUT
-
-          # Read container volumes and format as JSON array
-          VOLUMES=$(yq '.container_volumes | tojson(0)' "$CONFIG_FILE")
-          echo "container_volumes=$VOLUMES" >> $GITHUB_OUTPUT
-
-          # Read container options
-          OPTIONS=$(yq '.container_options' "$CONFIG_FILE")
-          echo "container_options=$OPTIONS" >> $GITHUB_OUTPUT
-
-          # Read device types
-          DEVICE_TYPES=$(yq '.device_types | tojson(0)' "$CONFIG_FILE")
-          echo "device_types=$DEVICE_TYPES" >> $GITHUB_OUTPUT
-
-          # Read the platform setup entry point shared by all test suites.
-          SETUP_SCRIPT=$(yq '.setup_script' "$CONFIG_FILE")
-          if [ -z "$SETUP_SCRIPT" ] || [ "$SETUP_SCRIPT" = "null" ]; then
-            echo "::error::setup_script is required"
-            exit 1
-          fi
-          echo "setup_script=$SETUP_SCRIPT" >> $GITHUB_OUTPUT
-
-          # Read test matrix for training
-          TRAIN_MATRIX=$(yq '.test_matrix.functional.train // [] | tojson(0)' "$CONFIG_FILE")
-          if [ "${{ inputs.run_functional_tests }}" = "true" ] && [ "$TRAIN_MATRIX" = "[]" ]; then
-            echo "::error::test_matrix.functional.train must contain at least one test when functional tests are enabled"
-            exit 1
-          fi
-          echo "train_test_matrix=$TRAIN_MATRIX" >> $GITHUB_OUTPUT
-
-          # Read the complete unit-test contract from the platform configuration.
-          UNIT_NPROC_PER_NODE=$(yq '.test_matrix.unit.nproc_per_node // ""' "$CONFIG_FILE")
-          PREPARE_NPROC_PER_NODE=$(yq '.test_matrix.unit.nproc_per_node // .test_matrix.functional.train[0].gpus_per_node // ""' "$CONFIG_FILE")
-          UNIT_TEST_GROUPS=$(yq '.test_matrix.unit.groups // [] | tojson(0)' "$CONFIG_FILE")
-          UNIT_PYTEST_EXTRA_ARGS=$(yq '.test_matrix.unit.pytest_extra_args // [] | tojson(0)' "$CONFIG_FILE")
-          IGNORED_TESTS=$(yq '.test_matrix.unit.ignored_tests // [] | tojson(0)' "$CONFIG_FILE")
-
-          if [ "${{ inputs.run_unit_tests }}" = "true" ] && [ "$UNIT_TEST_GROUPS" = "[]" ]; then
-            echo "::error::test_matrix.unit.groups must contain at least one group when unit tests are enabled"
-            exit 1
-          fi
-          if [ "${{ inputs.run_unit_tests }}" = "true" ] && ! [[ "$UNIT_NPROC_PER_NODE" =~ ^[1-9][0-9]*$ ]]; then
-            echo "::error::test_matrix.unit.nproc_per_node must be a positive integer"
-            exit 1
-          fi
-          if [ "$TE_FL_PREPARE_REQUIRED" = "true" ] && \
-             ! [[ "$PREPARE_NPROC_PER_NODE" =~ ^[1-9][0-9]*$ ]]; then
-            echo "::error::TE-FL prepare requires a positive process count"
-            exit 1
-          fi
-          echo "unit_nproc_per_node=$UNIT_NPROC_PER_NODE" >> $GITHUB_OUTPUT
-          echo "te_fl_prepare_nproc_per_node=$PREPARE_NPROC_PER_NODE" >> $GITHUB_OUTPUT
-          echo "unit_test_groups=$UNIT_TEST_GROUPS" >> $GITHUB_OUTPUT
-          echo "unit_pytest_extra_args=$UNIT_PYTEST_EXTRA_ARGS" >> $GITHUB_OUTPUT
-          echo "ignored_tests=$IGNORED_TESTS" >> $GITHUB_OUTPUT
-
-          TE_FL_REF="$TE_FL_REF_OVERRIDE"
-          if [ -z "$TE_FL_REF" ]; then
-            TE_FL_REF=$(yq -r '.te_fl.ref // "main"' "$CONFIG_FILE")
-          fi
-          TE_FL_MODE=$(yq -r '.te_fl.native.mode // ""' "$CONFIG_FILE")
-          TE_FL_TARGET_ARCH=$(yq -r '.te_fl.native.target_arch // ""' "$CONFIG_FILE")
-          TE_FL_COMPILER=$(yq -r '.te_fl.native.compiler // ""' "$CONFIG_FILE")
-          TE_FL_REQUIRE_SHARED_LIBRARY=$(yq -r '.te_fl.native.require_shared_library // false' "$CONFIG_FILE")
-          TE_FL_SOURCE_PATHS=$(yq -o=json -I=0 '.te_fl.native.source_paths // []' "$CONFIG_FILE")
-          TE_FL_BUILD_FILES=$(yq -o=json -I=0 '.te_fl.native.build_files // []' "$CONFIG_FILE")
-          TE_FL_BUILD_ENV=$(yq -o=json -I=0 '.te_fl.native.environment // {}' "$CONFIG_FILE")
-          TE_FL_BUILD_PIP_ARGS=$(yq -o=json -I=0 '.te_fl.native.build_pip_args // []' "$CONFIG_FILE")
-          TE_FL_INSTALL_PIP_ARGS=$(yq -o=json -I=0 '.te_fl.runtime.install_pip_args // []' "$CONFIG_FILE")
-          TE_FL_NATIVE_MODULES=$(yq -o=json -I=0 '[.te_fl.runtime.native_module] | map(select(. != null and . != ""))' "$CONFIG_FILE")
-          TE_FL_RUNTIME_MODULES=$(yq -o=json -I=0 '.te_fl.native.runtime_modules // []' "$CONFIG_FILE")
-          TE_FL_BOOTSTRAP_MODULES=$(yq -o=json -I=0 '.te_fl.runtime.bootstrap_modules // []' "$CONFIG_FILE")
-          TE_FL_DEVICE_MODULE=$(yq -r '.te_fl.runtime.device_module // ""' "$CONFIG_FILE")
-          TE_FL_NATIVE_MODULE=$(yq -r '.te_fl.runtime.native_module // ""' "$CONFIG_FILE")
-          TE_FL_EXPECTED_BACKEND=$(yq -r '.te_fl.runtime.expected_backend // ""' "$CONFIG_FILE")
-          TE_FL_RUNTIME_ENV=$(yq -o=json -I=0 '.te_fl.runtime.environment // {}' "$CONFIG_FILE")
-          TE_FL_RUNTIME_PIP_PACKAGES=$(yq -o=json -I=0 '.te_fl.runtime.pip_packages // []' "$CONFIG_FILE")
-          if ! python3 -c 'import json, sys; value = json.loads(sys.argv[1]); raise SystemExit(0 if isinstance(value, list) and all(isinstance(item, str) and item for item in value) else 1)' "$TE_FL_RUNTIME_PIP_PACKAGES"; then
-            echo "::error::TE-FL runtime pip_packages must be a string array" >&2
-            exit 1
-          fi
-          for pair in \
-            "te_fl_ref=$TE_FL_REF" \
-            "te_fl_mode=$TE_FL_MODE" \
-            "te_fl_target_arch=$TE_FL_TARGET_ARCH" \
-            "te_fl_compiler=$TE_FL_COMPILER" \
-            "te_fl_require_shared_library=$TE_FL_REQUIRE_SHARED_LIBRARY" \
-            "te_fl_source_paths=$TE_FL_SOURCE_PATHS" \
-            "te_fl_build_files=$TE_FL_BUILD_FILES" \
-            "te_fl_build_env=$TE_FL_BUILD_ENV" \
-            "te_fl_build_pip_args=$TE_FL_BUILD_PIP_ARGS" \
-            "te_fl_install_pip_args=$TE_FL_INSTALL_PIP_ARGS" \
-            "te_fl_native_modules=$TE_FL_NATIVE_MODULES" \
-            "te_fl_runtime_modules=$TE_FL_RUNTIME_MODULES" \
-            "te_fl_bootstrap_modules=$TE_FL_BOOTSTRAP_MODULES" \
-            "te_fl_device_module=$TE_FL_DEVICE_MODULE" \
-            "te_fl_native_module=$TE_FL_NATIVE_MODULE" \
-            "te_fl_expected_backend=$TE_FL_EXPECTED_BACKEND" \
-            "te_fl_runtime_env=$TE_FL_RUNTIME_ENV"; do
-            echo "$pair" >> "$GITHUB_OUTPUT"
-          done
-          echo "te_fl_runtime_pip_packages=$TE_FL_RUNTIME_PIP_PACKAGES" >> "$GITHUB_OUTPUT"
-
-          if [ -z "$TE_FL_MODE" ] || [ -z "$TE_FL_TARGET_ARCH" ] || [ -z "$TE_FL_COMPILER" ] || \
-             [ -z "$TE_FL_DEVICE_MODULE" ] || [ -z "$TE_FL_NATIVE_MODULE" ] || \
-             [ -z "$TE_FL_EXPECTED_BACKEND" ] || [ "$TE_FL_BUILD_ENV" = "{}" ] || \
-             [ "$TE_FL_RUNTIME_ENV" = "{}" ] || \
-             [ "$TE_FL_RUNTIME_MODULES" = "[]" ] || \
-             ! [[ "$TE_FL_REQUIRE_SHARED_LIBRARY" =~ ^(true|false)$ ]]; then
-            echo "::error::incomplete te_fl contract in $CONFIG_FILE"
+          if [ "$RUN_FUNCTIONAL_TESTS" = true ] && [ "$train_matrix" = "[]" ]; then
+            echo "::error::functional test matrix is empty" >&2
             exit 1
           fi
 
-      
+          {
+            echo "image=$image"
+            echo "runs_on=$runs_on"
+            echo "container_volumes=$volumes"
+            echo "container_options=$options"
+            echo "device_types=$devices"
+            echo "setup_script=$setup_script"
+            echo "unit_nproc_per_node=$unit_nproc"
+            echo "train_test_matrix=$train_matrix"
+            echo "unit_test_groups=$unit_groups"
+            echo "unit_pytest_extra_args=$unit_extra"
+            echo "ignored_tests=$ignored"
+            echo "te_fl_build=$build"
+            echo "te_fl_build_environment=$build_environment"
+            echo "te_fl_runtime_environment=$runtime_environment"
+            echo "te_fl_install_pip_args=$install_pip_args"
+            echo "te_fl_runtime_pip_packages=$runtime_packages"
+          } >> "$GITHUB_OUTPUT"
+
+          echo "Platform: $PLATFORM"
+          echo "Image: $image"
+          echo "TE-FL build: $build"
+
   te_fl_prepare:
     name: te_fl_prepare
-    if: needs.checkout_and_config.outputs.te_fl_prepare_required == 'true'
+    if: needs.checkout_and_config.outputs.te_fl_build == 'true'
     needs: checkout_and_config
     uses: ./.github/workflows/prepare_te_fl.yml
     with:
-      platform: ${{ inputs.platform }}
-      image: ${{ needs.checkout_and_config.outputs.prepare_image }}
-      delivery_mode: ${{ needs.checkout_and_config.outputs.te_fl_delivery_mode }}
+      image: ${{ needs.checkout_and_config.outputs.image }}
       runs_on: ${{ needs.checkout_and_config.outputs.runs_on }}
       container_volumes: ${{ needs.checkout_and_config.outputs.container_volumes }}
       container_options: ${{ needs.checkout_and_config.outputs.container_options }}
       setup_script: ${{ needs.checkout_and_config.outputs.setup_script }}
-      nproc_per_node: ${{ needs.checkout_and_config.outputs.te_fl_prepare_nproc_per_node }}
-      te_fl_ref: ${{ needs.checkout_and_config.outputs.te_fl_ref }}
-      native_mode: ${{ needs.checkout_and_config.outputs.te_fl_mode }}
-      target_arch: ${{ needs.checkout_and_config.outputs.te_fl_target_arch }}
-      compiler: ${{ needs.checkout_and_config.outputs.te_fl_compiler }}
-      require_shared_library: ${{ needs.checkout_and_config.outputs.te_fl_require_shared_library }}
-      source_paths: ${{ needs.checkout_and_config.outputs.te_fl_source_paths }}
-      build_files: ${{ needs.checkout_and_config.outputs.te_fl_build_files }}
-      build_env: ${{ needs.checkout_and_config.outputs.te_fl_build_env }}
-      build_pip_args: ${{ needs.checkout_and_config.outputs.te_fl_build_pip_args }}
-      native_modules: ${{ needs.checkout_and_config.outputs.te_fl_native_modules }}
-      runtime_modules: ${{ needs.checkout_and_config.outputs.te_fl_runtime_modules }}
-      bootstrap_modules: ${{ needs.checkout_and_config.outputs.te_fl_bootstrap_modules }}
-      native_module: ${{ needs.checkout_and_config.outputs.te_fl_native_module }}
-      device_module: ${{ needs.checkout_and_config.outputs.te_fl_device_module }}
-      expected_backend: ${{ needs.checkout_and_config.outputs.te_fl_expected_backend }}
-      runtime_env: ${{ needs.checkout_and_config.outputs.te_fl_runtime_env }}
-      install_pip_args: ${{ needs.checkout_and_config.outputs.te_fl_install_pip_args }}
-      runtime_pip_packages: ${{ needs.checkout_and_config.outputs.te_fl_runtime_pip_packages }}
-      expected_te_fl_commit: ${{ needs.checkout_and_config.outputs.te_fl_prepare_expected_commit }}
-      runtime_expected_commit: ${{ needs.checkout_and_config.outputs.te_fl_runtime_expected_commit }}
-      verify_image_manifest: ${{ needs.checkout_and_config.outputs.te_fl_delivery_mode == 'image' }}
-      publish_artifact: ${{ needs.checkout_and_config.outputs.te_fl_delivery_mode == 'artifact' && !inputs.prepare_te_fl_only }}
+      nproc_per_node: ${{ needs.checkout_and_config.outputs.unit_nproc_per_node }}
+      build_environment: ${{ needs.checkout_and_config.outputs.te_fl_build_environment }}
 
   lint:
     name: lint
     if: ${{ !inputs.prepare_te_fl_only }}
-    needs: 
-      - checkout_and_config
+    needs: checkout_and_config
     uses: ./.github/workflows/lint_common.yml
-          
+
   unit_tests:
     name: unit_tests
     if: >-
       always() &&
       inputs.run_unit_tests &&
+      !inputs.prepare_te_fl_only &&
       needs.checkout_and_config.result == 'success' &&
       needs.lint.result == 'success' &&
-      ((needs.checkout_and_config.outputs.te_fl_prepare_required == 'true' &&
+      ((needs.checkout_and_config.outputs.te_fl_build == 'true' &&
         needs.te_fl_prepare.result == 'success') ||
-       (needs.checkout_and_config.outputs.te_fl_prepare_required == 'false' &&
+       (needs.checkout_and_config.outputs.te_fl_build == 'false' &&
         needs.te_fl_prepare.result == 'skipped'))
-    needs: 
+    needs:
       - checkout_and_config
       - te_fl_prepare
       - lint
@@ -393,7 +205,7 @@ jobs:
     with:
       platform: ${{ inputs.platform }}
       device: ${{ matrix.device }}
-      image: ${{ needs.checkout_and_config.outputs.test_image }}
+      image: ${{ needs.checkout_and_config.outputs.image }}
       runs_on: ${{ needs.checkout_and_config.outputs.runs_on }}
       container_volumes: ${{ needs.checkout_and_config.outputs.container_volumes }}
       container_options: ${{ needs.checkout_and_config.outputs.container_options }}
@@ -402,51 +214,30 @@ jobs:
       nproc_per_node: ${{ needs.checkout_and_config.outputs.unit_nproc_per_node }}
       pytest_extra_args: ${{ needs.checkout_and_config.outputs.unit_pytest_extra_args }}
       ignored_tests: ${{ needs.checkout_and_config.outputs.ignored_tests }}
-      te_fl_delivery_mode: ${{ needs.checkout_and_config.outputs.te_fl_delivery_mode }}
-      te_fl_commit: ${{ needs.te_fl_prepare.outputs.te_fl_commit || needs.checkout_and_config.outputs.te_fl_runtime_expected_commit }}
-      te_fl_native_fingerprint: ${{ needs.te_fl_prepare.outputs.native_fingerprint }}
-      te_fl_runtime_env: ${{ needs.checkout_and_config.outputs.te_fl_runtime_env }}
+      te_fl_build: ${{ needs.checkout_and_config.outputs.te_fl_build == 'true' }}
+      te_fl_cache_key: ${{ needs.te_fl_prepare.outputs.cache_key }}
+      te_fl_runtime_environment: ${{ needs.checkout_and_config.outputs.te_fl_runtime_environment }}
       te_fl_install_pip_args: ${{ needs.checkout_and_config.outputs.te_fl_install_pip_args }}
       te_fl_runtime_pip_packages: ${{ needs.checkout_and_config.outputs.te_fl_runtime_pip_packages }}
-
-  unit_tests_complete:
-    name: unit_tests_complete
-    # Keep a successful gate when unit tests are disabled so functional tests
-    # do not inherit a skipped dependency.
-    if: always()
-    needs: 
-      - unit_tests
-    runs-on: ubuntu-latest
-    steps:
-      - name: Check unit tests result
-        run: |
-          if [ "${{ inputs.run_unit_tests }}" != "true" ]; then
-            echo "Unit tests disabled; allowing functional tests to proceed"
-            exit 0
-          fi
-          if [ "${{ needs.unit_tests.result }}" != "success" ]; then
-            echo "❌ Unit tests failed: ${{ needs.unit_tests.result }}"
-            exit 1
-          fi
-          echo "✅ Unit tests passed"
 
   functional_tests:
     name: functional_tests
     if: >-
       always() &&
       inputs.run_functional_tests &&
+      !inputs.prepare_te_fl_only &&
       needs.checkout_and_config.result == 'success' &&
       needs.lint.result == 'success' &&
-      needs.unit_tests_complete.result == 'success' &&
-      ((needs.checkout_and_config.outputs.te_fl_prepare_required == 'true' &&
+      (!inputs.run_unit_tests || needs.unit_tests.result == 'success') &&
+      ((needs.checkout_and_config.outputs.te_fl_build == 'true' &&
         needs.te_fl_prepare.result == 'success') ||
-       (needs.checkout_and_config.outputs.te_fl_prepare_required == 'false' &&
+       (needs.checkout_and_config.outputs.te_fl_build == 'false' &&
         needs.te_fl_prepare.result == 'skipped'))
     needs:
       - checkout_and_config
       - te_fl_prepare
       - lint
-      - unit_tests_complete
+      - unit_tests
     strategy:
       fail-fast: false
       matrix:
@@ -455,87 +246,71 @@ jobs:
     with:
       platform: ${{ inputs.platform }}
       device: ${{ matrix.device }}
-      image: ${{ needs.checkout_and_config.outputs.test_image }}
+      image: ${{ needs.checkout_and_config.outputs.image }}
       runs_on: ${{ needs.checkout_and_config.outputs.runs_on }}
       container_volumes: ${{ needs.checkout_and_config.outputs.container_volumes }}
       container_options: ${{ needs.checkout_and_config.outputs.container_options }}
       setup_script: ${{ needs.checkout_and_config.outputs.setup_script }}
       test_matrix: ${{ needs.checkout_and_config.outputs.train_test_matrix }}
-      te_fl_delivery_mode: ${{ needs.checkout_and_config.outputs.te_fl_delivery_mode }}
-      te_fl_commit: ${{ needs.te_fl_prepare.outputs.te_fl_commit || needs.checkout_and_config.outputs.te_fl_runtime_expected_commit }}
-      te_fl_native_fingerprint: ${{ needs.te_fl_prepare.outputs.native_fingerprint }}
-      te_fl_runtime_env: ${{ needs.checkout_and_config.outputs.te_fl_runtime_env }}
+      te_fl_build: ${{ needs.checkout_and_config.outputs.te_fl_build == 'true' }}
+      te_fl_cache_key: ${{ needs.te_fl_prepare.outputs.cache_key }}
+      te_fl_runtime_environment: ${{ needs.checkout_and_config.outputs.te_fl_runtime_environment }}
       te_fl_install_pip_args: ${{ needs.checkout_and_config.outputs.te_fl_install_pip_args }}
       te_fl_runtime_pip_packages: ${{ needs.checkout_and_config.outputs.te_fl_runtime_pip_packages }}
 
-  functional_tests_complete:
-    name: functional_tests_complete
-    if: always() && inputs.run_functional_tests
-    needs: 
-      - functional_tests
-    runs-on: ubuntu-latest
-    steps:
-      - name: Check functional tests result
-        run: |
-          if [ "${{ needs.functional_tests.result }}" != "success" ]; then
-            echo "❌ Functional tests failed: ${{ needs.functional_tests.result }}"
-            exit 1
-          fi
-          echo "✅ Functional tests passed"
-
   all_tests_complete:
-    defaults:
-      run:
-        shell: bash
+    name: all_tests_complete
+    if: always()
     needs:
       - checkout_and_config
       - te_fl_prepare
       - lint
-      - unit_tests_complete
-      - functional_tests_complete
+      - unit_tests
+      - functional_tests
     runs-on: ubuntu-latest
-    if: always()
     steps:
-      - name: Verify all tests passed
+      - name: Verify workflow status
         env:
           CHECKOUT_RESULT: ${{ needs.checkout_and_config.result }}
-          PREPARE_REQUIRED: ${{ needs.checkout_and_config.outputs.te_fl_prepare_required }}
+          TE_FL_BUILD: ${{ needs.checkout_and_config.outputs.te_fl_build }}
           PREPARE_RESULT: ${{ needs.te_fl_prepare.result }}
+          PREPARE_ONLY: ${{ inputs.prepare_te_fl_only }}
+          LINT_RESULT: ${{ needs.lint.result }}
+          RUN_UNIT_TESTS: ${{ inputs.run_unit_tests }}
+          UNIT_RESULT: ${{ needs.unit_tests.result }}
+          RUN_FUNCTIONAL_TESTS: ${{ inputs.run_functional_tests }}
+          FUNCTIONAL_RESULT: ${{ needs.functional_tests.result }}
         run: |
-          # Check all test jobs
+          set -euo pipefail
           failed=false
 
-          if [ "$CHECKOUT_RESULT" != "success" ]; then
-            echo "❌ Configuration failed or was cancelled: $CHECKOUT_RESULT"
+          if [ "$CHECKOUT_RESULT" != success ]; then
+            echo "::error::Configuration failed: $CHECKOUT_RESULT" >&2
             failed=true
           fi
 
-          if [ "${{ needs.lint.result }}" != "success" ] && \
-            [ "${{ needs.lint.result }}" != "skipped" ]; then
-            echo "❌ Lint failed"
+          if [ "$TE_FL_BUILD" = true ] && [ "$PREPARE_RESULT" != success ]; then
+            echo "::error::TE-FL prepare failed: $PREPARE_RESULT" >&2
+            failed=true
+          elif [ "$TE_FL_BUILD" != true ] && [ "$PREPARE_RESULT" != skipped ]; then
+            echo "::error::Unexpected TE-FL prepare result: $PREPARE_RESULT" >&2
             failed=true
           fi
 
-          if { [ "$PREPARE_REQUIRED" = "true" ] && [ "$PREPARE_RESULT" != "success" ]; } || \
-             { [ "$PREPARE_REQUIRED" = "false" ] && [ "$PREPARE_RESULT" != "skipped" ]; }; then
-            echo "❌ Unexpected TE-FL prepare result: required=$PREPARE_REQUIRED result=$PREPARE_RESULT"
+          if [ "$PREPARE_ONLY" != true ] && [ "$LINT_RESULT" != success ]; then
+            echo "::error::Lint failed: $LINT_RESULT" >&2
+            failed=true
+          fi
+          if [ "$PREPARE_ONLY" != true ] && [ "$RUN_UNIT_TESTS" = true ] && [ "$UNIT_RESULT" != success ]; then
+            echo "::error::Unit test gate failed: $UNIT_RESULT" >&2
+            failed=true
+          fi
+          if [ "$PREPARE_ONLY" != true ] && [ "$RUN_FUNCTIONAL_TESTS" = true ] && [ "$FUNCTIONAL_RESULT" != success ]; then
+            echo "::error::Functional test gate failed: $FUNCTIONAL_RESULT" >&2
             failed=true
           fi
 
-          if [ "${{ needs.unit_tests_complete.result }}" != "success" ] && \
-            [ "${{ needs.unit_tests_complete.result }}" != "skipped" ]; then
-            echo "❌ Unit tests failed or cancelled: ${{ needs.unit_tests_complete.result }}"
-            failed=true
-          fi
-
-          if [ "${{ needs.functional_tests_complete.result }}" != "success" ] && \
-            [ "${{ needs.functional_tests_complete.result }}" != "skipped" ]; then
-            echo "❌ Functional tests failed or cancelled: ${{ needs.functional_tests_complete.result }}"
-            failed=true
-          fi
-
-          if [ "$failed" = "true" ]; then
+          if [ "$failed" = true ]; then
             exit 1
           fi
-
-          echo "✅ All tests completed successfully!"
+          echo "All requested checks completed successfully"

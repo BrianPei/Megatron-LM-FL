@@ -341,45 +341,10 @@ test_matrix:
         data_path: /opt/data/datasets
         gpus_per_node: 4
 
-# TE-FL (TransformerEngine-FL) native build configuration
+# TE-FL runtime configuration
 te_fl:
-  ref: main
-
-  delivery:
-    mode: artifact
-    runtime_image: ""
-    expected_commit: ""
-
-  # Native build configuration
-  native:
-    mode: source
-    source_paths: [transformer_engine]
-    build_files: [setup.py, pyproject.toml, build_tools]
-    runtime_modules: [torch, torchada]
-    require_shared_library: false
-    target_arch: mp_22
-
-    # MUSA exposes its own device API; do not probe/build the NVIDIA backend.
-    environment:
-      NVTE_FRAMEWORK: pytorch
-      NVTE_WITH_USERBUFFERS: "0"
-      TE_FL_SKIP_CUDA: "1"
-    build_pip_args: [--ignore-requires-python]
-
-    # Compiler information
-    compiler: gcc
-
-  # Runtime verification configuration
+  build: false
   runtime:
-    # MUSA uses the FlagOS implementation in the unified FL path.
-    expected_backend: default.flagos
-
-    # Device API module for verification
-    device_module: torch.musa
-    bootstrap_modules: [torchada, flag_gems]
-
-    # Installed TE-FL package module
-    native_module: transformer_engine
     environment:
       TE_FL_SKIP_CUDA: "1"
       TE_FL_PREFER: flagos
