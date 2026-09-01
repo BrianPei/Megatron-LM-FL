@@ -11,17 +11,7 @@ concurrency:
 
 jobs:
   prepare:
-    name: prepare-${{ matrix.platform }}
-    strategy:
-      fail-fast: false
-      matrix:
-        platform:
-          - cuda
+    name: prepare-cuda
     # Only CUDA builds TE-FL. Vendor platforms use the runtime supplied by
     # their images and do not need a daily compiler/cache warm-up job.
-    uses: ./.github/workflows/all_tests_common.yml
-    with:
-      platform: ${{ matrix.platform }}
-      run_unit_tests: false
-      run_functional_tests: false
-      prepare_te_fl_only: true
+    uses: ./.github/workflows/prepare_te_fl_cuda.yml
