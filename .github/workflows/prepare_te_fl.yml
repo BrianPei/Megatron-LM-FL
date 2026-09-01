@@ -295,7 +295,7 @@ jobs:
 
       - name: Publish native artifact for this run
         if: inputs.publish_artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: te-fl-native-${{ inputs.platform }}-${{ steps.fingerprint.outputs.fingerprint }}
           path: te-fl-native

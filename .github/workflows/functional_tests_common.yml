@@ -142,7 +142,7 @@ jobs:
 
       - name: Download TE-FL native artifact
         if: inputs.te_fl_delivery_mode == 'artifact'
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: te-fl-native
           name: te-fl-native-${{ inputs.platform }}-${{ inputs.te_fl_native_fingerprint }}
