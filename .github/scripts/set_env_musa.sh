@@ -39,6 +39,17 @@ validate_musa_capacity() {
 }
 
 prepare_musa_te_runtime() {
+  # Some MUSA runtime images provide torch_musa but omit torchada.  The latter
+  # is the CUDA-to-MUSA adapter required by Megatron's CUDA-facing code paths.
+  # Install only the adapter package so the image-provided Torch/MUSA pair is
+  # not replaced by pip dependency resolution.
+  if ! python3 -c "import torchada" >/dev/null 2>&1; then
+    python3 -m pip install torchada \
+      --ignore-requires-python --no-deps --no-cache-dir
+  fi
+  python3 -c \
+    "import torchada; print(f'torchada import passed: {torchada.__file__}')"
+
   # The MUSA image can carry NVIDIA FlashAttention package metadata without
   # its CUDA extension. TE treats the metadata as availability and imports the
   # missing flash_attn_*_cuda module before backend selection.
