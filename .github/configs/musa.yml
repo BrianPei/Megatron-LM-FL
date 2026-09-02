@@ -9,7 +9,7 @@ setup_script: .github/scripts/set_env_musa.sh
 runner_labels:
   - mt-8g-cicd-megatron
 # CI image for online env
-ci_image: harbor.baai.ac.cn/flagos-dev/flagscale-train:f147682-musa-dev
+ci_image: harbor.baai.ac.cn/flagos-dev/flagscale-train:f147682-musa-dev-tefl-latest
 
 # Dataset/tokenizer volumes for local runner assets under /data
 container_volumes:
