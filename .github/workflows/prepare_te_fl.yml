@@ -1,8 +1,9 @@
-name: Prepare TE-FL CUDA Wheel
+name: Prepare TE-FL Wheel
 
 on:
   workflow_call:
     inputs:
+      platform: {required: true, type: string}
       image: {required: true, type: string}
       runs_on: {required: true, type: string}
       container_volumes: {required: true, type: string}
@@ -16,7 +17,7 @@ on:
 
 jobs:
   prepare:
-    name: te-fl-cuda
+    name: te-fl-${{ inputs.platform }}
     defaults:
       run:
         shell: bash
@@ -45,6 +46,7 @@ jobs:
       - name: Resolve TE-FL cache key
         id: cache_key
         env:
+          PLATFORM: ${{ inputs.platform }}
           IMAGE: ${{ inputs.image }}
         run: |
           set -euo pipefail
@@ -55,7 +57,7 @@ jobs:
           fi
           echo "TE-FL commit: $commit"
           image_key=$(printf '%s' "$IMAGE" | sha256sum | awk '{print $1}')
-          key="te-fl-cuda-${commit}-${image_key}"
+          key="te-fl-${PLATFORM}-${commit}-${image_key}"
           echo "key=$key" >> "$GITHUB_OUTPUT"
           echo "TE-FL wheel cache key: $key"
 
@@ -66,7 +68,7 @@ jobs:
           path: te-fl-wheel
           key: ${{ steps.cache_key.outputs.key }}
 
-      - name: Setup CUDA build environment
+      - name: Setup build environment
         if: steps.cache.outputs.cache-hit != 'true'
         working-directory: ${{ github.workspace }}
         env:

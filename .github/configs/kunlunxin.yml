@@ -324,7 +324,9 @@ test_matrix:
 
 # TE-FL runtime configuration
 te_fl:
-  build: false
+  build: true
+  build_environment:
+    TE_FL_SKIP_CUDA: "1"
   runtime:
     environment:
       TE_FL_SKIP_CUDA: "1"

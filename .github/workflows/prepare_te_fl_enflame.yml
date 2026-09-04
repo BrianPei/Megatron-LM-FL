@@ -1,4 +1,4 @@
-name: Prepare TE-FL CUDA Wheel From Config
+name: Prepare TE-FL Enflame Wheel From Config
 
 on:
   workflow_call:
@@ -8,7 +8,7 @@ on:
 
 jobs:
   resolve:
-    name: resolve-cuda-config
+    name: resolve-enflame-config
     runs-on: ubuntu-latest
     outputs:
       image: ${{ steps.config.outputs.image }}
@@ -32,12 +32,12 @@ jobs:
           fi
           yq --version
 
-      - name: Read CUDA build configuration
+      - name: Read Enflame build configuration
         id: config
         run: |
           set -euo pipefail
 
-          config_file=.github/configs/cuda.yml
+          config_file=.github/configs/enflame.yml
           image=$(yq -r '.ci_image // ""' "$config_file")
           runs_on=$(yq -o=json -I=0 '.runner_labels // []' "$config_file")
           volumes=$(yq -o=json -I=0 '.container_volumes // []' "$config_file")
@@ -48,15 +48,15 @@ jobs:
           build_environment=$(yq -o=json -I=0 '.te_fl.build_environment // {}' "$config_file")
 
           if [ -z "$image" ] || [ "$runs_on" = '[]' ] || [ -z "$setup_script" ]; then
-            echo "::error::CUDA build configuration is incomplete" >&2
+            echo "::error::Enflame build configuration is incomplete" >&2
             exit 1
           fi
-          if [ "$build" != true ] || [ "$build_environment" = '{}' ]; then
-            echo "::error::CUDA configuration must enable TE-FL build_environment" >&2
+          if [ "$build" != true ]; then
+            echo "::error::Enflame configuration must enable TE-FL build" >&2
             exit 1
           fi
           if ! [[ "$nproc_per_node" =~ ^[1-9][0-9]*$ ]]; then
-            echo "::error::CUDA nproc_per_node must be a positive integer" >&2
+            echo "::error::Enflame nproc_per_node must be a positive integer" >&2
             exit 1
           fi
 
@@ -71,11 +71,11 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
   prepare:
-    name: te-fl-cuda
+    name: te-fl-enflame
     needs: resolve
     uses: ./.github/workflows/prepare_te_fl.yml
     with:
-      platform: cuda
+      platform: enflame
       image: ${{ needs.resolve.outputs.image }}
       runs_on: ${{ needs.resolve.outputs.runs_on }}
       container_volumes: ${{ needs.resolve.outputs.container_volumes }}
