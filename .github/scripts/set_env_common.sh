@@ -178,6 +178,11 @@ PY
     return 1
   fi
 
+  # Filter out only lines that start with our marker to avoid pollution from
+  # vendor Python startup messages (e.g., torch_gcu auto-injection warnings).
+  local filtered_lines
+  filtered_lines=$(grep '^__CI_RUNTIME_PIP__' <<< "$parsed" || true)
+
   while IFS=$'\t' read -r record_type kind value; do
     case "$record_type" in
       __CI_RUNTIME_PIP__)
@@ -189,10 +194,11 @@ PY
         ;;
       '') ;;
       *)
-        # Some vendor Python installations print registration banners at startup.
+        # Should never reach here after grep filtering
+        echo "::warning::Unexpected line in runtime pip config: $record_type" >&2
         ;;
     esac
-  done <<< "$parsed"
+  done <<< "$filtered_lines"
 
   if [ "${#packages[@]}" -eq 0 ]; then
     echo "Configured runtime pip packages: none"
