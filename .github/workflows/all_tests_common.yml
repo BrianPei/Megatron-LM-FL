@@ -17,7 +17,7 @@ on:
         type: boolean
         default: true
         description: Whether to run functional tests in this workflow
-      te_fl_build:
+      te_fl_prepare:
         required: false
         type: boolean
         default: false
@@ -183,7 +183,7 @@ jobs:
       nproc_per_node: ${{ needs.checkout_and_config.outputs.unit_nproc_per_node }}
       pytest_extra_args: ${{ needs.checkout_and_config.outputs.unit_pytest_extra_args }}
       ignored_tests: ${{ needs.checkout_and_config.outputs.ignored_tests }}
-      te_fl_build: ${{ inputs.te_fl_build }}
+      te_fl_prepare: ${{ inputs.te_fl_prepare }}
       te_fl_cache_key: ${{ inputs.te_fl_cache_key }}
       te_fl_runtime_environment: ${{ needs.checkout_and_config.outputs.te_fl_runtime_environment }}
       te_fl_install_pip_args: ${{ needs.checkout_and_config.outputs.te_fl_install_pip_args }}
@@ -215,7 +215,7 @@ jobs:
       container_options: ${{ needs.checkout_and_config.outputs.container_options }}
       setup_script: ${{ needs.checkout_and_config.outputs.setup_script }}
       test_matrix: ${{ needs.checkout_and_config.outputs.train_test_matrix }}
-      te_fl_build: ${{ inputs.te_fl_build }}
+      te_fl_prepare: ${{ inputs.te_fl_prepare }}
       te_fl_cache_key: ${{ inputs.te_fl_cache_key }}
       te_fl_runtime_environment: ${{ needs.checkout_and_config.outputs.te_fl_runtime_environment }}
       te_fl_install_pip_args: ${{ needs.checkout_and_config.outputs.te_fl_install_pip_args }}
@@ -234,7 +234,7 @@ jobs:
       - name: Verify workflow status
         env:
           CHECKOUT_RESULT: ${{ needs.checkout_and_config.result }}
-          TE_FL_BUILD: ${{ inputs.te_fl_build }}
+          TE_FL_PREPARE: ${{ inputs.te_fl_prepare }}
           TE_FL_CACHE_KEY: ${{ inputs.te_fl_cache_key }}
           LINT_RESULT: ${{ needs.lint.result }}
           RUN_UNIT_TESTS: ${{ inputs.run_unit_tests }}
@@ -250,8 +250,8 @@ jobs:
             failed=true
           fi
 
-          if [ "$TE_FL_BUILD" = true ] && [ -z "$TE_FL_CACHE_KEY" ]; then
-            echo "::error::TE-FL build was requested but no cache key was provided" >&2
+          if [ "$TE_FL_PREPARE" = true ] && [ -z "$TE_FL_CACHE_KEY" ]; then
+            echo "::error::TE-FL preparation was requested but no cache key was provided" >&2
             failed=true
           fi
 

@@ -170,7 +170,8 @@ test_matrix:
 
 # TE-FL runtime configuration
 te_fl:
-  build: true
+  prepare: true
+  build_mode: cuda
   build_environment:
     NVTE_FRAMEWORK: pytorch
     NVTE_WITH_USERBUFFERS: "0"

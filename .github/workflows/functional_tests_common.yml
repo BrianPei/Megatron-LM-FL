@@ -31,7 +31,7 @@ on:
         required: true
         type: string
         description: JSON array of test configurations
-      te_fl_build:
+      te_fl_prepare:
         required: true
         type: boolean
       te_fl_cache_key:
@@ -129,7 +129,7 @@ jobs:
           ci_install_runtime_packages
 
       - name: Restore TE-FL wheel
-        if: inputs.te_fl_build
+        if: inputs.te_fl_prepare
         id: te_fl_cache
         uses: actions/cache/restore@v4
         with:
@@ -137,7 +137,7 @@ jobs:
           key: ${{ inputs.te_fl_cache_key }}
 
       - name: Check TE-FL wheel cache
-        if: inputs.te_fl_build
+        if: inputs.te_fl_prepare
         env:
           CACHE_HIT: ${{ steps.te_fl_cache.outputs.cache-hit }}
         run: |
@@ -148,7 +148,7 @@ jobs:
           fi
 
       - name: Install TE-FL wheel
-        if: inputs.te_fl_build
+        if: inputs.te_fl_prepare
         env:
           TE_FL_WHEEL_DIR: ${{ github.workspace }}/te-fl-wheel
           TE_FL_INSTALL_PIP_ARGS_JSON: ${{ inputs.te_fl_install_pip_args }}

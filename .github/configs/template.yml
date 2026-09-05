@@ -48,8 +48,9 @@ test_matrix:
     train: []
 
 te_fl:
-  build: false
-  # Set build=true only when this platform owns a CUDA TE-FL build.
+  prepare: false
+  # Use cuda for native CUDA extensions or python for TE_FL_SKIP_CUDA=1.
+  build_mode: python
   build_environment: {}
   runtime:
     environment: {}
