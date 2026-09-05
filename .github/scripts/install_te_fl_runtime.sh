@@ -20,23 +20,39 @@ fi
 
 install_pip_args=()
 install_pip_args_json="${TE_FL_INSTALL_PIP_ARGS_JSON:-[]}"
-while IFS= read -r arg; do
-  install_pip_args+=("$arg")
-done < <(
-  python3 - "$install_pip_args_json" <<'PY'
+parsed_install_pip_args=''
+if ! parsed_install_pip_args=$(python3 - "$install_pip_args_json" <<'PY'
 import json
 import sys
 
 values = json.loads(sys.argv[1])
 if not isinstance(values, list) or not all(
-    isinstance(value, str) and value and "\n" not in value and "\r" not in value
+    isinstance(value, str)
+    and value
+    and not any(character in value for character in ("\n", "\r", "\t"))
     for value in values
 ):
     raise SystemExit("TE-FL install_pip_args must be a JSON string array")
 for value in values:
-    print(value)
+    print(f"__CI_TE_FL_ARG__\t{value}")
 PY
-)
+); then
+  echo "::error::Invalid TE-FL pip install argument configuration" >&2
+  exit 1
+fi
+
+while IFS=$'\t' read -r record_type arg; do
+  case "$record_type" in
+    __CI_TE_FL_ARG__)
+      install_pip_args+=("$arg")
+      ;;
+    '')
+      ;;
+    *)
+      # Vendor Python runtimes may print startup messages to stdout.
+      ;;
+  esac
+done <<< "$parsed_install_pip_args"
 
 # The CUDA image may already contain NVIDIA TE metadata and an extension. Remove
 # it before installing the wheel so Python cannot resolve a mixed TE runtime.
