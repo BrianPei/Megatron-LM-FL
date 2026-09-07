@@ -33,10 +33,15 @@ if [ ! -x "$PYTHON_BIN" ]; then
   exit 1
 fi
 
+# Optional workflow inputs may be explicitly passed as an empty string.
+export CI_EXPERIMENTAL_PYTEST_EXTRA_ARGS="${CI_EXPERIMENTAL_PYTEST_EXTRA_ARGS:-[]}"
+
 "$PYTHON_BIN" -c \
   "import json, os; value = json.loads(os.environ['CI_IGNORED_TESTS']); assert isinstance(value, list) and all(isinstance(item, str) for item in value)"
 "$PYTHON_BIN" -c \
   "import json, os; value = json.loads(os.environ['CI_PYTEST_EXTRA_ARGS']); assert isinstance(value, list) and all(isinstance(item, str) for item in value)"
+"$PYTHON_BIN" -c \
+  "import json, os; value = json.loads(os.environ.get('CI_EXPERIMENTAL_PYTEST_EXTRA_ARGS', '[]')); assert isinstance(value, list) and all(isinstance(item, str) for item in value)"
 
 TEST_PATHS=()
 while IFS= read -r item; do
@@ -85,6 +90,21 @@ print("\n".join(json.loads(os.environ["CI_PYTEST_EXTRA_ARGS"])), file=os.fdopen(
 ' 3>&1 1>&2
 )
 
+EXPERIMENTAL_ARGS=()
+while IFS= read -r item; do
+  [ -n "$item" ] && EXPERIMENTAL_ARGS+=("$item")
+done < <(
+  "$PYTHON_BIN" -c '
+import json
+import os
+
+print(
+    "\n".join(json.loads(os.environ.get("CI_EXPERIMENTAL_PYTEST_EXTRA_ARGS", "[]"))),
+    file=os.fdopen(3, "w"),
+)
+' 3>&1 1>&2
+)
+
 if [ "${#TEST_PATHS[@]}" -eq 0 ]; then
   echo "::error::No tests selected for $CI_TEST_GROUP from CI_TEST_PATH='$CI_TEST_PATH'"
   exit 1
@@ -130,9 +150,6 @@ PYTEST_ARGS=(
 if [ "${#IGNORE_OPTS[@]}" -gt 0 ]; then
   PYTEST_ARGS+=("${IGNORE_OPTS[@]}")
 fi
-if [ "${#EXTRA_ARGS[@]}" -gt 0 ]; then
-  PYTEST_ARGS+=("${EXTRA_ARGS[@]}")
-fi
 PYTEST_ARGS+=(
   -p
   no:randomly
@@ -140,15 +157,32 @@ PYTEST_ARGS+=(
   addopts="--durations=15 -s -rA"
 )
 
+run_pytest() {
+  "$PYTHON_BIN" -m torch.distributed.run --nproc_per_node="$CI_NPROC_PER_NODE" \
+    --master_port="${MASTER_PORT:-29500}" \
+    -m coverage run \
+    --rcfile="$COVERAGE_DIR/.coveragerc" \
+    "$PYTEST_BIN" \
+    "${PYTEST_ARGS[@]}" \
+    "$@"
+}
+
 set +e
-"$PYTHON_BIN" -m torch.distributed.run --nproc_per_node="$CI_NPROC_PER_NODE" \
-  --master_port="${MASTER_PORT:-29500}" \
-  -m coverage run \
-  --rcfile="$COVERAGE_DIR/.coveragerc" \
-  "$PYTEST_BIN" \
-  "${PYTEST_ARGS[@]}"
-test_exit_code=$?
+run_pytest "${EXTRA_ARGS[@]}"
+normal_exit_code=$?
+
+experimental_exit_code=0
+if [ "${#EXPERIMENTAL_ARGS[@]}" -gt 0 ]; then
+  echo "Running experimental unit tests: $CI_TEST_GROUP"
+  run_pytest "${EXPERIMENTAL_ARGS[@]}"
+  experimental_exit_code=$?
+fi
 set -e
+
+test_exit_code=$normal_exit_code
+if [ "$test_exit_code" -eq 0 ] && [ "$experimental_exit_code" -ne 0 ]; then
+  test_exit_code=$experimental_exit_code
+fi
 
 "$PYTHON_BIN" -m coverage combine \
   --rcfile="$COVERAGE_DIR/.coveragerc" \

@@ -5,6 +5,11 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/set_env_common.sh"
 
+# Keep CUDA CI aligned with NVIDIA Transformer Engine semantics. TE-FL defaults
+# to FlagOS-first dispatch, so set the preference explicitly instead of relying
+# on the container's inherited environment.
+ci_export_env TE_FL_PREFER vendor
+
 validate_cuda_capacity() {
   local device_count
   device_count=$(python3 -c \
@@ -13,7 +18,13 @@ validate_cuda_capacity() {
 }
 
 setup_unit_environment() {
+  # Deterministic unit tests must configure cuBLAS before any Python process
+  # can initialize a cuBLAS handle. Export through GITHUB_ENV for the pytest step.
+  ci_export_env CUBLAS_WORKSPACE_CONFIG :4096:8
+
   ci_activate_python_environment
+  ci_export_env NCCL_MAX_NCHANNELS 1
+  ci_export_env NCCL_NVLS_ENABLE 0
   ci_ensure_curl
 
   local test_dependencies=(
@@ -36,7 +47,7 @@ setup_unit_environment() {
   python3 -m pip install -e /tmp/nvidia-resiliency-ext --no-cache-dir
   python3 -m pip install protobuf==6.33.1
   python3 -m pip install \
-    git+https://github.com/NVIDIA-NeMo/Emerging-Optimizers.git@v0.1.0 \
+    git+https://github.com/NVIDIA-NeMo/Emerging-Optimizers.git@v0.2.0 \
     --no-cache-dir
 
   ci_install_project

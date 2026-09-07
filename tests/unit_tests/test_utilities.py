@@ -30,6 +30,13 @@ class TestModel(torch.nn.Module):
             self.layers[-1].weight.shared_embedding = True
 
 
+def clear_nvte_env_vars():
+    """Clear NVTE env vars set by conftest set_env fixture."""
+    os.environ.pop('NVTE_FLASH_ATTN', None)
+    os.environ.pop('NVTE_FUSED_ATTN', None)
+    os.environ.pop('NVTE_UNFUSED_ATTN', None)
+
+
 class Utils:
 
     world_size = int(os.environ.get('WORLD_SIZE', '1'))
@@ -56,11 +63,15 @@ class Utils:
             master_ip = os.getenv('MASTER_ADDR', 'localhost')
             master_port = os.getenv('MASTER_PORT', '6000')
             init_method += master_ip + ':' + master_port
+            ######## FlagScale Begin ########
+            # Multi-backend CI can spend more than one minute compiling kernels on a rank.
+            # Keep the test store alive long enough for slower ranks to reach group creation.
             rendezvous_iterator = rendezvous(
-                init_method, Utils.rank, Utils.world_size, timeout=timedelta(minutes=1)
+                init_method, Utils.rank, Utils.world_size, timeout=timedelta(minutes=5)
             )
             store, rank, world_size = next(rendezvous_iterator)
-            store.set_timeout(timedelta(minutes=1))
+            store.set_timeout(timedelta(minutes=5))
+            ######## FlagScale End ########
 
             # Use a PrefixStore to avoid accidental overrides of keys used by
             # different systems (e.g. RPC) in case the store is multi-tenant.
@@ -100,9 +111,8 @@ class Utils:
             return
 
         try:
-                # Flush pending device work before the barrier so slow ranks don't
-                # time out while fast ranks tear down process groups.
-                # NOTE(zhaoyinglia): there is not keyword argument 'timeout' in torch.distributed.barrier()
+            # Flush pending device work before the barrier so slow ranks don't
+            # time out while fast ranks tear down process groups.
             cur_platform.synchronize()
             torch.distributed.barrier()
         except Exception:
@@ -110,6 +120,7 @@ class Utils:
             return
         ps.destroy_model_parallel()
         Utils.inited = False
+        cur_platform.empty_cache()  # FlagScale Modify
 
     @staticmethod
     def initialize_model_parallel(

@@ -42,7 +42,9 @@ device_types:
 test_matrix:
   unit:
     nproc_per_node: 8
-    pytest_extra_args: []
+    pytest_extra_args:
+      - -m
+      - not experimental and not flaky_in_dev
     groups:
       - name: core
         path: tests/unit_tests/test_*.py
@@ -69,8 +71,8 @@ test_matrix:
         path: tests/unit_tests/fusions/
         description: Fusion tests
       - name: others
-        path: tests/unit_tests/export/ tests/unit_tests/post_training/ tests/unit_tests/tokenizers/ tests/unit_tests/utils/
-        description: Export, post-training, tokenizer, and utility tests
+        path: tests/unit_tests/post_training/ tests/unit_tests/tokenizers/ tests/unit_tests/utils/
+        description: post-training, tokenizer, and utility tests
     # Start with a conservative MUSA smoke set while validating runtime and TE plugin coverage.
     ignored_tests:
       # ── Core tests that genuinely require CUDA/NCCL/Apex/TE GPU paths ──────────
@@ -80,7 +82,6 @@ test_matrix:
       - tests/unit_tests/test_imports.py             # Import chains hit TE/CUDA modules
       - tests/unit_tests/test_nccl_allocator.py      # NCCL-specific memory allocator
       - tests/unit_tests/test_local_multi_tensor_fns.py  # Apex amp_C CUDA kernels
-      - tests/unit_tests/test_muon_optimizer.py      # Hardcoded device='cuda', Newton-Schulz
       - tests/unit_tests/test_optimizer.py           # FusedAdam + fp8_autocast + DDP
       - tests/unit_tests/test_optimizer_cpu_offloading.py  # CPU-GPU offloading, .cuda()
       - tests/unit_tests/test_layer_wise_optimizer.py      # .cuda() + multi-rank
@@ -113,6 +114,10 @@ test_matrix:
       - tests/unit_tests/test_hyper_comm_grid.py::TestHyperCommGridIntegration
       # torch.cuda.nvtx is not provided by the MUSA PyTorch build.
       - tests/unit_tests/test_utils.py::test_nvtx_range
+      # The S5000 MUSA PyTorch build does not define ProcessGroupNCCL. This
+      # pre-init fallback case can hit that missing CUDA compatibility symbol
+      # during pytest cleanup even though the function under test is CPU-only.
+      - tests/unit_tests/test_utils.py::TestGetLocalRankPreinit::test_defaults_to_zero_with_warning
       # core-test_utils.py flaky tests that hang on MUSA MCCL collective communication.
       # test_check/cross_check_param_hashes call torch.distributed.all_gather() which deadlocks
       # with partial ranks stalling while others complete. test_param_norm_* use DistributedDataParallel
@@ -256,10 +261,7 @@ test_matrix:
       # This suite requires tokenizer assets under /opt/data that are not
       # mounted in the MUSA unit container.
       - tests/unit_tests/data/test_preprocess_data.py
-      # TRT-LLM FP8 export and ModelOpt inference require CUDA-backed TE/ModelOpt.
-      - tests/unit_tests/export/trtllm/test_distributed_fp8.py
-      - tests/unit_tests/export/trtllm/test_single_device_fp8.py
-      - tests/unit_tests/export/trtllm/test_trtllm_distributed_gpu_converter.py
+      # ModelOpt inference require CUDA-backed TE/ModelOpt.
       - tests/unit_tests/post_training/test_modelopt_module_spec.py
       - tests/unit_tests/post_training/test_modelopt_model_builder.py::test_model_provider_switches_to_modelopt_builder
       # test_checkpointing: _load_base_checkpoint → read_metadata uses device='cuda' tensor
@@ -301,9 +303,10 @@ test_matrix:
       - tests/unit_tests/models/test_multimodal_projector.py::TestMultimodalProjector::test_forward
       # test_radio_model: test_forward hits the TE layernorm_fwd DType bug on MUSA.
       - tests/unit_tests/models/test_radio_model.py::TestRADIOViTModel::test_forward
-      # test_mamba_model: mamba-ssm CUDA extension is not available in the MUSA image;
-      # setup_method raises ImportError before any test body runs.
-      - tests/unit_tests/models/test_mamba_model.py
+      # Hybrid model tests instantiate MambaMixer, whose CUDA extension is not
+      # available in the MUSA image.
+      - tests/unit_tests/models/test_hybrid_model.py
+      - tests/unit_tests/models/test_hybrid_moe_model.py
       # test_mamba_moe_model: GroupedGEMM kernels require compute capability >= 8.0 (Ampere or newer);
       # Moore Threads S5000 does not meet this requirement.
       - tests/unit_tests/models/test_mamba_moe_model.py

@@ -49,13 +49,14 @@ test_matrix:
   unit:
     nproc_per_node: 8
     pytest_extra_args:
-      - --continue-on-collection-errors
       # Keep successful multi-rank stdout out of the live Actions log. Pytest
       # still includes captured output for failures.
       - --capture=fd
       # Do not replay captured output for every passing parametrization. With
       # eight ranks, pytest's default -rA report exceeds the Actions log limit.
       - -rfE
+      - -m
+      - not experimental and not flaky_in_dev
     groups:
       - name: core
         path: tests/unit_tests/test_*.py megatron/plugin/tests/
@@ -85,9 +86,12 @@ test_matrix:
         path: tests/unit_tests/fusions/
         description: Fusion tests
       - name: others
-        path: tests/unit_tests/export/ tests/unit_tests/post_training/ tests/unit_tests/tokenizers/ tests/unit_tests/utils/
-        description: Export, post-training, tokenizer, and utility tests
+        path: tests/unit_tests/post_training/ tests/unit_tests/tokenizers/ tests/unit_tests/utils/
+        description: post-training, tokenizer, and utility tests
     ignored_tests:
+      # LayerWise optimizer suites require the optional Emerging Optimizers package.
+      - tests/unit_tests/test_layer_wise_optimizer.py
+      - tests/unit_tests/dist_checkpointing/test_layer_wise_optimizer.py
       # core
       # NVIDIA Transformer Engine FP4/FP8 paths are unavailable on BW1000;
       # TE-FL uses its FlagOS backend instead.
@@ -269,7 +273,8 @@ test_matrix:
       - tests/unit_tests/models/test_radio_model.py::TestRADIOViTModel
       - tests/unit_tests/models/test_t5_model.py::TestT5Model
       # mamba-ssm CUDA kernels unavailable on BW1000 (AMD/HIP). Also ignored on metax.
-      - tests/unit_tests/models/test_mamba_model.py
+      - tests/unit_tests/models/test_hybrid_model.py
+      - tests/unit_tests/models/test_hybrid_moe_model.py
       - tests/unit_tests/models/test_mamba_moe_model.py
 
       # fusions
@@ -399,13 +404,6 @@ test_matrix:
       - tests/unit_tests/pipeline_parallel/test_fine_grained_activation_offloading.py::test_fine_grained_activation_offload_with_ep_a2a_overlap_compatibility
 
       # others
-      # TE-FL missing fused_amax_and_scale_update_after_reduction.
-      # These three tests are also ignored on metax.
-      - tests/unit_tests/export/trtllm/test_distributed_fp8.py
-      - tests/unit_tests/export/trtllm/test_single_device_fp8.py
-      - tests/unit_tests/export/trtllm/test_trtllm_helper.py
-      # The distributed TRT-LLM converter errors during setup on BW1000.
-      - tests/unit_tests/export/trtllm/test_trtllm_distributed_gpu_converter.py
       # ModelOpt not available on BW1000.
       - tests/unit_tests/post_training/test_modelopt_model_builder.py::test_model_provider_switches_to_modelopt_builder
       # The GPT checkpoint restore blocks at rank-synchronized temporary
