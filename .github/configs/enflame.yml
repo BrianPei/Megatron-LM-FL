@@ -8,7 +8,7 @@ display_name: 'Enflame Tests'
 setup_script: .github/scripts/set_env_enflame.sh
 
 # CI image for the Enflame environment (built and pushed 2026-08-10, validated on Enflame L600)
-ci_image: harbor.baai.ac.cn/flagos-dev/megatron-lm-fl:manual-20260810-enflame-dev
+ci_image: harbor.baai.ac.cn/flagscale/megatron-lm-fl:manual-20260827-metax-dev-rdma-aligned
 
 # Runner labels for the Enflame node
 runner_labels:
