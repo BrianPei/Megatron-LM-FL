@@ -26,11 +26,12 @@ ci_export_env() {
 
 ci_apply_env_json() {
   local environment_json="$1"
+  local python_bin="${CI_PYTHON_BIN:-python3}"
   local entries
   local name
   local value
 
-  if ! entries=$(python3 - "$environment_json" <<'PY'
+  if ! entries=$("$python_bin" - "$environment_json" <<'PY'
 import json
 import re
 import sys
@@ -69,8 +70,11 @@ ci_activate_python_environment() {
     conda activate base
   fi
 
+  local python_bin
+  python_bin=$(command -v python3)
   ci_export_env PATH "$PATH"
-  echo "Python: $(command -v python3) ($(python3 --version 2>&1))"
+  ci_export_env CI_PYTHON_BIN "$python_bin"
+  echo "Python: $python_bin ($($python_bin --version 2>&1))"
 }
 
 ci_ensure_curl() {
@@ -144,6 +148,7 @@ ENVEOF
 }
 
 ci_install_runtime_packages() {
+  local python_bin="${CI_PYTHON_BIN:-$(command -v python3)}"
   local packages_json="${CI_RUNTIME_PIP_PACKAGES_JSON:-[]}"
   local install_args_json="${CI_RUNTIME_PIP_INSTALL_ARGS_JSON:-[]}"
   local parsed
@@ -152,7 +157,7 @@ ci_install_runtime_packages() {
   local -a packages=()
   local -a install_args=()
 
-  if ! parsed=$(python3 - "$packages_json" "$install_args_json" <<'PY'
+  if ! parsed=$("$python_bin" - "$packages_json" "$install_args_json" <<'PY'
 import json
 import sys
 
@@ -206,7 +211,7 @@ PY
   fi
 
   echo "Installing configured runtime pip packages: ${packages[*]}"
-  python3 -m pip install --no-cache-dir "${install_args[@]}" "${packages[@]}"
+  "$python_bin" -m pip install --no-cache-dir "${install_args[@]}" "${packages[@]}"
 }
 
 ci_install_uv_compatibility_shim() {
@@ -217,8 +222,7 @@ ci_install_uv_compatibility_shim() {
     return
   fi
 
-  local python_bin
-  python_bin=$(command -v python3)
+  local python_bin="${CI_PYTHON_BIN:-$(command -v python3)}"
   cat > /usr/local/bin/uv <<UVEOF
 #!/usr/bin/env bash
 set -euo pipefail
@@ -247,18 +251,17 @@ ci_setup_functional_environment() {
   ci_activate_python_environment
 
   # Dataset build helpers call python3 directly.
-  local python_bin
-  python_bin=$(command -v python3)
+  local python_bin="${CI_PYTHON_BIN:-$(command -v python3)}"
   if [ "$python_bin" != "/usr/bin/python3" ] && \
      [ "$python_bin" != "/usr/local/bin/python3" ]; then
     ln -sf "$python_bin" /usr/local/bin/python3
   fi
 
-  python3 -c "import torch; print('Torch:', torch.__version__)"
+  "$python_bin" -c "import torch; print('Torch:', torch.__version__)"
   ci_install_yq
   ci_install_envsubst
   ci_install_uv_compatibility_shim
-  python3 -m pip install pybind11 --no-cache-dir
+  "$python_bin" -m pip install pybind11 --no-cache-dir
   ci_install_project "$@"
 }
 
@@ -323,5 +326,5 @@ ci_validate_device_capacity() {
 
 ci_install_project() {
   cd "$CI_PROJECT_ROOT"
-  python3 -m pip install -e . --no-deps --no-build-isolation --no-cache-dir "$@"
+  "${CI_PYTHON_BIN:-$(command -v python3)}" -m pip install -e . --no-deps --no-build-isolation --no-cache-dir "$@"
 }

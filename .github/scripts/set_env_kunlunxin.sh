@@ -11,7 +11,7 @@ source "$SCRIPT_DIR/set_env_common.sh"
 # the code runs correctly with the XPU stack on 3.10.
 ci_install_project() {
   cd "$CI_PROJECT_ROOT"
-  python3 -m pip install -e . --no-deps --no-build-isolation \
+  "$CI_PYTHON_BIN" -m pip install -e . --no-deps --no-build-isolation \
       --no-cache-dir --ignore-requires-python
 }
 
@@ -21,8 +21,19 @@ activate_kunlunxin_python_environment() {
   # never fires. Activate the PyTorch/XPU environment directly.
   source /root/miniconda/etc/profile.d/conda.sh
   conda activate python310_torch29_cuda
+  export PATH="$CONDA_PREFIX/bin:$PATH"
+  hash -r
+  local python_bin="$CONDA_PREFIX/bin/python3"
+  if [ ! -x "$python_bin" ]; then
+    python_bin="$CONDA_PREFIX/bin/python"
+  fi
+  if [ ! -x "$python_bin" ]; then
+    echo "::error::KunLunXin Python interpreter not found under $CONDA_PREFIX" >&2
+    exit 1
+  fi
+  ci_export_env CI_PYTHON_BIN "$python_bin"
   ci_export_env PATH "$PATH"
-  echo "Python: $(command -v python3) ($(python3 --version 2>&1))"
+  echo "Python: $CI_PYTHON_BIN ($($CI_PYTHON_BIN --version 2>&1))"
 }
 
 # Override the common activation helper so every shared entry point picks up
@@ -41,8 +52,7 @@ ci_install_uv_compatibility_shim() {
   # (/root/miniconda/bin/python3, no torch/numpy) rather than the activated
   # XPU environment. Override unconditionally so every `uv run python ...`
   # call in _run_training.sh reaches the correct interpreter.
-  local python_bin
-  python_bin=$(command -v python3)
+  local python_bin="${CI_PYTHON_BIN:-$(command -v python3)}"
 
   local shim_dir=/tmp/kunlunxin-ci-bin
   mkdir -p "$shim_dir"
@@ -92,8 +102,7 @@ install_kunlunxin_python_config_shim() {
   # and compile_helpers() reports "Failed to compile the C++ dataset helper
   # functions". Shim python3-config onto the active interpreter so both
   # Makefile lines agree on one Python.
-  local python_bin
-  python_bin=$(command -v python3)
+  local python_bin="${CI_PYTHON_BIN:-$(command -v python3)}"
 
   local shim_dir=/tmp/kunlunxin-ci-bin
   mkdir -p "$shim_dir"

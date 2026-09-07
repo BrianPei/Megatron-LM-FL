@@ -4,6 +4,12 @@ set -euo pipefail
 
 : "${TE_FL_WHEEL_DIR:?TE_FL_WHEEL_DIR is required}"
 
+python_bin="${CI_PYTHON_BIN:-$(command -v python3)}"
+if [ ! -x "$python_bin" ]; then
+  echo "::error::TE-FL Python executable not found: $python_bin" >&2
+  exit 1
+fi
+
 if [ ! -d "$TE_FL_WHEEL_DIR" ]; then
   echo "::error::TE-FL wheel cache directory is missing: $TE_FL_WHEEL_DIR" >&2
   exit 1
@@ -21,7 +27,7 @@ fi
 install_pip_args=()
 install_pip_args_json="${TE_FL_INSTALL_PIP_ARGS_JSON:-[]}"
 parsed_install_pip_args=''
-if ! parsed_install_pip_args=$(python3 - "$install_pip_args_json" <<'PY'
+if ! parsed_install_pip_args=$("$python_bin" - "$install_pip_args_json" <<'PY'
 import json
 import sys
 
@@ -56,20 +62,22 @@ done <<< "$parsed_install_pip_args"
 
 # The CUDA image may already contain NVIDIA TE metadata and an extension. Remove
 # it before installing the wheel so Python cannot resolve a mixed TE runtime.
-python3 -m pip uninstall -y \
+"$python_bin" -m pip uninstall -y \
   transformer-engine transformer-engine-torch \
   transformer-engine-cu11 transformer-engine-cu12 transformer-engine-cu13 \
   >/dev/null 2>&1 || true
 
-python3 -m pip install \
+"$python_bin" -m pip install \
   --force-reinstall \
   --no-deps \
   --no-cache-dir \
   "${install_pip_args[@]}" \
   "${wheels[0]}"
 
-python3 - <<'PY'
+"$python_bin" - <<'PY'
+import sys
 import transformer_engine
 
+print(f"TE-FL Python: {sys.executable}")
 print(f"TE-FL wheel import passed: {transformer_engine.__file__}")
 PY

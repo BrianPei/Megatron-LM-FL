@@ -77,6 +77,9 @@ test_matrix:
     # These files will be skipped when running pytest
     ignored_tests:
       - tests/unit_tests/data/test_preprocess_data.py
+      # Downloads GPT-2 tokenizer files when the mounted offline fixture is absent.
+      # CI runners cannot rely on external Hugging Face/S3 access.
+      - tests/unit_tests/data/test_preprocess_mmdata.py
       - tests/unit_tests/dist_checkpointing/test_global_metadata_reuse.py
       - tests/unit_tests/dist_checkpointing/test_optimizer.py
       - tests/unit_tests/dist_checkpointing/test_nonpersistent.py
