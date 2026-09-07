@@ -119,12 +119,54 @@ jobs:
     outputs:
       cache_key: ${{ steps.cache_key.outputs.key }}
     steps:
-      - name: Checkout Megatron source
+      - name: Checkout Megatron source (attempt 1)
+        id: checkout_megatron_1
+        continue-on-error: true
         uses: actions/checkout@v4
         with:
           fetch-depth: 1
 
-      - name: Checkout TransformerEngine-FL
+      - name: Checkout Megatron source (attempt 2)
+        id: checkout_megatron_2
+        if: steps.checkout_megatron_1.outcome == 'failure'
+        continue-on-error: true
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Checkout Megatron source (attempt 3)
+        id: checkout_megatron_3
+        if: steps.checkout_megatron_2.outcome == 'failure'
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Checkout TransformerEngine-FL (attempt 1)
+        id: checkout_te_fl_1
+        continue-on-error: true
+        uses: actions/checkout@v4
+        with:
+          repository: flagos-ai/TransformerEngine-FL
+          ref: main
+          path: te-fl
+          fetch-depth: 1
+          submodules: recursive
+
+      - name: Checkout TransformerEngine-FL (attempt 2)
+        id: checkout_te_fl_2
+        if: steps.checkout_te_fl_1.outcome == 'failure'
+        continue-on-error: true
+        uses: actions/checkout@v4
+        with:
+          repository: flagos-ai/TransformerEngine-FL
+          ref: main
+          path: te-fl
+          fetch-depth: 1
+          submodules: recursive
+
+      - name: Checkout TransformerEngine-FL (attempt 3)
+        id: checkout_te_fl_3
+        if: steps.checkout_te_fl_2.outcome == 'failure'
         uses: actions/checkout@v4
         with:
           repository: flagos-ai/TransformerEngine-FL
