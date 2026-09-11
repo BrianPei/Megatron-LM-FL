@@ -41,7 +41,7 @@ def get_platform():
         return cur_platform
 
     cur_platform = _select_detected_platform()
-    platform_name = cur_platform._name
+    platform_name = cur_platform.platform_name()
     print(f"Megatron-LM-FL Platform: {platform_name} Selected")
 
     if platform_name == "kunlunxin":
