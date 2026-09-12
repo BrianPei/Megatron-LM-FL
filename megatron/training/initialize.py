@@ -1,6 +1,7 @@
 # Copyright (c) 2025, NVIDIA CORPORATION. All rights reserved.
 
 """Megatron initialization."""
+
 import logging
 import os
 import random
@@ -54,8 +55,15 @@ def initialize_megatron(
     (optionally, only when args.lazy_mpu_init == True)
     """
     if not allow_no_cuda:
-        # Make sure cuda is available.
-        assert torch.cuda.is_available(), "Megatron requires CUDA."
+        # Make sure a supported accelerator platform is available.
+        # (fork: CUDA assert generalized to registered FlagOS platforms -- musa/npu/etc.)
+        from megatron.plugin.platform.platform_manager import (
+            is_current_platform_supported,
+        )
+
+        assert is_current_platform_supported(), (
+            "Megatron requires CUDA or a supported FlagOS platform."
+        )
 
     args = get_args()
 
@@ -63,15 +71,19 @@ def initialize_megatron(
     setup_logging()
 
     if args.async_save and args.use_persistent_ckpt_worker:
-        init_persistent_async_worker(args.rank, 'forkserver')
+        init_persistent_async_worker(args.rank, "forkserver")
 
     # init rerun state
     def state_save_func():
-        return {'rng_tracker_states': tensor_parallel.get_cuda_rng_tracker().get_states()}
+        return {
+            "rng_tracker_states": tensor_parallel.get_cuda_rng_tracker().get_states()
+        }
 
     def state_restore_func(state_dict):
-        if state_dict['rng_tracker_states']:
-            tensor_parallel.get_cuda_rng_tracker().set_states(state_dict['rng_tracker_states'])
+        if state_dict["rng_tracker_states"]:
+            tensor_parallel.get_cuda_rng_tracker().set_states(
+                state_dict["rng_tracker_states"]
+            )
 
     args = get_args()
     initialize_rerun_state_machine(
@@ -93,7 +105,9 @@ def initialize_megatron(
     def finish_mpu_init():
         args = get_args()
         # Pytorch distributed.
-        _initialize_distributed(get_embedding_ranks, get_position_embedding_ranks, store)
+        _initialize_distributed(
+            get_embedding_ranks, get_position_embedding_ranks, store
+        )
 
         # Random seeds for reproducibility.
         print_rank_0("> setting random seeds to {} ...".format(args.seed))
@@ -109,7 +123,9 @@ def initialize_megatron(
         if args.num_experts is not None:
             from megatron.core.transformer.moe.router import MoEAuxLossAutoScaler
 
-            MoEAuxLossAutoScaler.set_loss_scale(torch.ones(1, device=torch.cuda.current_device()))
+            MoEAuxLossAutoScaler.set_loss_scale(
+                torch.ones(1, device=torch.cuda.current_device())
+            )
 
     if skip_mpu_initialization:
         return None
@@ -165,6 +181,7 @@ def _compile_dependencies():
 
     torch.distributed.barrier()
 
+
 def _initialize_tp_communicators():
     """initializing the communicators with user buffers for high-performance tensor-model-parallel
     communication overlap"""
@@ -188,9 +205,10 @@ def _initialize_tp_communicators():
     else:
         ub_cfgs = {}
 
-    if getattr(args, 'decoder_tp_comm_overlap', False):
+    if getattr(args, "decoder_tp_comm_overlap", False):
         input_shape = [
-            (args.decoder_seq_length * args.micro_batch_size) // args.context_parallel_size,
+            (args.decoder_seq_length * args.micro_batch_size)
+            // args.context_parallel_size,
             args.hidden_size,
         ]
     else:
@@ -202,12 +220,17 @@ def _initialize_tp_communicators():
     if is_te_min_version("2.7.0"):
         UserBufferQuantizationMode = te_module.base.UserBufferQuantizationMode
         quantization_modes = [
-            UserBufferQuantizationMode.FP8 if args.fp8 else UserBufferQuantizationMode.NONE
+            UserBufferQuantizationMode.FP8
+            if args.fp8
+            else UserBufferQuantizationMode.NONE
         ]
         if (
             args.fp8 is not None
             and args.first_last_layers_bf16
-            and (args.num_layers_at_start_in_bf16 > 0 or args.num_layers_at_end_in_bf16 > 0)
+            and (
+                args.num_layers_at_start_in_bf16 > 0
+                or args.num_layers_at_end_in_bf16 > 0
+            )
         ):
             quantization_modes.append(UserBufferQuantizationMode.NONE)
         # The process group with the target bootstrap backend is created in Transformer Engine.
@@ -228,12 +251,12 @@ def _initialize_tp_communicators():
             bootstrap_backend=args.tp_comm_bootstrap_backend,
         )
     else:
-        if args.tp_comm_bootstrap_backend != 'mpi':
+        if args.tp_comm_bootstrap_backend != "mpi":
             warnings.warn(
                 f"Transformer Engine v{get_te_version()} supports only MPI bootstrap backend."
             )
         # Create a MPI process group to help with TP communication overlap bootstrap.
-        create_group(backend='mpi', group_desc='TP_BOOTSTRAP_GROUP_MPI')
+        create_group(backend="mpi", group_desc="TP_BOOTSTRAP_GROUP_MPI")
 
         te_module.base.initialize_ub(
             shape=input_shape,
@@ -247,20 +270,23 @@ def _initialize_distributed(get_embedding_ranks, get_position_embedding_ranks, s
     """Initialize torch.distributed and core model parallel."""
     args = get_args()
 
-    device_count = torch.cuda.device_count()
-    if torch.distributed.is_initialized():
+    from megatron.plugin.platform.platform_manager import get_platform
 
-        print_rank_0("torch distributed is already initialized, skipping initialization ...")
+    platform = get_platform()
+    device_count = platform.device_count()
+    if torch.distributed.is_initialized():
+        print_rank_0(
+            "torch distributed is already initialized, skipping initialization ..."
+        )
         args.rank = torch.distributed.get_rank()
         args.world_size = torch.distributed.get_world_size()
 
     else:
-
         print_rank_0("> initializing torch distributed ...")
         # Manually set the device ids.
         if device_count > 0:
-            torch.cuda.set_device(args.local_rank)
-            device_id = torch.device(f'cuda:{args.local_rank}')
+            platform.set_device(args.local_rank)
+            device_id = platform.device(args.local_rank)
         else:
             device_id = None
 
@@ -277,26 +303,36 @@ def _initialize_distributed(get_embedding_ranks, get_position_embedding_ranks, s
         # so that the remaining defaults are applied consistently.
         _fr_path = (
             args.flight_recorder_dump_path
-            or os.environ.get('TORCH_FR_DUMP_TEMP_FILE')
-            or os.environ.get('TORCH_NCCL_DEBUG_INFO_TEMP_FILE')
+            or os.environ.get("TORCH_FR_DUMP_TEMP_FILE")
+            or os.environ.get("TORCH_NCCL_DEBUG_INFO_TEMP_FILE")
         )
         if _fr_path is not None:
             _fr_dump_prefix = _fr_path
             if os.path.isdir(_fr_path):
-                _fr_dump_prefix = os.path.join(_fr_path, '_dump_')
+                _fr_dump_prefix = os.path.join(_fr_path, "_dump_")
                 warn_rank_0(
                     "Flight recorder: using directory "
                     f"'{_fr_path}' for dump path, appending per-rank prefix "
                     f"'{_fr_dump_prefix}'."
                 )
             _fr_env_defaults = {
-                'TORCH_FR_DUMP_TEMP_FILE': _fr_dump_prefix,
-                'TORCH_NCCL_DEBUG_INFO_TEMP_FILE': _fr_dump_prefix,
-                'TORCH_NCCL_TRACE_BUFFER_SIZE': str(args.flight_recorder_trace_buffer_size),
-                'TORCH_NCCL_DUMP_ON_TIMEOUT': str(int(args.flight_recorder_dump_on_timeout)),
-                'TORCH_INCLUDE_STACK_TRACE': str(int(args.flight_recorder_include_stack_trace)),
-                'TORCH_INCLUDE_ONLY_ACTIVE': str(int(args.flight_recorder_include_only_active)),
-                'TORCH_NCCL_EXTRA_DUMP_ON_EXEC': str(int(args.flight_recorder_extra_dump_on_exec)),
+                "TORCH_FR_DUMP_TEMP_FILE": _fr_dump_prefix,
+                "TORCH_NCCL_DEBUG_INFO_TEMP_FILE": _fr_dump_prefix,
+                "TORCH_NCCL_TRACE_BUFFER_SIZE": str(
+                    args.flight_recorder_trace_buffer_size
+                ),
+                "TORCH_NCCL_DUMP_ON_TIMEOUT": str(
+                    int(args.flight_recorder_dump_on_timeout)
+                ),
+                "TORCH_INCLUDE_STACK_TRACE": str(
+                    int(args.flight_recorder_include_stack_trace)
+                ),
+                "TORCH_INCLUDE_ONLY_ACTIVE": str(
+                    int(args.flight_recorder_include_only_active)
+                ),
+                "TORCH_NCCL_EXTRA_DUMP_ON_EXEC": str(
+                    int(args.flight_recorder_extra_dump_on_exec)
+                ),
             }
             for _var, _default in _fr_env_defaults.items():
                 if _var in os.environ:
@@ -313,21 +349,21 @@ def _initialize_distributed(get_embedding_ranks, get_position_embedding_ranks, s
 
         # Call the init process
         init_process_group_kwargs = {
-            'backend': args.distributed_backend,
-            'store': store,
-            'world_size': args.world_size,
-            'rank': args.rank,
-            'timeout': timedelta(minutes=args.distributed_timeout_minutes),
+            "backend": args.distributed_backend,
+            "store": store,
+            "world_size": args.world_size,
+            "rank": args.rank,
+            "timeout": timedelta(minutes=args.distributed_timeout_minutes),
         }
         if args.fake_process_group:
-            assert is_torch_min_version(
-                "2.3.0"
-            ), "Fake process group is only supported with PyTorch 2.3.0 and above."
+            assert is_torch_min_version("2.3.0"), (
+                "Fake process group is only supported with PyTorch 2.3.0 and above."
+            )
             from torch.testing._internal.distributed.fake_pg import FakeStore
 
             store = FakeStore()
-            init_process_group_kwargs['backend'] = 'fake'
-            init_process_group_kwargs['store'] = store
+            init_process_group_kwargs["backend"] = "fake"
+            init_process_group_kwargs["store"] = store
 
         torch.distributed.init_process_group(**init_process_group_kwargs)
         inprocess_restart.maybe_force_nccl_backend_init(device_id)
@@ -352,7 +388,9 @@ def _initialize_distributed(get_embedding_ranks, get_position_embedding_ranks, s
                 expert_tensor_parallel_size=args.expert_tensor_parallel_size,
                 distributed_timeout_minutes=args.distributed_timeout_minutes,
                 nccl_communicator_config_path=args.nccl_communicator_config_path,
-                order='tp-cp-ep-dp-pp' if not args.use_tp_pp_dp_mapping else 'tp-cp-ep-pp-dp',
+                order="tp-cp-ep-dp-pp"
+                if not args.use_tp_pp_dp_mapping
+                else "tp-cp-ep-pp-dp",
                 get_embedding_ranks=get_embedding_ranks,
                 get_position_embedding_ranks=get_position_embedding_ranks,
                 create_gloo_process_groups=args.use_gloo_process_groups,
@@ -395,7 +433,9 @@ def _set_random_seed(
         random.seed(seed)
         np.random.seed(seed)
         torch.manual_seed(seed)
-        if torch.cuda.device_count() > 0:
+        from megatron.plugin.platform.platform_manager import get_platform
+
+        if get_platform().device_count() > 0:
             tensor_parallel.model_parallel_cuda_manual_seed(
                 seed, te_rng_tracker, inference_rng_tracker, use_cudagraphable_rng
             )
@@ -438,6 +478,14 @@ def set_jit_fusion_options():
 
 def _warmup_jit_function():
     """Compilie JIT functions before the main training steps"""
+    from megatron.plugin.platform.platform_manager import get_platform
+
+    # JIT fusion warmup is CUDA-only (nvfuser / legacy JIT fuser). On other
+    # platforms the fused ops don't exist and torch.rand(..., device="cuda")
+    # can't even allocate — --disable-jit-fuser doesn't help because
+    # set_jit_fusion_options() calls this unconditionally.
+    if get_platform().device_name() != "cuda":
+        return
     args = get_args()
     if args.bf16:
         dtype = torch.bfloat16
@@ -448,7 +496,9 @@ def _warmup_jit_function():
 
     # Warmup fused bias+gelu
     bias = torch.rand(
-        args.ffn_hidden_size // args.tensor_model_parallel_size, dtype=dtype, device="cuda"
+        args.ffn_hidden_size // args.tensor_model_parallel_size,
+        dtype=dtype,
+        device="cuda",
     )
     input = torch.rand(
         (
@@ -476,20 +526,32 @@ def _warmup_jit_function():
     else:
         seq_length = args.seq_length
     input = torch.rand(
-        (seq_length // args.context_parallel_size, args.micro_batch_size, args.hidden_size),
+        (
+            seq_length // args.context_parallel_size,
+            args.micro_batch_size,
+            args.hidden_size,
+        ),
         dtype=dtype,
         device="cuda",
     )
     residual = torch.rand(
-        (seq_length // args.context_parallel_size, args.micro_batch_size, args.hidden_size),
+        (
+            seq_length // args.context_parallel_size,
+            args.micro_batch_size,
+            args.hidden_size,
+        ),
         dtype=dtype,
         device="cuda",
     )
-    bias = torch.rand((args.hidden_size), dtype=dtype, device="cuda").expand_as(residual)
+    bias = torch.rand((args.hidden_size), dtype=dtype, device="cuda").expand_as(
+        residual
+    )
     dropout_rate = 0.1
     # Warmup JIT fusions with the input grad_enable state of both forward
     # prop and recomputation
-    for input_grad, bias_grad, residual_grad in zip([False, True], [True, True], [True, True]):
+    for input_grad, bias_grad, residual_grad in zip(
+        [False, True], [True, True], [True, True]
+    ):
         input.requires_grad = input_grad
         bias.requires_grad = bias_grad
         residual.requires_grad = residual_grad
@@ -511,7 +573,7 @@ def setup_logging() -> None:
     """
     args = get_args()
     logging_level = None
-    env_logging_level = os.getenv('MEGATRON_LOGGING_LEVEL', None)
+    env_logging_level = os.getenv("MEGATRON_LOGGING_LEVEL", None)
     if env_logging_level is not None:
         logging_level = int(env_logging_level)
     if args.logging_level is not None:
@@ -519,5 +581,5 @@ def setup_logging() -> None:
 
     if logging_level is not None:
         if is_rank0():
-            logger.info(f'Setting logging level to {logging_level}')
+            logger.info(f"Setting logging level to {logging_level}")
         logging.getLogger().setLevel(logging_level)

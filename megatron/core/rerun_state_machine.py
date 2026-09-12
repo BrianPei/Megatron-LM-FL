@@ -9,7 +9,17 @@ import random
 import re
 from collections import defaultdict
 from enum import Enum
-from typing import Any, Callable, Iterable, List, NamedTuple, Optional, Set, Tuple, Union
+from typing import (
+    Any,
+    Callable,
+    Iterable,
+    List,
+    NamedTuple,
+    Optional,
+    Set,
+    Tuple,
+    Union,
+)
 
 import numpy as np
 import torch
@@ -233,7 +243,9 @@ class RerunStateMachine:
                 )
 
         self.saved_state: Optional[SerializableStateType] = None
-        self.state_save_func: Optional[Callable[[], SerializableStateType]] = state_save_func
+        self.state_save_func: Optional[Callable[[], SerializableStateType]] = (
+            state_save_func
+        )
         self.state_restore_func: Optional[Callable[[SerializableStateType], None]] = (
             state_restore_func
         )
@@ -244,12 +256,16 @@ class RerunStateMachine:
 
         self.saved_results: dict[Call, Any] = {}
         self.stats: dict[Caller, QuickStats] = defaultdict(lambda: QuickStats())
-        log_single_rank(logger, logging.WARNING, f"RerunStateMachine initialized in mode {mode}")
+        log_single_rank(
+            logger, logging.WARNING, f"RerunStateMachine initialized in mode {mode}"
+        )
 
     def set_mode(self, mode: RerunMode) -> None:
         """Method to set the operating mode"""
 
-        log_single_rank(logger, logging.WARNING, f"Setting RerunStateMachine mode {mode}")
+        log_single_rank(
+            logger, logging.WARNING, f"Setting RerunStateMachine mode {mode}"
+        )
         self.mode = mode
 
     def get_mode(self) -> RerunMode:
@@ -257,7 +273,9 @@ class RerunStateMachine:
 
         return self.mode
 
-    def _reduce_any(self, value: Union[bool, List[bool]]) -> Union[bool, Tuple[bool, ...]]:
+    def _reduce_any(
+        self, value: Union[bool, List[bool]]
+    ) -> Union[bool, Tuple[bool, ...]]:
         """
         All-reduce a boolean value (or multiple boolean values) across the world group.
 
@@ -268,14 +286,18 @@ class RerunStateMachine:
         """
         if isinstance(value, list):
             val_tensor: torch.Tensor = torch.tensor(
-                value, dtype=torch.int32, device=cur_platform.current_device_name()
-            )
+                value,
+                dtype=torch.int32,
+                device=cur_platform.device(cur_platform.current_device()),
+            )  # FlagScale Modify
             torch.distributed.all_reduce(val_tensor)
             return tuple([x > 0 for x in val_tensor.tolist()])
         else:
             val_tensor: torch.Tensor = torch.tensor(
-                [value], dtype=torch.int32, device=cur_platform.current_device_name()
-            )
+                [value],
+                dtype=torch.int32,
+                device=cur_platform.device(cur_platform.current_device()),
+            )  # FlagScale Modify
             torch.distributed.all_reduce(val_tensor)
             return val_tensor.item() > 0
 
@@ -304,18 +326,22 @@ class RerunStateMachine:
 
         self.validation_counts = defaultdict(int)
 
-        data_iterators: list[RerunDataIterator] = self._sanitize_data_iterators(data_iterator)
+        data_iterators: list[RerunDataIterator] = self._sanitize_data_iterators(
+            data_iterator
+        )
 
         # Are we about to start the initial run?
         if self.state == RerunState.NOT_RUNNING_YET:
             if self.mode == RerunMode.DISABLED:
                 self.state = RerunState.INITIAL_RUN
-                self.current_iteration += 1  # Increment self.current_iteration for reporting.
+                self.current_iteration += (
+                    1  # Increment self.current_iteration for reporting.
+                )
                 return True
             if self.data_iterator_checkpoints is not None:
-                assert len(self.data_iterator_checkpoints) == len(
-                    data_iterators
-                ), "data iterator has different length than checkpointed data iterator"
+                assert len(self.data_iterator_checkpoints) == len(data_iterators), (
+                    "data iterator has different length than checkpointed data iterator"
+                )
                 for i, d in enumerate(data_iterators):
                     d.load_state_dict(self.data_iterator_checkpoints[i])
                 self.data_iterator_checkpoints = None
@@ -341,7 +367,9 @@ class RerunStateMachine:
                 self.state = RerunState.NOT_RUNNING_YET
                 return False
             if self.mode == RerunMode.VALIDATE_RESULTS and safe_get_rank() == 0:
-                logger.warning("Need to rerun step to check reproducibility of initial result")
+                logger.warning(
+                    "Need to rerun step to check reproducibility of initial result"
+                )
             self.state = RerunState.RERUNNING_IN_PLACE
             self._restore_state()
             if data_iterators:
@@ -530,7 +558,9 @@ class RerunStateMachine:
             result_rejected: bool = rejection_func(result)
             if result_rejected:
                 self._log_validation_error_to_file(
-                    status=RerunValidationStatus.RERUN_DISABLED, result=result, message=message
+                    status=RerunValidationStatus.RERUN_DISABLED,
+                    result=result,
+                    message=message,
                 )
                 rank: int = safe_get_rank()
                 node: str = os.uname()[1]
@@ -549,9 +579,9 @@ class RerunStateMachine:
         if comparison_func is None:
             comparison_func = _compare_floats
 
-        assert (
-            self.state != RerunState.NOT_RUNNING_YET
-        ), "validate_result should not be called outside of the forward-backward pass"
+        assert self.state != RerunState.NOT_RUNNING_YET, (
+            "validate_result should not be called outside of the forward-backward pass"
+        )
 
         validation_call: Call = self._get_validation_call_info(message)
 
@@ -598,19 +628,22 @@ class RerunStateMachine:
         # If this the initial run of the iteration, and no unexpected result has already been
         # identified?
         if self.state == RerunState.INITIAL_RUN and not self.rerun_requested:
-
             # Do not validate results on the first iteration, as we cannot guarantee a checkpoint
             # can be taken before the optimizer has been stepped at least once.
             if not self.first_iteration_complete:
                 return
 
-            result_rejected = self.error_injector.maybe_inject() or rejection_func(result)
+            result_rejected = self.error_injector.maybe_inject() or rejection_func(
+                result
+            )
             if result_rejected:
                 self.failed_validation_call = validation_call
                 self.initial_result = result
                 self.rerun_requested = True
                 self._log_validation_error_to_file(
-                    status=RerunValidationStatus.INITIAL_RUN, result=result, message=message
+                    status=RerunValidationStatus.INITIAL_RUN,
+                    result=result,
+                    message=message,
                 )
                 logger.error(
                     f"Unexpected result {result} "
@@ -622,7 +655,8 @@ class RerunStateMachine:
         # If this the first rerun (same GPU) or second 2nd rerun (different GPU), and have we
         # reached the validation call that failed during the initial run?
         elif (
-            self.state in [RerunState.RERUNNING_IN_PLACE, RerunState.RERUNNING_FROM_CHECKPOINT]
+            self.state
+            in [RerunState.RERUNNING_IN_PLACE, RerunState.RERUNNING_FROM_CHECKPOINT]
             and validation_call == self.failed_validation_call
         ):
             comparison: float = self.error_injector.maybe_miscompare(
@@ -653,7 +687,9 @@ class RerunStateMachine:
                     # Remember the node and device we're running on so that we can check we're not
                     # rerunning on the same GPU when we resume from the checkpoint.
                     self.suspicious_node = os.uname()[1]
-                    self.suspicious_device = cur_platform.current_device()  # FlagScale Modify
+                    self.suspicious_device = (
+                        cur_platform.current_device()
+                    )  # FlagScale Modify
                     self._log_validation_error_to_file(
                         status=RerunValidationStatus.FIRST_RERUN_REPRODUCIBLE,
                         result=result,
@@ -699,7 +735,9 @@ class RerunStateMachine:
                         "Second rerun: unexpected result is reproducible on a different GPU, "
                         f"therefore it was likely correct ({result} = {self.initial_result})"
                     )
-                    log_failure(f"Correct result (but possible Application error) ({message})")
+                    log_failure(
+                        f"Correct result (but possible Application error) ({message})"
+                    )
                     if not fatal:
                         self.continue_requested = True
             else:
@@ -834,7 +872,9 @@ class RerunStateMachine:
         if self.state == RerunState.NOT_RUNNING_YET and not force:
             data_iterator_checkpoints = None
         else:
-            data_iterators: list[RerunDataIterator] = self._sanitize_data_iterators(data_iterator)
+            data_iterators: list[RerunDataIterator] = self._sanitize_data_iterators(
+                data_iterator
+            )
             data_iterator_checkpoints = (
                 [d.state_dict() for d in data_iterators] if data_iterators else None
             )
@@ -893,7 +933,10 @@ class RerunStateMachine:
 
         if state_dict is None:
             return False
-        if 'state' not in state_dict or state_dict['state'] == RerunState.NOT_RUNNING_YET:
+        if (
+            "state" not in state_dict
+            or state_dict["state"] == RerunState.NOT_RUNNING_YET
+        ):
             return False
         return True
 
@@ -957,9 +1000,9 @@ class RerunStateMachine:
             data_iterators = data_iterator
         data_iterators = [d for d in data_iterators if d is not None]
         for d in data_iterators:
-            assert isinstance(
-                d, RerunDataIterator
-            ), "data iterator is not wrapped with RerunDataIterator"
+            assert isinstance(d, RerunDataIterator), (
+                "data iterator is not wrapped with RerunDataIterator"
+            )
         return data_iterators
 
     def _get_validation_call_info(self, message: str) -> Call:
@@ -1013,12 +1056,17 @@ class RerunStateMachine:
     def _maybe_report_stats(self) -> None:
         """Internal method that reports stats if needed."""
 
-        if self.current_iteration % RerunStateMachine.REPORTING_INTERVAL_ITERATIONS == 0:
+        if (
+            self.current_iteration % RerunStateMachine.REPORTING_INTERVAL_ITERATIONS
+            == 0
+        ):
             if torch.distributed.is_initialized():
                 world_size: int = torch.distributed.get_world_size()
                 stats_list = [None for _ in range(world_size)]
                 rank = torch.distributed.get_rank()
-                torch.distributed.gather_object(dict(self.stats), stats_list if rank == 0 else None)
+                torch.distributed.gather_object(
+                    dict(self.stats), stats_list if rank == 0 else None
+                )
                 if rank == 0:
                     callers: Set[Caller] = {c for s in stats_list for c in s.keys()}
                     logger.info("Stats on computation determinism in validation calls")
@@ -1057,7 +1105,9 @@ class RerunStateMachine:
                 logger.error(f"Could not log validation error! ({e})")
 
     @classmethod
-    def get_skipped_iterations_from_tracker_file(cls, tracker_file_name: str) -> list[int]:
+    def get_skipped_iterations_from_tracker_file(
+        cls, tracker_file_name: str
+    ) -> list[int]:
         """Get list of iterations to skip from results recorded in tracker file. If an
         "abnormality" (e.g., NaN or infinity in gradient) is seen more than once on a
         given rank and iteration, the corresponding iteration is skipped.
@@ -1107,9 +1157,13 @@ class RerunStateMachine:
                                 iterations_to_ignore.add(iteration)
         except Exception as e:
             log_single_rank(
-                logger, logging.ERROR, f"Could not parse iterations to skip in tracker file! ({e})"
+                logger,
+                logging.ERROR,
+                f"Could not parse iterations to skip in tracker file! ({e})",
             )
-        iterations_to_skip = sorted(iterations_to_potentially_skip - iterations_to_ignore)
+        iterations_to_skip = sorted(
+            iterations_to_potentially_skip - iterations_to_ignore
+        )
         log_single_rank(
             logger,
             logging.WARNING,
@@ -1156,7 +1210,9 @@ class RerunDataIterator:
         if self.replaying:
             # we should not read past the saved batches if execution is deterministic,
             # as the number of calls to get_batch() should remain the same across reruns
-            assert len(self.saved_microbatches) > self.replay_pos, "No more batches to replay"
+            assert len(self.saved_microbatches) > self.replay_pos, (
+                "No more batches to replay"
+            )
             n = self.saved_microbatches[self.replay_pos]
             self.replay_pos += 1
             return n
@@ -1255,7 +1311,11 @@ class QuickStats:
             a = s / t
             ps = {}
             for p in [0.5, 0.9, 0.99, 0.999]:
-                ps[p] = f"{self.samples[int(t * p) - z]:.3E}" if int(t * p) - z >= 0 else "0.0"
+                ps[p] = (
+                    f"{self.samples[int(t * p) - z]:.3E}"
+                    if int(t * p) - z >= 0
+                    else "0.0"
+                )
             mx = self.max
             return (
                 f"{t:,}/{z:,} total/identical samples, rel. variability: avg= {a:.3E}, "
@@ -1293,9 +1353,9 @@ class RerunErrorInjector:
         error_injection_rate: int = 0,
         error_injection_type: RerunDiagnostic = RerunDiagnostic.TRANSIENT_ERROR,
     ) -> None:
-        assert isinstance(
-            error_injection_type, RerunDiagnostic
-        ), "Injected result type must be a valid RerunDiagnostic"
+        assert isinstance(error_injection_type, RerunDiagnostic), (
+            "Injected result type must be a valid RerunDiagnostic"
+        )
         self.error_injection_rate: int = error_injection_rate
         self.error_injection_type: RerunDiagnostic = error_injection_type
         self.should_inject_errors: bool = error_injection_rate > 0
@@ -1377,7 +1437,7 @@ class RerunErrorInjector:
         self.injected_error_type = state_dict["injected_error_type"]
 
 
-@copy_signature(RerunStateMachine.__init__, handle_first_src_param='skip')
+@copy_signature(RerunStateMachine.__init__, handle_first_src_param="skip")
 def initialize_rerun_state_machine(*args, **kwargs) -> None:
     """Helper function to initialize the rerun machine instance.
 
@@ -1399,7 +1459,9 @@ def get_rerun_state_machine() -> RerunStateMachine:
     """Helper function to return the singleton instance of the rerun machine."""
 
     if _GLOBAL_RERUN_STATE_MACHINE is None:
-        log_single_rank(logger, logging.WARNING, "Implicit initialization of Rerun State Machine!")
+        log_single_rank(
+            logger, logging.WARNING, "Implicit initialization of Rerun State Machine!"
+        )
         initialize_rerun_state_machine()
         assert _GLOBAL_RERUN_STATE_MACHINE is not None
     return _GLOBAL_RERUN_STATE_MACHINE
@@ -1409,7 +1471,9 @@ def _set_rerun_state_machine(rerun_state_machine) -> None:
     """Internal function to set the singleton instance of the rerun machine."""
 
     global _GLOBAL_RERUN_STATE_MACHINE
-    assert _GLOBAL_RERUN_STATE_MACHINE is None, "Rerun state machine is already initialized"
+    assert _GLOBAL_RERUN_STATE_MACHINE is None, (
+        "Rerun state machine is already initialized"
+    )
     _GLOBAL_RERUN_STATE_MACHINE = rerun_state_machine
 
 

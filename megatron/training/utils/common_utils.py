@@ -1,6 +1,7 @@
 # Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 
 """General utilities."""
+
 import json
 import os
 import sys
@@ -13,21 +14,27 @@ import torch
 
 from megatron.core.msc_utils import open_file
 from megatron.core._rank_utils import safe_get_rank as _safe_get_rank
+from megatron.plugin.platform.platform_manager import get_platform
+
+cur_platform = get_platform()
 from megatron.core.dist_checkpointing.strategies.nvrx import has_nvrx_async_support
 
 from megatron.core._slurm_utils import resolve_slurm_local_rank
 
 try:
-    from transformer_engine.pytorch.optimizers import multi_tensor_applier, multi_tensor_l2norm
+    from transformer_engine.pytorch.optimizers import (
+        multi_tensor_applier,
+        multi_tensor_l2norm,
+    )
 except ImportError:
     try:
         from amp_C import multi_tensor_l2norm
         from apex.multi_tensor_apply import multi_tensor_applier
     except ImportError:
         warnings.warn(
-            f'Transformer Engine and Apex are not installed. '
-            'Falling back to local implementations of '
-            'multi_tensor_applier and multi_tensor_l2norm'
+            f"Transformer Engine and Apex are not installed. "
+            "Falling back to local implementations of "
+            "multi_tensor_applier and multi_tensor_l2norm"
         )
 
         from megatron.core.utils import (
@@ -54,7 +61,7 @@ def calc_params_l2_norm(model, force_create_fp32_copy=False):
     if not isinstance(model, list):
         model = [model]
 
-    if getattr(args, 'use_megatron_fsdp', False):
+    if getattr(args, "use_megatron_fsdp", False):
         # All Megatron FSDP parameters are expected to be PyTorch DTensor.
         # params_data is a dict of device_mesh -> list of local tensors.
         params = []
@@ -78,17 +85,19 @@ def calc_params_l2_norm(model, force_create_fp32_copy=False):
 
     for model_chunk in model:
         for param in model_chunk.parameters():
-            data_parallel_group = get_data_parallel_group_if_dtensor(param, data_parallel_group)
+            data_parallel_group = get_data_parallel_group_if_dtensor(
+                param, data_parallel_group
+            )
             is_not_tp_duplicate = param_is_not_tensor_parallel_duplicate(param)
             if not is_not_tp_duplicate:
                 continue
             assert is_not_tp_duplicate
-            if not getattr(param, 'allreduce', True):
+            if not getattr(param, "allreduce", True):
                 assert param_is_not_shared(param)
                 param = to_local_if_dtensor(param)
                 if args.bf16:
-                    if not force_create_fp32_copy and hasattr(param, 'main_param'):
-                        if getattr(param, 'main_param_sharded', False):
+                    if not force_create_fp32_copy and hasattr(param, "main_param"):
+                        if getattr(param, "main_param_sharded", False):
                             if param.main_param is not None:
                                 sharded_params_data.append(param.main_param)
                         else:
@@ -103,8 +112,8 @@ def calc_params_l2_norm(model, force_create_fp32_copy=False):
                 if param_is_not_shared(param):
                     param = to_local_if_dtensor(param)
                     if args.bf16:
-                        if not force_create_fp32_copy and hasattr(param, 'main_param'):
-                            if getattr(param, 'main_param_sharded', False):
+                        if not force_create_fp32_copy and hasattr(param, "main_param"):
+                            if getattr(param, "main_param_sharded", False):
                                 if param.main_param is not None:
                                     sharded_params_data.append(param.main_param)
                             else:
@@ -117,14 +126,23 @@ def calc_params_l2_norm(model, force_create_fp32_copy=False):
                         params_data.append(param.data)
 
     # Calculate norm.
-    dummy_overflow_buf = torch.tensor([0], dtype=torch.int, device='cuda')
+    dummy_overflow_buf = torch.tensor(
+        [0], dtype=torch.int, device=cur_platform.device(cur_platform.current_device())
+    )
     if len(params_data) > 0:
         norm, _ = multi_tensor_applier(
-            multi_tensor_l2norm, dummy_overflow_buf, [params_data], False  # no per-parameter norm.
+            multi_tensor_l2norm,
+            dummy_overflow_buf,
+            [params_data],
+            False,  # no per-parameter norm.
         )
         norm_2 = norm * norm
     else:
-        norm_2 = torch.zeros((1,), dtype=torch.float32, device='cuda')
+        norm_2 = torch.zeros(
+            (1,),
+            dtype=torch.float32,
+            device=cur_platform.device(cur_platform.current_device()),
+        )
 
     if data_parallel_group is not None:
         torch.distributed.all_reduce(
@@ -135,7 +153,11 @@ def calc_params_l2_norm(model, force_create_fp32_copy=False):
     # accumulated across the DP group since the main parameters are sharded because
     # of distributed optimizer.
     if len(sharded_params_data) > 0:
-        dummy_overflow_buf = torch.tensor([0], dtype=torch.int, device='cuda')
+        dummy_overflow_buf = torch.tensor(
+            [0],
+            dtype=torch.int,
+            device=cur_platform.device(cur_platform.current_device()),
+        )
         sharded_norm, _ = multi_tensor_applier(
             multi_tensor_l2norm,
             dummy_overflow_buf,
@@ -144,13 +166,17 @@ def calc_params_l2_norm(model, force_create_fp32_copy=False):
         )
         sharded_norm_2 = sharded_norm * sharded_norm
     else:
-        sharded_norm_2 = torch.zeros((1,), dtype=torch.float32, device='cuda')
+        sharded_norm_2 = torch.zeros(
+            (1,),
+            dtype=torch.float32,
+            device=cur_platform.device(cur_platform.current_device()),
+        )
     # Sum over all DP groups, including CP since distributed optimizer state is
     # sharded jointly over DP+CP.
     torch.distributed.all_reduce(
         sharded_norm_2,
         op=torch.distributed.ReduceOp.SUM,
-        group=mpu.get_data_parallel_group(with_context_parallel=True)
+        group=mpu.get_data_parallel_group(with_context_parallel=True),
     )
     norm_2 += sharded_norm_2
 
@@ -173,10 +199,14 @@ def calc_params_l2_norm(model, force_create_fp32_copy=False):
     # Reduce norm across model parallel groups (dense and expert).
     # Dense params should sum across all model-parallel GPUs (tensor + pipeline).
     dense_reduce_group = mpu.get_model_parallel_group()
-    ranks_in_dense_reduce_group = torch.distributed.get_process_group_ranks(dense_reduce_group)
+    ranks_in_dense_reduce_group = torch.distributed.get_process_group_ranks(
+        dense_reduce_group
+    )
     # Expert params should sum across all model-parallel GPUs (expert + tensor + pipeline).
     expert_reduce_group = mpu.get_expert_tensor_model_pipeline_parallel_group()
-    ranks_in_expert_reduce_group = torch.distributed.get_process_group_ranks(expert_reduce_group)
+    ranks_in_expert_reduce_group = torch.distributed.get_process_group_ranks(
+        expert_reduce_group
+    )
 
     # If dense and expert reduce groups are the same, sum then reduce.
     if ranks_in_dense_reduce_group == ranks_in_expert_reduce_group:
@@ -203,15 +233,28 @@ def calc_dtensor_params_l2_norm(params):
     for param in params:
         params_data[param._spec].append(param._local_tensor)
 
-    total_norm_2 = torch.zeros((1,), dtype=torch.float32, device='cuda')
-    dummy_overflow_buf = torch.zeros((1,), dtype=torch.int, device='cuda')
+    total_norm_2 = torch.zeros(
+        (1,),
+        dtype=torch.float32,
+        device=cur_platform.device(cur_platform.current_device()),
+    )
+    dummy_overflow_buf = torch.zeros(
+        (1,), dtype=torch.int, device=cur_platform.device(cur_platform.current_device())
+    )
     for dtensor_spec, local_tensors in params_data.items():
         local_tensors = [t for t in local_tensors if t.numel() > 0]
         if len(local_tensors) == 0:
-            norm = torch.zeros((1,), dtype=torch.float32, device='cuda')
+            norm = torch.zeros(
+                (1,),
+                dtype=torch.float32,
+                device=cur_platform.device(cur_platform.current_device()),
+            )
         else:
             norm, _ = multi_tensor_applier(
-                multi_tensor_l2norm, dummy_overflow_buf, [local_tensors], False  # no per-parameter norm.
+                multi_tensor_l2norm,
+                dummy_overflow_buf,
+                [local_tensors],
+                False,  # no per-parameter norm.
             )
         norm_2 = norm * norm
         for pg, placement in zip(
@@ -253,7 +296,11 @@ def reduce_max_stat_across_model_parallel_group(stat: float) -> float | None:
     """
     if stat is None:
         stat = -1.0
-    stat = torch.tensor([stat], dtype=torch.float32, device=torch.cuda.current_device())
+    stat = torch.tensor(
+        [stat],
+        dtype=torch.float32,
+        device=cur_platform.device(cur_platform.current_device()),
+    )
     torch.distributed.all_reduce(
         stat, op=torch.distributed.ReduceOp.MAX, group=mpu.get_model_parallel_group()
     )
@@ -272,7 +319,11 @@ def logical_and_across_model_parallel_group(input: bool) -> bool:
         input = 1
     else:
         input = 0
-    input = torch.tensor([input], dtype=torch.int, device=torch.cuda.current_device())
+    input = torch.tensor(
+        [input],
+        dtype=torch.int,
+        device=cur_platform.device(cur_platform.current_device()),
+    )
     torch.distributed.all_reduce(
         input, op=torch.distributed.ReduceOp.MIN, group=mpu.get_model_parallel_group()
     )
@@ -283,7 +334,7 @@ def report_memory(name):
     """Simple GPU memory report."""
     args = get_args()
     mega_bytes = 1024.0 * 1024.0
-    string = name + ' memory (MB)'
+    string = name + " memory (MB)"
     string += f" | allocated: {torch.cuda.memory_allocated() / mega_bytes:.2f}"
     string += f" | max allocated: {torch.cuda.max_memory_allocated() / mega_bytes:.2f}"
     string += f" | reserved: {torch.cuda.memory_reserved() / mega_bytes:.2f}"
@@ -298,18 +349,18 @@ def print_params_min_max_norm(optimizer, iteration):
     """Print min, max, and norm of all parameters."""
     index = 0
     rank = torch.distributed.get_rank()
-    string = 'iteration, rank, index, tensor-model-parallel, min, max, norm\n'
+    string = "iteration, rank, index, tensor-model-parallel, min, max, norm\n"
     optimizer_ = optimizer.optimizer
     for param_group in optimizer_.param_groups:
-        for param in param_group['params']:
+        for param in param_group["params"]:
             index += 1
             min_ = param.data.min()
             max_ = param.data.max()
             norm = torch.linalg.norm(param.data)
-            string += '{:7d}, {:4d}, {:4d}, {:2d}, '.format(
+            string += "{:7d}, {:4d}, {:4d}, {:2d}, ".format(
                 iteration, rank, index, int(param.tensor_model_parallel)
             )
-            string += '{:.6E}, {:.6E}, {:.6E}\n'.format(min_, max_, norm)
+            string += "{:.6E}, {:.6E}, {:.6E}\n".format(min_, max_, norm)
     print(string, flush=True)
 
 
@@ -331,13 +382,15 @@ def check_adlr_autoresume_termination(iteration, model, optimizer, opt_param_sch
         sys.exit(0)
 
 
-def get_ltor_masks_and_position_ids(data,
-                                    eod_token,
-                                    pad_token,
-                                    reset_position_ids,
-                                    reset_attention_mask,
-                                    eod_mask_loss,
-                                    pad_mask_loss):
+def get_ltor_masks_and_position_ids(
+    data,
+    eod_token,
+    pad_token,
+    reset_position_ids,
+    reset_attention_mask,
+    eod_mask_loss,
+    pad_mask_loss,
+):
     """Build masks and position id for left to right model."""
 
     # Extract batch size and sequence length.
@@ -369,9 +422,11 @@ def get_ltor_masks_and_position_ids(data,
     if reset_position_ids or reset_attention_mask:
         # Loop through the batches:
         for b in range(micro_batch_size):
-
             # Find indecies where EOD token is.
-            eod_index = position_ids[b, data[b] == eod_token] & position_ids[b, data[b] == pad_token]
+            eod_index = (
+                position_ids[b, data[b] == eod_token]
+                & position_ids[b, data[b] == pad_token]
+            )
             # Detach indecies from positions if going to modify positions.
             if reset_position_ids:
                 eod_index = eod_index.clone()
@@ -427,7 +482,7 @@ def is_last_rank():
 
 def print_rank_last(message):
     """If distributed is initialized, print only on last rank."""
-    if torch.distributed.is_initialized() and torch.distributed.get_backend() != 'fake':
+    if torch.distributed.is_initialized() and torch.distributed.get_backend() != "fake":
         if is_last_rank():
             print(message, flush=True)
     else:
@@ -445,10 +500,9 @@ def is_first_or_last_pipeline_stage(vp_stage):
     ignore_virtual = True
     if vp_stage is not None:
         ignore_virtual = False
-    return (
-        mpu.is_pipeline_first_stage(ignore_virtual=ignore_virtual, vp_stage=vp_stage)
-        or mpu.is_pipeline_last_stage(ignore_virtual=ignore_virtual, vp_stage=vp_stage)
-    )
+    return mpu.is_pipeline_first_stage(
+        ignore_virtual=ignore_virtual, vp_stage=vp_stage
+    ) or mpu.is_pipeline_last_stage(ignore_virtual=ignore_virtual, vp_stage=vp_stage)
 
 
 def get_device_arch_version():
@@ -472,14 +526,14 @@ def get_blend_and_blend_per_split(args):
     if use_data_path:
         if args.data_args_path is not None:
             assert args.data_path is None
-            with open_file(args.data_args_path, 'r') as f:
+            with open_file(args.data_args_path, "r") as f:
                 blend = get_blend_from_list(f.read().split())
         else:
             assert args.data_path is not None
             blend = get_blend_from_list(args.data_path)
     elif use_per_split_data_path:
         if args.per_split_data_args_path is not None:
-            with open_file(args.per_split_data_args_path, 'r') as f:
+            with open_file(args.per_split_data_args_path, "r") as f:
                 per_split_data_args = json.load(f)
                 # Each element in blend_per_split should be a list of files (and optional
                 # weights), so split string if needed.
@@ -508,7 +562,9 @@ def update_use_dist_ckpt(args):
     args.use_dist_ckpt = args.ckpt_format != "torch"
 
 
-def to_empty_if_meta_device(module: torch.nn.Module, *, device: torch.device, recurse=True):
+def to_empty_if_meta_device(
+    module: torch.nn.Module, *, device: torch.device, recurse=True
+):
     """Move tensors to device if not meta device; otherwise materialize with empty_like().
 
     Officially, torch suggests to_empty() for meta device materialization. Under the hood,
@@ -516,7 +572,7 @@ def to_empty_if_meta_device(module: torch.nn.Module, *, device: torch.device, re
     accidently overwrite buffers with precomputed values during construction. Given the
     goal is to only materialize those tensors on meta device, this function checks the
     device first and only move the tensor to the destination if it is not on meta device.
-   
+
     Args:
         module: The target module to apply this transformation.
         device: The desired device of the parameters
@@ -570,6 +626,7 @@ def has_nvrx_installed():
     """Checks if nvidia-resiliency-ext is installed."""
     try:
         import nvidia_resiliency_ext
+
         return True
     except (ImportError, ModuleNotFoundError):
         return False
@@ -598,5 +655,7 @@ def get_local_rank_preinit() -> int:
     if slurm_local_rank is not None:
         return slurm_local_rank
 
-    warnings.warn("Could not determine local rank from LOCAL_RANK or SLURM_LOCALID. Defaulting to local rank 0.")
+    warnings.warn(
+        "Could not determine local rank from LOCAL_RANK or SLURM_LOCALID. Defaulting to local rank 0."
+    )
     return 0

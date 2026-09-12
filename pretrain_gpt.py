@@ -13,7 +13,7 @@ import json
 import os
 import warnings
 
-rank = int(os.environ.get('RANK', 0))
+rank = int(os.environ.get("RANK", 0))
 if rank != 0:
     warnings.filterwarnings("ignore", category=UserWarning)
     warnings.filterwarnings("ignore", category=FutureWarning)
@@ -25,8 +25,14 @@ import torch
 
 from gpt_builders import gpt_builder
 from megatron.core import mpu
-from megatron.core.datasets.blended_megatron_dataset_builder import BlendedMegatronDatasetBuilder
-from megatron.core.datasets.gpt_dataset import GPTDataset, GPTDatasetConfig, MockGPTDataset
+from megatron.core.datasets.blended_megatron_dataset_builder import (
+    BlendedMegatronDatasetBuilder,
+)
+from megatron.core.datasets.gpt_dataset import (
+    GPTDataset,
+    GPTDatasetConfig,
+    MockGPTDataset,
+)
 from megatron.core.enums import ModelType
 from megatron.core.models.gpt import GPTModel
 from megatron.core.packed_seq_params import PackedSeqParams
@@ -55,11 +61,17 @@ from megatron.training import (
     set_startup_timestamps,
 )
 from megatron.training.argument_utils import pretrain_cfg_container_from_args
-from megatron.training.arguments import core_transformer_config_from_args, parse_and_validate_args
+from megatron.training.arguments import (
+    core_transformer_config_from_args,
+    parse_and_validate_args,
+)
 from megatron.training.datasets.fim_dataset import GPTFIMDataset, GPTFIMDatasetConfig
 from megatron.training.datasets.sft_dataset import SFTDataset
 from megatron.training.training import update_seqlen_stats_from_cu_seqlens
-from megatron.training.utils import get_blend_and_blend_per_split, is_first_or_last_pipeline_stage
+from megatron.training.utils import (
+    get_blend_and_blend_per_split,
+    is_first_or_last_pipeline_stage,
+)
 from model_provider import model_provider
 
 try:
@@ -76,34 +88,92 @@ stimer = StragglerDetector()
 def get_batch(data_iterator, vp_stage: Optional[int] = None):
     """Generate a batch."""
 
-    BATCH_KEYS = ["attention_mask", "cu_seqlens", "cu_seqlens_padded", "hybrid_cp_group", "labels", "local_cp_size", "loss_mask", "max_seqlen", "position_ids", "tokens"]
+    BATCH_KEYS = [
+        "attention_mask",
+        "cu_seqlens",
+        "cu_seqlens_padded",
+        "hybrid_cp_group",
+        "labels",
+        "local_cp_size",
+        "loss_mask",
+        "max_seqlen",
+        "position_ids",
+        "tokens",
+    ]
 
     args = get_args()
+    from megatron.plugin.platform.platform_manager import get_platform
+
+    device = get_platform().device(args.local_rank)
     config = core_transformer_config_from_args(args)
 
     cp_size = args.context_parallel_size
     tp_rank = mpu.get_tensor_model_parallel_rank()
     is_sft = args.sft
     create_attention_mask_in_dataloader = args.create_attention_mask_in_dataloader
-    mtp_on_this_rank = mtp_on_this_rank_func(layout=config.pipeline_model_parallel_layout, mtp_num_layers=config.mtp_num_layers, ignore_virtual=False, vp_stage=vp_stage)
+    mtp_on_this_rank = mtp_on_this_rank_func(
+        layout=config.pipeline_model_parallel_layout,
+        mtp_num_layers=config.mtp_num_layers,
+        ignore_virtual=False,
+        vp_stage=vp_stage,
+    )
     is_hybrid_cp = args.hybrid_context_parallel
 
-    if not is_first_or_last_pipeline_stage(vp_stage) and not mtp_on_this_rank and not is_sft:
+    if (
+        not is_first_or_last_pipeline_stage(vp_stage)
+        and not mtp_on_this_rank
+        and not is_sft
+    ):
         return [None for _ in BATCH_KEYS]
 
     batch = {}
     if tp_rank == 0:
         batch = next(data_iterator)
         for key in BATCH_KEYS:
-            batch[key] = batch[key].cuda(non_blocking=True) if key in batch and batch[key] is not None else None
+            batch[key] = (
+                batch[key].to(device, non_blocking=True)
+                if key in batch and batch[key] is not None
+                else None
+            )
 
-    batch = get_batch_on_this_tp_rank(batch, broadcast_src_rank=mpu.get_tensor_model_parallel_src_rank(), broadcast_group=mpu.get_tensor_model_parallel_group(), is_sft=is_sft, is_hybrid_cp=is_hybrid_cp, create_attention_mask_in_dataloader=create_attention_mask_in_dataloader, cp_size=cp_size, tp_rank=tp_rank, micro_batch_size=args.micro_batch_size, seq_length=args.seq_length, mtp_on_this_rank=mtp_on_this_rank, pipeline_model_parallel_size=args.pipeline_model_parallel_size, is_pipeline_first_stage=mpu.is_pipeline_first_stage(), is_pipeline_last_stage=mpu.is_pipeline_last_stage())
-    
+    batch = get_batch_on_this_tp_rank(
+        batch,
+        broadcast_src_rank=mpu.get_tensor_model_parallel_src_rank(),
+        broadcast_group=mpu.get_tensor_model_parallel_group(),
+        is_sft=is_sft,
+        is_hybrid_cp=is_hybrid_cp,
+        create_attention_mask_in_dataloader=create_attention_mask_in_dataloader,
+        cp_size=cp_size,
+        tp_rank=tp_rank,
+        micro_batch_size=args.micro_batch_size,
+        seq_length=args.seq_length,
+        mtp_on_this_rank=mtp_on_this_rank,
+        pipeline_model_parallel_size=args.pipeline_model_parallel_size,
+        is_pipeline_first_stage=mpu.is_pipeline_first_stage(),
+        is_pipeline_last_stage=mpu.is_pipeline_last_stage(),
+    )
+
     if not is_first_or_last_pipeline_stage(vp_stage) and not mtp_on_this_rank:
         assert is_sft
-        return None, batch['cu_seqlens'], batch['cu_seqlens_padded'], None, None, None, None, batch['max_seqlen'], None, None
-    
-    batch = get_batch_on_this_cp_rank(batch, is_hybrid_cp=is_hybrid_cp, cp_group=get_context_parallel_group(), hybrid_cp_group_func=get_hybrid_data_context_parallel_groups)
+        return (
+            None,
+            batch["cu_seqlens"],
+            batch["cu_seqlens_padded"],
+            None,
+            None,
+            None,
+            None,
+            batch["max_seqlen"],
+            None,
+            None,
+        )
+
+    batch = get_batch_on_this_cp_rank(
+        batch,
+        is_hybrid_cp=is_hybrid_cp,
+        cp_group=get_context_parallel_group(),
+        hybrid_cp_group_func=get_hybrid_data_context_parallel_groups,
+    )
 
     # Return values in BATCH_KEYS order so callers can unpack into the fixed
     # names regardless of any provenance fields wrappers like BlendedDataset
@@ -119,7 +189,9 @@ SPIKY_LOSS_FACTOR = 10
 
 
 def loss_func(
-    loss_mask: torch.Tensor, output_tensor: torch.Tensor, model: Optional[GPTModel] = None
+    loss_mask: torch.Tensor,
+    output_tensor: torch.Tensor,
+    model: Optional[GPTModel] = None,
 ):
     """Loss function.
 
@@ -136,15 +208,19 @@ def loss_func(
     """
     args = get_args()
 
-    if has_nvidia_modelopt and getattr(args, 'modelopt_enabled', False):  # [ModelOpt]
-        loss, num_tokens, report = loss_func_modelopt(loss_mask, output_tensor, model=model)
+    if has_nvidia_modelopt and getattr(args, "modelopt_enabled", False):  # [ModelOpt]
+        loss, num_tokens, report = loss_func_modelopt(
+            loss_mask, output_tensor, model=model
+        )
     else:
         losses = output_tensor.view(-1).float()
         loss_mask = loss_mask.view(-1).float()
         loss = torch.sum(losses * loss_mask)
 
         num_tokens = loss_mask.sum().clone().detach().to(torch.int)
-        report = {'lm loss': torch.cat([loss.clone().detach().view(1), num_tokens.view(1)])}
+        report = {
+            "lm loss": torch.cat([loss.clone().detach().view(1), num_tokens.view(1)])
+        }
 
     # Check individual rank losses are not NaN prior to DP all-reduce.
     rerun_state_machine = get_rerun_state_machine()
@@ -192,7 +268,7 @@ def forward_step(data_iterator, model: GPTModel, return_schedule_plan: bool = Fa
     timers = get_timers()
 
     # Get the batch.
-    timers('batch-generator', log_level=2).start()
+    timers("batch-generator", log_level=2).start()
     global stimer
     with stimer(bdata=True):
         vp_stage = get_attr_wrapped_model(model, "vp_stage")
@@ -219,7 +295,9 @@ def forward_step(data_iterator, model: GPTModel, return_schedule_plan: bool = Fa
         # Use real (unpadded) cu_seqlens to feed the FLOPs accounting: varlen
         # attention only computes work for real tokens within each chunk.
         update_seqlen_stats_from_cu_seqlens(cu_seqlens)
-        cu_seqlens_for_params = cu_seqlens_padded if cu_seqlens_padded is not None else cu_seqlens # TODO(asolergi-nv): Currently there is a bug forcing cu_seqlens to be cu_seqlens_padded
+        cu_seqlens_for_params = (
+            cu_seqlens_padded if cu_seqlens_padded is not None else cu_seqlens
+        )  # TODO(asolergi-nv): Currently there is a bug forcing cu_seqlens to be cu_seqlens_padded
         packed_seq_params = PackedSeqParams(
             qkv_format="thd",
             cu_seqlens_q=cu_seqlens_for_params,
@@ -228,23 +306,31 @@ def forward_step(data_iterator, model: GPTModel, return_schedule_plan: bool = Fa
             cu_seqlens_kv_padded=cu_seqlens_padded,
             max_seqlen_q=int(max_seqlen.item()),
             max_seqlen_kv=int(max_seqlen.item()),
-            local_cp_size=int(local_cp_size.item()) if local_cp_size is not None else None,
+            local_cp_size=int(local_cp_size.item())
+            if local_cp_size is not None
+            else None,
             cp_group=hybrid_cp_group,
         )
 
-    timers('batch-generator').stop()
+    timers("batch-generator").stop()
 
     with stimer:
         if return_schedule_plan:
-            assert args.overlap_moe_expert_parallel_comm, \
+            assert args.overlap_moe_expert_parallel_comm, (
                 "overlap_moe_expert_parallel_comm must be enabled to return the schedule plan"
+            )
             schedule_plan = model.build_schedule_plan(
                 tokens, position_ids, attention_mask, labels=labels, loss_mask=loss_mask
             )
             return schedule_plan, partial(loss_func, loss_mask, model=model)
         else:
             output_tensor = model(
-                tokens, position_ids, attention_mask, labels=labels, loss_mask=loss_mask, packed_seq_params=packed_seq_params
+                tokens,
+                position_ids,
+                attention_mask,
+                labels=labels,
+                loss_mask=loss_mask,
+                packed_seq_params=packed_seq_params,
             )
 
     # [ModelOpt]: model is needed to access ModelOpt distillation losses
@@ -258,9 +344,11 @@ def is_dataset_built_on_rank(vp_stage=None, is_packed_sequence=False):
         return False
     elif is_packed_sequence:
         return True
-    return (
-        is_first_or_last_pipeline_stage(vp_stage)
-        or mtp_on_this_rank_func(layout=config.pipeline_model_parallel_layout, mtp_num_layers=config.mtp_num_layers, ignore_virtual=False, vp_stage=vp_stage)
+    return is_first_or_last_pipeline_stage(vp_stage) or mtp_on_this_rank_func(
+        layout=config.pipeline_model_parallel_layout,
+        mtp_num_layers=config.mtp_num_layers,
+        ignore_virtual=False,
+        vp_stage=vp_stage,
     )
 
 
@@ -301,7 +389,8 @@ def core_gpt_dataset_config_from_args(args: Any) -> GPTDatasetConfig:
         "defer_npy_index_mmap": args.dataloader_defer_npy_index_mmap,
         "context_parallel_size": args.context_parallel_size,
         "data_parallel_size": args.data_parallel_size,
-        "sequence_parallel_size": args.tensor_model_parallel_size * args.sequence_parallel,
+        "sequence_parallel_size": args.tensor_model_parallel_size
+        * args.sequence_parallel,
         "hybrid_context_parallel": args.hybrid_context_parallel,
     }
 
@@ -339,7 +428,6 @@ def train_valid_test_datasets_provider(train_val_test_num_samples, vp_stage=None
 
     config = core_gpt_dataset_config_from_args(args)
 
-
     is_packed_sequence = False
     if args.sft:
         dataset_type = SFTDataset
@@ -354,7 +442,11 @@ def train_valid_test_datasets_provider(train_val_test_num_samples, vp_stage=None
 
     print_rank_0("> building train, validation, and test datasets for GPT ...")
 
-    is_dataset_built = partial(is_dataset_built_on_rank, vp_stage=vp_stage, is_packed_sequence=is_packed_sequence)
+    is_dataset_built = partial(
+        is_dataset_built_on_rank,
+        vp_stage=vp_stage,
+        is_packed_sequence=is_packed_sequence,
+    )
     train_ds, valid_ds, test_ds = BlendedMegatronDatasetBuilder(
         dataset_type, train_val_test_num_samples, is_dataset_built, config
     ).build()
@@ -384,7 +476,9 @@ if __name__ == "__main__":
     _MAIN_ENTRY_TIME = time.time()
 
     # Register startup timestamps for timing report in pretrain()
-    set_startup_timestamps(program_start=_PROGRAM_START_TIME, main_entry=_MAIN_ENTRY_TIME)
+    set_startup_timestamps(
+        program_start=_PROGRAM_START_TIME, main_entry=_MAIN_ENTRY_TIME
+    )
 
     # Temporary for transition to core datasets
     setattr(train_valid_test_datasets_provider, "is_distributed", True)
@@ -394,10 +488,11 @@ if __name__ == "__main__":
 
     args = parse_and_validate_args(
         extra_args_provider=add_modelopt_args if has_nvidia_modelopt else None,
-        args_defaults={'tokenizer_type': 'GPT2BPETokenizer'},
+        args_defaults={"tokenizer_type": "GPT2BPETokenizer"},
     )
     full_config = pretrain_cfg_container_from_args(args)
-    pretrain(full_config,
+    pretrain(
+        full_config,
         train_valid_test_datasets_provider,
         partial(model_provider, gpt_builder),
         ModelType.encoder_or_decoder,
