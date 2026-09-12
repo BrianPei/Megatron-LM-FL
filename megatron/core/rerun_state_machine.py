@@ -267,11 +267,15 @@ class RerunStateMachine:
         For multiple inputs, returns a tuple.
         """
         if isinstance(value, list):
-            val_tensor: torch.Tensor = torch.tensor(value, dtype=torch.int32, device=cur_platform.current_device_name())
+            val_tensor: torch.Tensor = torch.tensor(
+                value, dtype=torch.int32, device=cur_platform.current_device_name()
+            )
             torch.distributed.all_reduce(val_tensor)
             return tuple([x > 0 for x in val_tensor.tolist()])
         else:
-            val_tensor: torch.Tensor = torch.tensor([value], dtype=torch.int32, device=cur_platform.current_device_name())
+            val_tensor: torch.Tensor = torch.tensor(
+                [value], dtype=torch.int32, device=cur_platform.current_device_name()
+            )
             torch.distributed.all_reduce(val_tensor)
             return val_tensor.item() > 0
 
