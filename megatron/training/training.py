@@ -4181,9 +4181,9 @@ def build_train_valid_test_data_loaders(build_train_valid_test_datasets_provider
 
     args = get_args()
 
-    from megatron.plugin.platform.platform_manager import get_platform
-
-    timestamp_device = get_platform().device(args.local_rank)
+    timestamp_device = cur_platform.device(
+        getattr(args, 'local_rank', cur_platform.current_device())
+    )
 
     (train_dataloader, valid_dataloaders, test_dataloader) = (None, None, None)
 
