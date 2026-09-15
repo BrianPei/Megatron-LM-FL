@@ -78,7 +78,8 @@ class Utils:
             store = PrefixStore("default_pg", store)
             Utils.store = store
 
-            backend = os.getenv('DISTRIBUTED_BACKEND', 'nccl')
+            default_backend = 'mccl' if cur_platform.device_name() == 'musa' else 'nccl'
+            backend = os.getenv('DISTRIBUTED_BACKEND', default_backend)
             torch.distributed.init_process_group(
                 backend=backend, world_size=Utils.world_size, rank=Utils.rank, store=store
             )

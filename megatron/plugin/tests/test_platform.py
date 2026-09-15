@@ -146,6 +146,8 @@ class TestPlatformManager(unittest.TestCase):
 
     def test_get_platform_prefers_cuda_over_cpu(self):
         """When cuda is available, get_platform should prefer cuda over cpu."""
+        platform_register.PLATFORMS.clear()
+        platform_register.PLATFORMS["cpu"] = PlatformCPU()
         mock_cuda = _create_mock_platform("cuda")
         mock_cuda.is_available = lambda: True
         platform_register.PLATFORMS["cuda"] = mock_cuda
