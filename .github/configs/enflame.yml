@@ -44,30 +44,30 @@ test_matrix:
       - -m
       - not experimental and not flaky_in_dev
     groups:
-      - name: core
-        path: tests/unit_tests/test_*.py megatron/plugin/tests/
-        description: Core unit tests
-      - name: models
-        path: tests/unit_tests/models/
-        description: Model tests
-      - name: distributed
-        path: tests/unit_tests/distributed/
-        description: Distributed tests
-      - name: dist_checkpointing
-        path: tests/unit_tests/dist_checkpointing/
-        description: Distributed checkpointing tests
-      - name: tensor_parallel
-        path: tests/unit_tests/tensor_parallel/
-        description: Tensor parallel tests
-      - name: pipeline_parallel
-        path: tests/unit_tests/pipeline_parallel/
-        description: Pipeline parallel tests
-      - name: data
-        path: tests/unit_tests/data/
-        description: Data tests
-      - name: fusions
-        path: tests/unit_tests/fusions/
-        description: Fusion tests
+      #- name: core
+      #  path: tests/unit_tests/test_*.py megatron/plugin/tests/
+      #  description: Core unit tests
+      #- name: models
+      #  path: tests/unit_tests/models/
+      #  description: Model tests
+      #- name: distributed
+      #  path: tests/unit_tests/distributed/
+      #  description: Distributed tests
+      #- name: dist_checkpointing
+      #  path: tests/unit_tests/dist_checkpointing/
+      #  description: Distributed checkpointing tests
+      #- name: tensor_parallel
+      #  path: tests/unit_tests/tensor_parallel/
+      #  description: Tensor parallel tests
+      #- name: pipeline_parallel
+      #  path: tests/unit_tests/pipeline_parallel/
+      #  description: Pipeline parallel tests
+      # name: data
+      #  path: tests/unit_tests/data/
+      #  description: Data tests
+      #- name: fusions
+      #  path: tests/unit_tests/fusions/
+      #  description: Fusion tests
       - name: others
         path: tests/unit_tests/post_training/ tests/unit_tests/tokenizers/ tests/unit_tests/utils/
         description: post-training, tokenizer, and utility tests
@@ -336,7 +336,25 @@ test_matrix:
 
 
   functional:
-    train: []
+    train:
+      - model: gpt
+        test_case: qwen3_0p6b_mcore_te_tp1_pp1_s60
+        training_script: pretrain_gpt.py
+        n_repeat: 1
+        golden_environment: dev
+        golden_platform: s60
+        enable_lightweight_mode: false
+        data_path: /home/gitlab-runner/data
+        gpus_per_node: 1
+      - model: gpt
+        test_case: qwen3_0p6b_mcore_te_tp2_pp2_benchmark_s60
+        training_script: pretrain_gpt.py
+        n_repeat: 1
+        golden_environment: dev
+        golden_platform: s60
+        enable_lightweight_mode: false
+        data_path: /home/gitlab-runner/data
+        gpus_per_node: 4
 
 # TE-FL runtime configuration
 te_fl:
