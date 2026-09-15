@@ -127,7 +127,7 @@ def calc_params_l2_norm(model, force_create_fp32_copy=False):
         )
         norm_2 = norm * norm
     else:
-        norm_2 = torch.zeros((1,), dtype=torch.float32, device=cur_platform.device(cur_platform.current_device()))
+        norm_2 = torch.zeros((), dtype=torch.float32, device=cur_platform.device(cur_platform.current_device()))
 
     if data_parallel_group is not None:
         torch.distributed.all_reduce(
@@ -147,7 +147,7 @@ def calc_params_l2_norm(model, force_create_fp32_copy=False):
         )
         sharded_norm_2 = sharded_norm * sharded_norm
     else:
-        sharded_norm_2 = torch.zeros((1,), dtype=torch.float32, device=cur_platform.device(cur_platform.current_device()))
+        sharded_norm_2 = torch.zeros((), dtype=torch.float32, device=cur_platform.device(cur_platform.current_device()))
     # Sum over all DP groups, including CP since distributed optimizer state is
     # sharded jointly over DP+CP.
     torch.distributed.all_reduce(
