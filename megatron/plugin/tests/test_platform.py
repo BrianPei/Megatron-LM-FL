@@ -538,13 +538,47 @@ def _fake_torch_for_platform(accelerator_name, accelerator):
         bfloat16="bf16",
         random="random-module",
         cuda=fake_cuda,
-        device=lambda name, index=None: f"{name}:{index}" if index is not None else name,
+        device=lambda name, index=None: types.SimpleNamespace(type=name),
     )
     setattr(fake_torch, accelerator_name, accelerator)
     if accelerator_name == "cuda":
         fake_torch.cuda = accelerator
         fake_torch.cuda.nvtx = fake_nvtx
     return fake_torch
+
+
+class TestMockedVendorPlatforms(unittest.TestCase):
+    """Cover platform wrappers without requiring real vendor hardware."""
+
+    def test_cuda_platform_rejects_compatibility_facade_with_native_device_type(self):
+        """A torch.cuda compatibility facade must not register as native CUDA."""
+        module = __import__(
+            "megatron.plugin.platform.platform_cuda", fromlist=["PlatformCUDA"]
+        )
+
+        accelerator = _FakeAccelerator()
+        fake_torch = _fake_torch_for_platform("cuda", accelerator)
+        fake_torch.device = lambda name, index=None: types.SimpleNamespace(type="gcu")
+
+        with patch.dict(sys.modules, {"torch": fake_torch}), patch.object(
+            module, "torch", fake_torch
+        ):
+            self.assertFalse(module.PlatformCUDA().is_available())
+
+    def test_cuda_platform_accepts_matching_native_device_type(self):
+        """Native CUDA remains available when the device identity is consistent."""
+        module = __import__(
+            "megatron.plugin.platform.platform_cuda", fromlist=["PlatformCUDA"]
+        )
+
+        accelerator = _FakeAccelerator()
+        fake_torch = _fake_torch_for_platform("cuda", accelerator)
+        fake_torch.device = lambda name, index=None: types.SimpleNamespace(type="cuda")
+
+        with patch.dict(sys.modules, {"torch": fake_torch}), patch.object(
+            module, "torch", fake_torch
+        ):
+            self.assertTrue(module.PlatformCUDA().is_available())
 
 
 class TestMockedVendorPlatforms(unittest.TestCase):
