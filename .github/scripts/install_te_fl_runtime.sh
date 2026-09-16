@@ -67,12 +67,6 @@ done <<< "$parsed_install_pip_args"
   transformer-engine-cu11 transformer-engine-cu12 transformer-engine-cu13 \
   >/dev/null 2>&1 || true
 
-# Remove any pre-installed official Triton that may conflict with vendor-specific
-# Triton implementations (e.g., MUSA Triton in flag-gems). Images may include
-# upstream Triton for development, but the TE-FL import (below) will trigger
-# torch backend autoloading, which must only see the vendor version.
-"$python_bin" -m pip uninstall -y triton >/dev/null 2>&1 || true
-
 "$python_bin" -m pip install \
   --force-reinstall \
   --no-deps \
@@ -80,7 +74,11 @@ done <<< "$parsed_install_pip_args"
   "${install_pip_args[@]}" \
   "${wheels[0]}"
 
-"$python_bin" - <<'PY'
+# Disable torch backend autoloading when verifying the TE-FL import. Vendor backends
+# (torch_musa, torch_npu, etc.) may require vendor-specific Triton, which is installed
+# later by ci_install_runtime_packages(). The import check only validates that the
+# TE-FL wheel is installed correctly, not that all downstream dependencies are ready.
+TORCH_DEVICE_BACKEND_AUTOLOAD=0 "$python_bin" - <<'PY'
 import sys
 import transformer_engine
 
