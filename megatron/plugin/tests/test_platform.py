@@ -532,13 +532,24 @@ def _fake_torch_for_platform(accelerator_name, accelerator):
         range_pop=lambda: "nvtx_pop",
     )
     fake_cuda = types.SimpleNamespace(nvtx=fake_nvtx)
+
+    def _fake_device(name, index=None):
+        """Mock torch.device() to return an object with type and index attributes."""
+        device = types.SimpleNamespace(type=name, index=index)
+        # Override __str__ to match torch.device behavior: "type:index" or "type"
+        if index is None:
+            device.__str__ = lambda: name
+        else:
+            device.__str__ = lambda: f"{name}:{index}"
+        return device
+
     fake_torch = types.SimpleNamespace(
         float="float",
         half="half",
         bfloat16="bf16",
         random="random-module",
         cuda=fake_cuda,
-        device=lambda name, index=None: types.SimpleNamespace(type=name),
+        device=_fake_device,
     )
     setattr(fake_torch, accelerator_name, accelerator)
     if accelerator_name == "cuda":
@@ -620,7 +631,11 @@ class TestMockedVendorPlatforms(unittest.TestCase):
             self.assertFalse(platform.handles_memory_backpressure())
             self.assertEqual(platform.device_name(), device_prefix)
             self.assertEqual(platform.device_name(3), f"{device_prefix}:3")
-            self.assertEqual(platform.device(2), f"{device_prefix}:2")
+            # platform.device(2) returns a torch.device object, check its string representation
+            device_obj = platform.device(2)
+            self.assertEqual(str(device_obj), f"{device_prefix}:2")
+            self.assertEqual(device_obj.type, device_prefix)
+            self.assertEqual(device_obj.index, 2)
             self.assertEqual(platform.current_device(), 1)
             self.assertEqual(platform.current_device_name(), f"{device_prefix}:1")
             self.assertEqual(platform.device_count(), 2)

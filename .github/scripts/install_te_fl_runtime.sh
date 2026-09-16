@@ -67,6 +67,12 @@ done <<< "$parsed_install_pip_args"
   transformer-engine-cu11 transformer-engine-cu12 transformer-engine-cu13 \
   >/dev/null 2>&1 || true
 
+# Remove any pre-installed official Triton that may conflict with vendor-specific
+# Triton implementations (e.g., MUSA Triton in flag-gems). Images may include
+# upstream Triton for development, but the TE-FL import (below) will trigger
+# torch backend autoloading, which must only see the vendor version.
+"$python_bin" -m pip uninstall -y triton >/dev/null 2>&1 || true
+
 "$python_bin" -m pip install \
   --force-reinstall \
   --no-deps \
