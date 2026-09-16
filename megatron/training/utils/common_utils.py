@@ -206,12 +206,12 @@ def calc_dtensor_params_l2_norm(params):
     for param in params:
         params_data[param._spec].append(param._local_tensor)
 
-    total_norm_2 = torch.zeros((1,), dtype=torch.float32, device=cur_platform.device(cur_platform.current_device()))
-    dummy_overflow_buf = torch.zeros((1,), dtype=torch.int, device=cur_platform.device(cur_platform.current_device()))
+    total_norm_2 = torch.zeros((), dtype=torch.float32, device=cur_platform.device(cur_platform.current_device()))
+    dummy_overflow_buf = torch.zeros((), dtype=torch.int, device=cur_platform.device(cur_platform.current_device()))
     for dtensor_spec, local_tensors in params_data.items():
         local_tensors = [t for t in local_tensors if t.numel() > 0]
         if len(local_tensors) == 0:
-            norm = torch.zeros((1,), dtype=torch.float32, device=cur_platform.device(cur_platform.current_device()))
+            norm = torch.zeros((), dtype=torch.float32, device=cur_platform.device(cur_platform.current_device()))
         else:
             norm, _ = multi_tensor_applier(
                 multi_tensor_l2norm, dummy_overflow_buf, [local_tensors], False  # no per-parameter norm.
