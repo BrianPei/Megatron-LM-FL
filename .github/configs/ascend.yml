@@ -172,6 +172,13 @@ test_matrix:
       - megatron/plugin/tests/test_platform.py::TestAllRegisteredPlatformsContract::test_temperature_returns_numeric
       - megatron/plugin/tests/test_platform.py::TestAllRegisteredPlatformsContract::test_utilization_returns_numeric
 
+      ## 7b. core — CUDA platform compatibility layer tests (mocked torch.cuda facade)
+      # These tests verify CUDA platform behavior when torch.cuda reports a
+      # compatibility facade that doesn't match the native device type. On
+      # Ascend NPU the mock setup conflicts with the real torch.npu runtime.
+      - megatron/plugin/tests/test_platform.py::TestMockedVendorPlatforms::test_cuda_platform_rejects_compatibility_facade_with_native_device_type
+      - megatron/plugin/tests/test_platform.py::TestMockedVendorPlatforms::test_cuda_platform_accepts_matching_native_device_type
+
       ## 8. core — single-rank checkpoint fixture incompatible with multi-GPU
       # test_save_checkpoint[torch] uses initialize_model_parallel(1,1)
       # (single-rank), incompatible with torchrun --nproc_per_node=8.
