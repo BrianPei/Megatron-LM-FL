@@ -210,6 +210,11 @@ PY
     return 0
   fi
 
+  # Remove any pre-installed official Triton that may conflict with vendor-specific
+  # Triton implementations (e.g., MUSA Triton in flag-gems). Images may include
+  # upstream Triton for development, but runtime should only use the vendor version.
+  "$python_bin" -m pip uninstall -y triton >/dev/null 2>&1 || true
+
   echo "Installing configured runtime pip packages: ${packages[*]}"
   "$python_bin" -m pip install --no-cache-dir "${install_args[@]}" "${packages[@]}"
 }
