@@ -525,6 +525,15 @@ class _FakeAccelerator:
         return ("capture", graph, pool, stream)
 
 
+class _FakeDevice:
+    def __init__(self, device_type, index=None):
+        self.type = device_type
+        self.index = index
+
+    def __str__(self):
+        return self.type if self.index is None else f"{self.type}:{self.index}"
+
+
 def _fake_torch_for_platform(accelerator_name, accelerator):
     fake_nvtx = types.SimpleNamespace(
         range=lambda msg: ("nvtx_range", msg),
@@ -534,14 +543,8 @@ def _fake_torch_for_platform(accelerator_name, accelerator):
     fake_cuda = types.SimpleNamespace(nvtx=fake_nvtx)
 
     def _fake_device(name, index=None):
-        """Mock torch.device() to return an object with type and index attributes."""
-        device = types.SimpleNamespace(type=name, index=index)
-        # Override __str__ to match torch.device behavior: "type:index" or "type"
-        if index is None:
-            device.__str__ = lambda: name
-        else:
-            device.__str__ = lambda: f"{name}:{index}"
-        return device
+        """Mock torch.device() with torch.device-like attributes and formatting."""
+        return _FakeDevice(name, index)
 
     fake_torch = types.SimpleNamespace(
         float="float",
@@ -762,7 +765,7 @@ class TestMockedVendorPlatforms(unittest.TestCase):
             platform = module.PlatformNPU()
             self.assertTrue(platform.is_available())
             self.assertEqual(platform.device_name(2), "npu:2")
-            self.assertEqual(platform.device(2), "npu:2")
+            self.assertEqual(str(platform.device(2)), "npu:2")
             self.assertEqual(platform.default_generators, ("gen0",))
             self.assertEqual(platform.MemPool, "pool-type")
             self.assertEqual(platform.use_mem_pool("pool"), ("pool", "pool"))
