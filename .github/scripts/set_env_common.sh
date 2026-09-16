@@ -210,22 +210,9 @@ PY
     return 0
   fi
 
-  # Only remove pre-installed Triton if flag-gems is in the package list.
-  # flag-gems provides vendor-specific Triton implementations (MUSA, Ascend, etc.)
-  # that must replace any image-provided upstream Triton. Platforms like KunLunXin
-  # that use image-provided vendor Triton without flag-gems should not have their
-  # Triton removed.
-  local has_flag_gems=false
-  for pkg in "${packages[@]}"; do
-    if [[ "$pkg" == "flag-gems"* ]]; then
-      has_flag_gems=true
-      break
-    fi
-  done
-
-  if [ "$has_flag_gems" = true ]; then
-    "$python_bin" -m pip uninstall -y triton >/dev/null 2>&1 || true
-  fi
+  # Image-provided triton packages are vendor-specific and complete.
+  # flag-gems does not depend on or provide triton, so there is no conflict.
+  # Do not uninstall image triton.
 
   echo "Installing configured runtime pip packages: ${packages[*]}"
   "$python_bin" -m pip install --no-cache-dir "${install_args[@]}" "${packages[@]}"
