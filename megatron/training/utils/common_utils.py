@@ -125,7 +125,7 @@ def calc_params_l2_norm(model, force_create_fp32_copy=False):
         norm, _ = multi_tensor_applier(
             multi_tensor_l2norm, dummy_overflow_buf, [params_data], False  # no per-parameter norm.
         )
-        norm_2 = norm * norm
+        norm_2 = (norm * norm).reshape(())
     else:
         norm_2 = torch.zeros((), dtype=torch.float32, device=cur_platform.device(cur_platform.current_device()))
 
@@ -145,7 +145,7 @@ def calc_params_l2_norm(model, force_create_fp32_copy=False):
             [sharded_params_data],
             False,  # no per-parameter norm.
         )
-        sharded_norm_2 = sharded_norm * sharded_norm
+        sharded_norm_2 = (sharded_norm * sharded_norm).reshape(())
     else:
         sharded_norm_2 = torch.zeros((), dtype=torch.float32, device=cur_platform.device(cur_platform.current_device()))
     # Sum over all DP groups, including CP since distributed optimizer state is
@@ -165,7 +165,7 @@ def calc_params_l2_norm(model, force_create_fp32_copy=False):
             [moe_params_data],
             False,  # no per-parameter norm.
         )
-        moe_norm_2 = moe_norm * moe_norm
+        moe_norm_2 = (moe_norm * moe_norm).reshape(())
 
     # Account for MoE norm even if current rank doesn't have any expert params to prevent
     # hang in models with un-even numbers of MoE layers.
@@ -216,7 +216,7 @@ def calc_dtensor_params_l2_norm(params):
             norm, _ = multi_tensor_applier(
                 multi_tensor_l2norm, dummy_overflow_buf, [local_tensors], False  # no per-parameter norm.
             )
-        norm_2 = norm * norm
+        norm_2 = (norm * norm).reshape(())
         for pg, placement in zip(
             dtensor_spec.device_mesh.get_all_groups(),
             dtensor_spec.placements,
