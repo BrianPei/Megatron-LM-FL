@@ -354,5 +354,5 @@ te_fl:
     environment:
       TE_FL_SKIP_CUDA: "1"
       TE_FL_PREFER: flagos
-    install_pip_args: [--ignore-requires-python]
-    pip_packages: [flag-gems, sqlalchemy]
+    install_pip_args: [--ignore-requires-python, --no-deps]
+    pip_packages: [flag-gems]
