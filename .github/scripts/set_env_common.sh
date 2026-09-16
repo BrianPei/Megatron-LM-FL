@@ -214,6 +214,19 @@ PY
   # flag-gems does not depend on or provide triton, so there is no conflict.
   # Do not uninstall image triton.
 
+  # MUSA platform: Remove incomplete mtgpu backend directory from triton.
+  # The MUSA image's triton contains mtgpu Python code but libtriton.so lacks
+  # the mtgpu C extension, causing ImportError during backend discovery.
+  if [ "${CI_PLATFORM:-}" = "musa" ]; then
+    local triton_backends
+    triton_backends=$("$python_bin" -c "import triton, os; print(os.path.join(os.path.dirname(triton.__file__), 'backends'))" 2>/dev/null || echo "")
+
+    if [ -n "$triton_backends" ] && [ -d "$triton_backends/mtgpu" ]; then
+      echo "Removing incomplete mtgpu backend from MUSA triton"
+      rm -rf "$triton_backends/mtgpu"
+    fi
+  fi
+
   echo "Installing configured runtime pip packages: ${packages[*]}"
   "$python_bin" -m pip install --no-cache-dir "${install_args[@]}" "${packages[@]}"
 }
