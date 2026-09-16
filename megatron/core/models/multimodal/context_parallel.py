@@ -169,7 +169,7 @@ def _reduce_scatter_along_second_dim(global_t):
     samples_per_rank = global_t.shape[1] // cp_size
 
     tensor_list = [
-        global_t[:, cp_rank * samples_per_rank : (cp_rank + 1) * samples_per_rank]
+        global_t[:, cp_rank * samples_per_rank : (cp_rank + 1) * samples_per_rank].contiguous()
         for cp_rank in range(cp_size)
     ]
 

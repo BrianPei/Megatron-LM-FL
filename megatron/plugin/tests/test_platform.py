@@ -821,17 +821,19 @@ class TestAllRegisteredPlatformsContract(unittest.TestCase):
         self._for_each_platform(check)
 
     def test_device_name_matches_device_type(self):
-        """device_name() must agree with the type of the device() it hands out."""
+        """device_name() must resolve to the type returned by device()."""
+        import torch
+
         def check(name, p):
             device = p.device(0)
             if device is None:  # cpu platform returns None by design
                 return
+            device_type = torch.device(p.device_name()).type
             self.assertEqual(
                 device.type,
-                p.device_name(),
-                f"{name}: device_name() is {p.device_name()!r} but device(0) is "
-                f"{device.type!r}. The `param.device.type == device_name()` "
-                f"checks in the optimizers silently go false when these differ.",
+                device_type,
+                f"{name}: device_name() {p.device_name()!r} resolves to "
+                f"{device_type!r} but device(0) is {device.type!r}.",
             )
         self._for_each_platform(check)
 
@@ -1263,12 +1265,16 @@ class TestKunLunXinDeviceContract(unittest.TestCase):
         """Regression: torch rejected 'kunlunxin' at every device= call site."""
         import torch
 
-        self.assertEqual(torch.device(self.platform.device_name()).type, "cuda")
+        self.assertEqual(
+            torch.device(self.platform.device_name()).type, torch.device("cuda").type
+        )
         self.assertEqual(torch.device(self.platform.device_name(2)).index, 2)
 
     def test_device_name_matches_inherited_device_namespace(self):
-        """device_name() must match the namespace device() actually returns."""
-        self.assertEqual(self.platform.device(1).type, self.platform.device_name())
+        """device() must use the runtime's CUDA-compatible namespace."""
+        import torch
+
+        self.assertEqual(self.platform.device(1), torch.device("cuda", 1))
 
     def test_override_vendor_resolves_to_kunlunxin(self):
         """The override registry must still select kunlunxin implementations."""

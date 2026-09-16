@@ -6,8 +6,8 @@ hardware_name: ascend
 display_name: 'Ascend Tests'
 setup_script: .github/scripts/set_env_ascend.sh
 
-# CI image for the Ascend environment (built and pushed 2026-08-28, validated on Ascend 910C)
-ci_image: harbor.baai.ac.cn/flagos-dev/megatron-lm-fl:manual-20260828-ascend-dev
+# CI image for the Ascend environment (built and pushed 2026-09-15, validated on Ascend 910C)
+ci_image: harbor.baai.ac.cn/flagscale/flagscale-train:dev-ascend-py3.12-20260915
 
 # Runner labels for the Ascend node
 runner_labels:
