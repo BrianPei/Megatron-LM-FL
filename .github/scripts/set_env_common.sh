@@ -217,13 +217,21 @@ PY
   # MUSA platform: Remove incomplete mtgpu backend directory from triton.
   # The MUSA image's triton contains mtgpu Python code but libtriton.so lacks
   # the mtgpu C extension, causing ImportError during backend discovery.
+  # Use importlib to locate triton without triggering full module initialization.
   if [ "${CI_PLATFORM:-}" = "musa" ]; then
     local triton_backends
-    triton_backends=$("$python_bin" -c "import triton, os; print(os.path.join(os.path.dirname(triton.__file__), 'backends'))" 2>/dev/null || echo "")
+    triton_backends=$("$python_bin" -c "import sys; from importlib.util import find_spec; spec = find_spec('triton'); print(spec.origin if spec and spec.origin else '')" 2>/dev/null || echo "")
 
-    if [ -n "$triton_backends" ] && [ -d "$triton_backends/mtgpu" ]; then
-      echo "Removing incomplete mtgpu backend from MUSA triton"
-      rm -rf "$triton_backends/mtgpu"
+    if [ -n "$triton_backends" ]; then
+      # triton_backends now contains path to triton/__init__.py, get directory
+      local triton_dir
+      triton_dir=$(dirname "$triton_backends")
+      local mtgpu_path="$triton_dir/backends/mtgpu"
+
+      if [ -d "$mtgpu_path" ]; then
+        echo "Removing incomplete mtgpu backend from MUSA triton: $mtgpu_path"
+        rm -rf "$mtgpu_path"
+      fi
     fi
   fi
 
