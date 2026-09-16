@@ -184,6 +184,12 @@ def _reduce_scatter_along_second_dim(global_t):
     # input tensor lists. Pack the sequence chunks along the leading dimension,
     # which reduce_scatter_tensor splits across ranks.
     packed_input = torch.cat(tensor_list, dim=0).contiguous()
+
+    # Create output tensor for reduce_scatter_tensor
+    local_t = torch.empty(
+        tensor_list[0].shape, device=global_t.device, dtype=global_t.dtype
+    )
+
     torch.distributed.reduce_scatter_tensor(
         local_t, packed_input, group=get_context_parallel_group()
     )
