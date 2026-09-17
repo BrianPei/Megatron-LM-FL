@@ -594,10 +594,6 @@ class TestMockedVendorPlatforms(unittest.TestCase):
         ):
             self.assertTrue(module.PlatformCUDA().is_available())
 
-
-class TestMockedVendorPlatforms(unittest.TestCase):
-    """Cover platform wrappers without requiring real vendor hardware."""
-
     def _exercise_accelerator_platform(
         self,
         module_path,
@@ -781,6 +777,153 @@ class TestMockedVendorPlatforms(unittest.TestCase):
             self.assertTrue(graph.replayed)
             self.assertEqual(platform.visible_devices_envs(), ["ASCEND_RT_VISIBLE_DEVICES"])
 
+
+class TestNPUPatchesManager(unittest.TestCase):
+    """NPU patch registration must be repeatable without hiding conflicting replacements."""
+
+    def setUp(self):
+        module = __import__("megatron.plugin.platform.platform_npu", fromlist=["PatchesManager"])
+        self.manager = module.PatchesManager
+        registry = patch.object(self.manager, "patches_info", {})
+        registry.start()
+        self.addCleanup(registry.stop)
+
+        self.target = types.ModuleType("_megatron_test_npu_patch_target")
+        self.target.function = lambda value: value
+        modules = patch.dict(sys.modules, {self.target.__name__: self.target})
+        modules.start()
+        self.addCleanup(modules.stop)
+        self.target_name = f"{self.target.__name__}.function"
+
+    def test_repeated_replacement_registration_is_noop(self):
+        def replacement(value):
+            return value + 1
+
+        self.manager.register_patch(self.target_name, replacement)
+        self.manager.register_patch(self.target_name, replacement)
+        self.manager.apply_patches()
+        registered_patch = self.manager.get_patch(self.target_name)
+
+        self.manager.register_patch(self.target_name, replacement)
+        self.assertTrue(registered_patch.is_applied)
+        self.manager.apply_patches()
+        self.assertIs(self.target.function, replacement)
+        self.assertEqual(self.target.function(2), 3)
+
+    def test_different_replacement_requires_force(self):
+        def first(value):
+            return value + 1
+
+        def second(value):
+            return value + 2
+
+        def double_wrapper(function):
+            def wrapped(value):
+                return function(value) * 2
+
+            return wrapped
+
+        self.manager.register_patch(self.target_name, first)
+        self.manager.register_patch(self.target_name, double_wrapper)
+        self.manager.apply_patches()
+        applied_function = self.target.function
+        with self.assertRaisesRegex(RuntimeError, "the patch of function exist"):
+            self.manager.register_patch(self.target_name, second)
+        self.assertIs(self.target.function, applied_function)
+        self.assertIs(self.manager.get_patch(self.target_name).patch_func, first)
+        self.assertEqual(self.target.function(2), 6)
+
+        self.manager.register_patch(self.target_name, second, force_patch=True)
+        self.manager.apply_patches()
+        self.assertIs(self.manager.get_patch(self.target_name).patch_func, second)
+        self.assertEqual(self.target.function(2), 8)
+
+        self.manager.register_patch(self.target_name, None, force_patch=True)
+        self.manager.apply_patches()
+        self.assertIsNone(self.manager.get_patch(self.target_name).patch_func)
+        self.assertEqual(self.target.function(2), 4)
+
+    def test_repeated_wrapper_registration_preserves_applied_function(self):
+        wrapped_functions = []
+
+        def increment_wrapper(function):
+            wrapped_functions.append(function)
+
+            def wrapped(value):
+                return function(value) + 1
+
+            return wrapped
+
+        self.manager.register_patch(self.target_name, increment_wrapper)
+        self.manager.apply_patches()
+        applied_function = self.target.function
+
+        self.manager.register_patch(self.target_name, increment_wrapper)
+        self.manager.apply_patches()
+        self.assertIs(self.target.function, applied_function)
+        self.assertEqual(len(wrapped_functions), 1)
+        self.assertEqual(self.target.function(2), 3)
+
+    def test_wrapper_removal_reapplies_remaining_wrappers(self):
+        def replacement(value):
+            return value + 1
+
+        def add_ten_wrapper(function):
+            def wrapped(value):
+                return function(value) + 10
+
+            return wrapped
+
+        def double_wrapper(function):
+            def wrapped(value):
+                return function(value) * 2
+
+            return wrapped
+
+        self.manager.register_patch(self.target_name, replacement)
+        self.manager.register_patch(self.target_name, add_ten_wrapper)
+        self.manager.register_patch(self.target_name, double_wrapper)
+        self.manager.apply_patches()
+        self.assertEqual(self.target.function(1), 24)
+
+        self.manager.remove_wrappers(self.target_name, "add_ten_wrapper")
+        self.manager.register_patch(self.target_name, replacement)
+        self.manager.register_patch(self.target_name, double_wrapper)
+        self.manager.apply_patches()
+        self.assertEqual(self.target.function(1), 4)
+
+        self.manager.remove_wrappers(self.target_name, None)
+        self.manager.apply_patches()
+        self.assertIs(self.target.function, replacement)
+        self.assertEqual(self.target.function(1), 2)
+
+        self.manager.remove_wrappers(self.target_name, None, remove_check=False)
+        self.assertTrue(self.manager.get_patch(self.target_name).is_applied)
+        with self.assertRaisesRegex(RuntimeError, "has not remove anything"):
+            self.manager.remove_wrappers(self.target_name, "missing_wrapper")
+        self.assertTrue(self.manager.get_patch(self.target_name).is_applied)
+
+    def test_remove_patches_allows_reregistering_same_functions(self):
+        original = self.target.function
+
+        def replacement(value):
+            return value + 1
+
+        def double_wrapper(function):
+            def wrapped(value):
+                return function(value) * 2
+
+            return wrapped
+
+        for _ in range(2):
+            self.manager.register_patch(self.target_name, replacement)
+            self.manager.register_patch(self.target_name, double_wrapper)
+            self.manager.apply_patches()
+            self.assertEqual(self.target.function(2), 6)
+
+            self.manager.remove_patches()
+            self.assertIs(self.target.function, original)
+            self.assertEqual(self.target.function(2), 2)
 
 # ---------- Auto-discovery: Interface Contract Tests for ALL Registered Platforms ----------
 

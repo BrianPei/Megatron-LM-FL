@@ -59,6 +59,7 @@ from .utils import (
 logger = logging.getLogger(__name__)
 
 ######## FlagScale Begin ########
+from megatron.plugin.decorators import overridable
 from megatron.plugin.platform import get_platform
 
 cur_platform = get_platform()
@@ -4319,6 +4320,7 @@ class AllGatherPipeline:
 
 
 @torch.no_grad()
+@overridable  # FlagScale Modify
 def gradient_reduce_preprocessing(grad_data, scaling_factor, ddp_config):
     """
     Gradient reduce preprocessing for gradient averaging and gradient scaling.

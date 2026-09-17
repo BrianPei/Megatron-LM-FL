@@ -144,6 +144,12 @@ register(
 )
 
 register(
+    target="megatron.core.distributed.fsdp.src.megatron_fsdp.param_and_grad_buffer.gradient_reduce_preprocessing",
+    impl="megatron.plugin.Ascend.distributed.fsdp.param_and_grad_buffer.gradient_reduce_preprocessing",
+    vendor="npu",
+)
+
+register(
     target="megatron.core.fusions.fused_softmax.ScaledUpperTriangMaskedSoftmax",
     impl="megatron.plugin.Ascend.fusions.fused_softmax.ScaledUpperTriangMaskedSoftmax",
     vendor="npu",

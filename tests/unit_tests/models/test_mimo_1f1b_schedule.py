@@ -110,6 +110,12 @@ def destroy_all_grids():
     for grid in _active_grids:
         grid.destroy()
     _active_grids.clear()
+    # These groups are created separately from HyperCommGrid and must be
+    # destroyed explicitly before dropping the cache between test cases.
+    for embedding_groups in _embedding_pg_cache.values():
+        for group in embedding_groups:
+            if group is not None and group != dist.GroupMember.NON_GROUP_MEMBER:
+                dist.destroy_process_group(group)
     _embedding_pg_cache.clear()
     BridgeCommunicator.destroy_broadcast_pgs()
 
