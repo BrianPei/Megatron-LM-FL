@@ -124,6 +124,10 @@ test_matrix:
       # fail with "CUDA error: invalid resource handle" on XPU-only systems.
       - tests/unit_tests/models/test_mimo_colocated_correctness.py::TestColocatedGradientScalingCorrectness::test_dist_matches_dp1_reference_post_step_weights
       - tests/unit_tests/models/test_multimodal_context_parallel.py::TestDynamicResCPDistributed::test_split_dynamic_res_temporal_aware_tubelets
+      # RADIO ViT forward pass triggers invalid resource handle during XPU tensor
+      # operations; likely related to model.to(device) or intermediate buffers.
+      # Enflame/Hygon/MUSA also ignore this test for platform-specific reasons.
+      - tests/unit_tests/models/test_radio_model.py::TestRADIOViTModel::test_forward
       # Fails token-parallel embedding processing on XPU.
       # ascend and metax also ignore this case.
       - tests/unit_tests/models/test_llava_model.py::TestLLaVAModelTokenParallel::test_process_embedding_token_parallel
