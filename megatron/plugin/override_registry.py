@@ -11,7 +11,6 @@ The ``@override`` decorator on the implementation function is no longer needed.
 
 from megatron.plugin.decorators import register
 
-
 # =============================================================================
 # Optimizer - clip_grads
 # =============================================================================
@@ -183,4 +182,18 @@ register(
     target="megatron.core.transformer.transformer_config.TransformerConfig",
     impl="megatron.plugin.Ascend.transformer.transformer_config.NPUTransformerConfig",
     vendor="npu",
+)
+
+
+# MUSA compatibility overrides follow the same lazy registration as Ascend.
+register(
+    target="megatron.core.transformer.moe.moe_utils.permute",
+    impl="megatron.plugin.mthreads.transformer.moe.moe_utils.permute",
+    vendor="musa",
+)
+
+register(
+    target="megatron.core.distributed.fsdp.src.megatron_fsdp.uneven_dtensor.uneven_dtensor_to_full_tensor",
+    impl="megatron.plugin.mthreads.distributed.fsdp.uneven_dtensor.uneven_dtensor_to_full_tensor",
+    vendor="musa",
 )
