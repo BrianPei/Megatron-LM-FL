@@ -18,6 +18,15 @@ from tests.unit_tests.dist_checkpointing import TempNamedDir
 from tests.unit_tests.test_utilities import Utils
 
 
+def pytest_configure(config):
+    """Pytest configuration hook for platform-specific setup."""
+    platform = os.getenv("MEGATRON_TEST_PLATFORM")
+
+    # Metax requires CUBLAS_WORKSPACE_CONFIG for deterministic algorithms
+    if platform == "metax":
+        os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
+
+
 def pytest_addoption(parser):
     """
     Additional command-line arguments passed to pytest.
@@ -166,8 +175,19 @@ def cleanup_gpu_memory():
     """Clean up GPU memory after each test to prevent OOM in CI."""
     yield
     # Metax can abort inside cyclic GC during multi-rank pytest teardown.
-    if os.getenv("MEGATRON_TEST_PLATFORM") != "metax":
+    # Kunlunxin torch_xmlir has a bug: its CUDACachingAllocator incorrectly calls
+    # c10::cuda::ExchangeDevice during tensor destruction, causing crashes on XPU-only systems.
+    platform = os.getenv("MEGATRON_TEST_PLATFORM")
+    if platform not in ("metax", "kunlunxin"):
         gc.collect()
-    if torch.cuda.is_available():
-        torch.cuda.empty_cache()
+
+    # Use platform-specific device cleanup instead of hardcoded torch.cuda
+    try:
+        from megatron.plugin import cur_platform
+        if cur_platform.is_available():
+            cur_platform.empty_cache()
+    except (ImportError, AttributeError):
+        # Fallback to torch.cuda if platform abstraction not available
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
 

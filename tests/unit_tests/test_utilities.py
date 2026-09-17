@@ -13,6 +13,23 @@ from megatron.plugin.platform import get_platform
 cur_platform = get_platform()
 
 
+def get_current_device():
+    """Get current accelerator device as torch.device object.
+
+    Returns platform-agnostic device (cuda/xpu/npu) based on the active platform.
+    Use this instead of hardcoded device=get_current_device() for cross-platform compatibility.
+    """
+    return cur_platform.device(cur_platform.current_device())
+
+
+def get_device_str():
+    """Get current accelerator device as string (e.g., 'cuda', 'xpu', 'npu').
+
+    Returns device name for the active platform.
+    """
+    return cur_platform.device_name(cur_platform.current_device())
+
+
 class TestModel(torch.nn.Module):
     def __init__(
         self,
