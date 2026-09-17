@@ -248,6 +248,10 @@ test_matrix:
       - tests/unit_tests/distributed/megatron_fsdp/test_mfsdp_fully_shard.py::TestMegatronFsdpFullyShard::test_fully_shard_custom_dtype
       - tests/unit_tests/distributed/megatron_fsdp/test_mfsdp_fully_shard.py::TestMegatronFsdpFullyShard::test_fully_shard_ez
       - tests/unit_tests/distributed/megatron_fsdp/test_mfsdp_fully_shard.py::TestMegatronFsdpFullyShard::test_fully_shard_te_quantized
+      # torch_npu 2.7.1.post2 / CANN 9.0 cannot capture the attention dropout
+      # RNG path in this full-iteration graph test. The failure can also abort
+      # HCCL on captured-event queries (ACL 107028). Re-enable after stack support.
+      - tests/unit_tests/distributed/megatron_fsdp/test_mfsdp_fully_shard.py::TestMegatronFsdpFullyShard::test_full_iteration_cuda_graph
       # HCCL all-reduce / reduce-scatter exhaust NPU coprocessor streams
       # (rtStreamCreateWithFlags resource alloc fail), same root cause as
       # the MoE and optimizer resharding stream ceiling in dist_checkpointing.
