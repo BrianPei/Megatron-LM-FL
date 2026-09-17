@@ -31,6 +31,7 @@ from tests.unit_tests.test_utilities import Utils
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _generate_inputs(
     seq_len: int,
     batch_size: int,
@@ -45,26 +46,20 @@ def _generate_inputs(
         logits: [seq_len, batch_size, vocab_size / tp_size], dtype
         target: [seq_len, batch_size], int64
     """
-    device = torch.cuda.current_device()
-    # Use TP rank (not global rank) to slice vocab correctly when DP > 1
+    # Use TP rank so data-parallel replicas generate the same vocab shard.
     tp_rank = parallel_state.get_tensor_model_parallel_rank()
-
-    # Use same seed on all ranks to generate consistent full logits,
-    # then slice by TP rank to simulate TP partition.
-    gen = torch.Generator(device="cpu").manual_seed(seed)
-    full_logits = torch.randn(
-        seq_len, batch_size, vocab_size, generator=gen, dtype=dtype
-    )
-    target = torch.randint(
-        0, vocab_size, (seq_len, batch_size), generator=gen
-    )
-
-    # Slice vocab dimension for this TP rank
     partition_size = vocab_size // tp_size
-    start = tp_rank * partition_size
-    end = start + partition_size
-    logits = full_logits[:, :, start:end].contiguous().cuda()
-    target = target.cuda()
+
+    # Both implementations consume this same shard. Generating only the local
+    # partition avoids replicating the full vocabulary tensor on every CPU rank.
+    logits_gen = torch.Generator(device="cpu").manual_seed(seed + tp_rank)
+    logits = torch.randn(
+        seq_len, batch_size, partition_size, generator=logits_gen, dtype=dtype
+    ).cuda()
+
+    # Targets must match across TP ranks regardless of their logits RNG state.
+    target_gen = torch.Generator(device="cpu").manual_seed(seed)
+    target = torch.randint(0, vocab_size, (seq_len, batch_size), generator=target_gen).cuda()
 
     return logits, target
 
