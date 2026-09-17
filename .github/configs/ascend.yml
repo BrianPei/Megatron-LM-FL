@@ -152,16 +152,6 @@ test_matrix:
       # NOTE: test_training_log_grpo_and_auxiliary_writer_paths is NOT ignored.
       # Upstream PR #82 will remove that test; the failure is transient.
 
-      ## 6. core — platform register (non-idempotent registry_patch)
-      # platform_npu.py registry_patch is not idempotent; calling
-      # register_platforms() a second time raises RuntimeError.
-      # Remove after fixing platform_npu.py.
-      - megatron/plugin/tests/test_platform.py::TestPlatformRegister::test_all_registered_platforms_are_available
-      - megatron/plugin/tests/test_platform.py::TestPlatformRegister::test_register_platforms_adds_cpu
-      - megatron/plugin/tests/test_platform.py::TestPlatformRegister::test_registered_cpu_is_platform_base_instance
-      - megatron/plugin/tests/test_platform.py::TestPlatformRegister::test_registered_platforms_keys_are_lowercase
-      - megatron/plugin/tests/test_platform.py::TestPlatformRegister::test_unavailable_platform_not_registered
-
       ## 7. core — platform contract (monitoring methods return None)
       # platform_npu.py monitoring API returns None instead of int/float/bool.
       # Remove after fixing platform_npu.py.
@@ -198,6 +188,9 @@ test_matrix:
       # mock dataset and generated-data tests enabled.
       - tests/unit_tests/data/test_fim_dataset.py
       - tests/unit_tests/data/test_preprocess_data.py
+      # Downloads GPT-2 tokenizer files when the mounted offline fixture is absent.
+      # CI runners cannot rely on external Hugging Face/S3 access.
+      - tests/unit_tests/data/test_preprocess_mmdata.py
 
       ## 11. dist_checkpointing - unsupported optional runtimes
       # Ascend 910C does not expose Transformer Engine FP8 tensor support.
@@ -303,6 +296,13 @@ test_matrix:
       - tests/unit_tests/models/test_mimo_1f1b_schedule.py::TestMimo1F1BSchedule::test_fan_out_dp1_to_dp4_enc_tp2_pp2_8gpu
       - tests/unit_tests/models/test_mimo_1f1b_schedule.py::TestMimo1F1BSchedule::test_fan_in_dp2_to_dp1_llm_pp3_8gpu
       - tests/unit_tests/models/test_mimo_checkpoint.py
+      # The final two colocated combinations exhaust HCCL coprocessor streams
+      # in the full models process on torch_npu 2.7.1.post2, even after explicit
+      # PG cleanup (EI0007 / runtime 207005). Later embedding/CP failures are
+      # cascading errors; keep those tests and the other six combinations enabled.
+      # Re-enable after validating HCCL lifecycle fixes (Ascend/pytorch!30623).
+      - tests/unit_tests/models/test_mimo_colocated_correctness.py::TestColocatedGradientScalingCorrectness::test_dist_matches_dp1_reference_post_step_weights[mbs4-asymmetric-fan_in]
+      - tests/unit_tests/models/test_mimo_colocated_correctness.py::TestColocatedGradientScalingCorrectness::test_dist_matches_dp1_reference_post_step_weights[mbs4-asymmetric-fan_out]
       # Hardcoded CUDA device check
       - tests/unit_tests/models/test_base_embedding.py::TestBaseEmbedding::test_gpu_forward
       # HCCL port conflict — may be resolved by HCCL_NPU_SOCKET_PORT_RANGE
@@ -335,6 +335,7 @@ test_matrix:
       # causing rank divergence and a 30-minute HCCL 507001/SIGABRT cascade.
       - tests/unit_tests/pipeline_parallel/test_multimodule_schedules.py::TestMultimoduleSchedules::test_single_encoder_8gpu
       - tests/unit_tests/pipeline_parallel/test_multimodule_schedules.py::TestMultimoduleSchedules::test_dual_encoder_8gpu
+      - tests/unit_tests/pipeline_parallel/test_pipeline_layout.py::test_forward_vpp
 
       ## 14. fusions - CUDA/Triton-only kernels
       # Fused MLA YaRN RoPE is implemented with Triton CUDA kernels. The test

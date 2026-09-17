@@ -121,6 +121,18 @@ class Utils:
             Utils.rank = rank
 
     @staticmethod
+    def _destroy_model_parallel_groups():
+        # parallel_state resets device-group references without destroying the
+        # groups. Release groups owned by that state between tests while keeping
+        # the default group available to tests that create their own subgroups.
+        groups = tuple(ps._global_process_group_list or ())
+        ps.destroy_model_parallel()
+        for group in groups:
+            # Gloo groups may already have been destroyed by parallel_state.
+            if group is not None and group in torch.distributed.distributed_c10d._world.pg_map:
+                torch.distributed.destroy_process_group(group)
+
+    @staticmethod
     def destroy_model_parallel():
         os.environ.pop('NVTE_FLASH_ATTN', None)
         os.environ.pop('NVTE_FUSED_ATTN', None)
@@ -136,7 +148,7 @@ class Utils:
         except Exception:
             Utils.inited = False
             return
-        ps.destroy_model_parallel()
+        Utils._destroy_model_parallel_groups()
         Utils.inited = False
         cur_platform.empty_cache()  # FlagScale Modify
 
@@ -153,7 +165,7 @@ class Utils:
         os.environ.pop('NVTE_FUSED_ATTN', None)
         os.environ.pop('NVTE_UNFUSED_ATTN', None)
 
-        ps.destroy_model_parallel()
+        Utils._destroy_model_parallel_groups()
         Utils.initialize_distributed()
         if cur_platform.device_name() == 'musa' and 'create_gloo_process_groups' not in kwargs:
             kwargs['create_gloo_process_groups'] = False
