@@ -123,7 +123,6 @@ test_matrix:
       # with partial ranks stalling while others complete. test_param_norm_* use DistributedDataParallel
       # and may trigger similar MCCL synchronization issues. test_straggler_detector is inherently flaky.
       # Align with Ascend's conservative approach: skip all @pytest.mark.flaky tests in test_utils.py.
-      - tests/unit_tests/test_utils.py::test_check_param_hashes_across_dp_replicas
       - tests/unit_tests/test_utils.py::test_cross_check_param_hashes_across_dp_replicas
       - tests/unit_tests/test_utils.py::test_param_norm_linear[False]
       - tests/unit_tests/test_utils.py::test_param_norm_linear[True]
