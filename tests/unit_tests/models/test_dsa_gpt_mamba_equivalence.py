@@ -42,7 +42,7 @@ from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.tensor_parallel.random import model_parallel_cuda_manual_seed
 from megatron.core.transformer.transformer_config import MLATransformerConfig
 from megatron.rl.rl_utils import selective_log_softmax
-from tests.unit_tests.test_utilities import Utils
+from tests.unit_tests.test_utilities import Utils, get_current_device
 
 try:
     from fast_hadamard_transform import hadamard_transform as _hadamard_transform
@@ -185,7 +185,7 @@ def _build_gpt_model(
         parallel_output=False,  # Gather logits across TP for easy comparison
         position_embedding_type='rope',
     )
-    return model.cuda()
+    return model.to(get_current_device())
 
 
 def _build_mamba_model(
@@ -210,7 +210,7 @@ def _build_mamba_model(
         hybrid_layer_pattern=layer_pattern,
         position_embedding_type='rope',
     )
-    return model.cuda()
+    return model.to(get_current_device())
 
 
 # ---------------------------------------------------------------------------
