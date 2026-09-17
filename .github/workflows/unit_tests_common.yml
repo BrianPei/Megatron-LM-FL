@@ -149,7 +149,7 @@ jobs:
           ci_install_runtime_packages
 
       - name: Restore TE-FL wheel
-        if: inputs.te_fl_prepare
+        if: inputs.te_fl_prepare && inputs.te_fl_cache_key != ''
         id: te_fl_cache
         uses: actions/cache/restore@v4
         with:
@@ -157,7 +157,7 @@ jobs:
           key: ${{ inputs.te_fl_cache_key }}
 
       - name: Check TE-FL wheel cache
-        if: inputs.te_fl_prepare
+        if: inputs.te_fl_prepare && inputs.te_fl_cache_key != ''
         env:
           CACHE_HIT: ${{ steps.te_fl_cache.outputs.cache-hit }}
         run: |
@@ -168,7 +168,7 @@ jobs:
           fi
 
       - name: Install TE-FL wheel
-        if: inputs.te_fl_prepare
+        if: inputs.te_fl_prepare && inputs.te_fl_cache_key != ''
         env:
           TE_FL_WHEEL_DIR: ${{ github.workspace }}/te-fl-wheel
           TE_FL_INSTALL_PIP_ARGS_JSON: ${{ inputs.te_fl_install_pip_args }}
