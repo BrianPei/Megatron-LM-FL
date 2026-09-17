@@ -429,7 +429,7 @@ class TestDSAGPTMambaEquivalence:
 
         # ---- Create identical inputs on all ranks ----
         torch.manual_seed(99)
-        tokens = torch.randint(0, _VOCAB_SIZE, (_BATCH_SIZE, _SEQ_LEN), device='cuda')
+        tokens = torch.randint(0, _VOCAB_SIZE, (_BATCH_SIZE, _SEQ_LEN), device=get_current_device())
 
         # ---- Forward pass ----
         if pp == 1:
@@ -569,7 +569,7 @@ class TestDSAMoEGPTMambaEquivalence:
 
         # ---- Create identical inputs on all ranks ----
         torch.manual_seed(99)
-        tokens = torch.randint(0, _VOCAB_SIZE, (_BATCH_SIZE, _SEQ_LEN), device='cuda')
+        tokens = torch.randint(0, _VOCAB_SIZE, (_BATCH_SIZE, _SEQ_LEN), device=get_current_device())
 
         # ---- Forward pass ----
         if pp == 1:

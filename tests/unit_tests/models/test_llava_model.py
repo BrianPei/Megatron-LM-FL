@@ -22,7 +22,7 @@ from megatron.core.transformer.transformer_config import TransformerConfig
 from megatron.core.transformer.transformer_layer import TransformerLayer
 from megatron.core.utils import is_te_min_version
 from megatron.training.global_vars import set_args
-from tests.unit_tests.test_utilities import Utils
+from tests.unit_tests.test_utilities import Utils, get_current_device
 
 
 class TestLLaVAModel:
@@ -425,18 +425,18 @@ class TestLLaVAModel:
 
         # No image tag in the input ids (text-only sample).
         image_token_index = self.model.image_token_index
-        input_ids = torch.arange(1024, device="cuda").unsqueeze(0)
+        input_ids = torch.arange(1024, device=get_current_device()).unsqueeze(0)
         assert (
             torch.sum(input_ids == image_token_index) == 0
         ), "expected no image tag in the input ids"
 
-        position_ids = torch.arange(1024, device="cuda").unsqueeze(0)
+        position_ids = torch.arange(1024, device=get_current_device()).unsqueeze(0)
 
-        loss_mask = torch.ones((1, 1024), device="cuda")
+        loss_mask = torch.ones((1, 1024), device=get_current_device())
 
         attention_mask = None  # Causal.
 
-        labels = torch.arange(1, 1025, device="cuda").unsqueeze(0)
+        labels = torch.arange(1, 1025, device=get_current_device()).unsqueeze(0)
 
         # Mock the FSDP attribute.
         self.model.vision_model._is_fsdp_managed_module = True
@@ -642,20 +642,20 @@ class TestLLaVAModelTokenParallel:
         if cp_size > 1:
             combined_embeddings = torch.ones(
                 [self.batch_size, self.combined_padded_seqlen, 4096],
-                device='cuda',
+                device=get_current_device(),
                 dtype=torch.bfloat16,
             )  # [B, S, H]
         else:
             combined_embeddings = torch.ones(
                 [self.combined_padded_seqlen, self.batch_size, 4096],
-                device='cuda',
+                device=get_current_device(),
                 dtype=torch.bfloat16,
             )  # [S, B, H]
         new_labels = torch.ones(
-            [self.batch_size, self.combined_padded_seqlen], device='cuda', dtype=torch.bfloat16
+            [self.batch_size, self.combined_padded_seqlen], device=get_current_device(), dtype=torch.bfloat16
         )  # [B, S]
         new_loss_mask = torch.ones(
-            [self.batch_size, self.combined_padded_seqlen], device='cuda', dtype=torch.bfloat16
+            [self.batch_size, self.combined_padded_seqlen], device=get_current_device(), dtype=torch.bfloat16
         )  # [B, S]
 
         cu_seqlens = torch.arange(
