@@ -24,7 +24,7 @@ from megatron.core.transformer import TransformerConfig
 from megatron.core.transformer.moe.moe_layer import MoELayer, MoESubmodules
 from megatron.core.transformer.spec_utils import get_submodules
 from megatron.training.utils.common_utils import get_local_rank_preinit
-from tests.unit_tests.test_utilities import Utils
+from tests.unit_tests.test_utilities import Utils, cur_platform, get_current_device
 
 success_string = "hello,world"
 
