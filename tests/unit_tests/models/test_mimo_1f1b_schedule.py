@@ -87,7 +87,7 @@ def create_hypercomm_grid(offset=0, tp=1, cp=1, pp=1, dp=1):
         shape=[tp, cp, pp, dp, 1, 1],  # [tp, cp, pp, dp, ep, expt_dp]
         dim_names=["tp", "cp", "pp", "dp", "ep", "expt_dp"],
         rank_offset=offset,
-        backend="nccl",
+        backend=Utils.get_backend(),
     )
     grid.create_pg(["tp"])
     grid.create_pg(["cp"])

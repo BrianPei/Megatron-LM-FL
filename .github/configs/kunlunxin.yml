@@ -107,6 +107,12 @@ test_matrix:
       # metax and ascend are not affected as their communication libraries
       # handle teardown without memory corruption.
       - tests/unit_tests/test_parallel_state.py::test_get_tensor_model_parallel_src_rank
+      # SIGSEGV during reset_env_vars fixture teardown after FLOP accumulator tests.
+      # Root cause: FlagCX communicator teardown corrupts heap memory; when pytest
+      # calls os.environ.update() in conftest.py:170, it segfaults on the corrupted
+      # string storage. The tests themselves pass, but the fixture cleanup crashes
+      # the entire session (exitcode -11).
+      - tests/unit_tests/test_num_floating_point_operations.py::TestAccumulatorDistributed
       #models
       # Hangs during DDP initialization allocating 1.3B params per rank on XPU.
       - tests/unit_tests/models/test_heterogeneous_gpt_model.py

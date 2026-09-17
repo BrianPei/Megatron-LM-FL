@@ -95,14 +95,22 @@ class Utils:
             store = PrefixStore("default_pg", store)
             Utils.store = store
 
-            default_backend = 'mccl' if cur_platform.device_name() == 'musa' else 'nccl'
-            backend = os.getenv('DISTRIBUTED_BACKEND', default_backend)
             torch.distributed.init_process_group(
-                backend=backend, world_size=Utils.world_size, rank=Utils.rank, store=store
+                backend=Utils.get_backend(), world_size=Utils.world_size, rank=Utils.rank, store=store
             )
 
             torch.distributed.barrier()
         Utils.inited = True
+
+    @staticmethod
+    def get_backend():
+        """Get the appropriate distributed backend for the current platform.
+
+        Returns 'mccl' for MUSA, 'nccl' for all other platforms.
+        Can be overridden via DISTRIBUTED_BACKEND environment variable.
+        """
+        default_backend = 'mccl' if cur_platform.device_name() == 'musa' else 'nccl'
+        return os.getenv('DISTRIBUTED_BACKEND', default_backend)
 
     @staticmethod
     def set_world_size(world_size=None, rank=None):
