@@ -79,6 +79,9 @@ test_matrix:
       - tests/unit_tests/inference/test_flash_decode.py
       # ECCL communication exception: eccl ras detect coll exception
       - tests/unit_tests/tensor_parallel/test_cross_entropy_chunked.py::test_chunked_cross_entropy_label_smoothing
+      # ECCL communicator setup deadlock in torch.distributed.new_group(); same
+      # file already has one test failing, full distributed path unstable on GCU.
+      - tests/unit_tests/tensor_parallel/test_cross_entropy_chunked.py::test_chunked_cross_entropy_performance
       # LayerWise optimizer suites require the optional Emerging Optimizers package.
       - tests/unit_tests/test_layer_wise_optimizer.py
       - tests/unit_tests/dist_checkpointing/test_layer_wise_optimizer.py
@@ -320,6 +323,9 @@ test_matrix:
       # non-rank-0 ranks hit FileNotFoundError (file_0.idx) after the ECCL barrier; cross-rank
       # file visibility race on GCU (192 distributed cases, 144 fail). musa ignores it too.
       - tests/unit_tests/data/test_builder.py::test_fast_builder
+      # TE-FL vendor.enflame missing THD (thd_get_partitioned_indices) operator;
+      # SFT batch construction requires THD partitioning support.
+      - tests/unit_tests/data/test_get_batch.py::test_sft_batch
 
 
       # fusions
