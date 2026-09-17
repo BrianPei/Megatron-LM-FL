@@ -276,6 +276,9 @@ test_matrix:
       - tests/unit_tests/models/test_hybrid_model.py
       - tests/unit_tests/models/test_hybrid_moe_model.py
       - tests/unit_tests/models/test_mamba_moe_model.py
+      # TE-FL te_general_grouped_gemm shared memory requirement (80KB) exceeds
+      # BW1000 hardware limit (64KB); same MoE grouped GEMM boundary as above.
+      - tests/unit_tests/models/test_dsa_gpt_mamba_equivalence.py
 
       # fusions
       # TE-FL FlagGems backend missing rmsnorm_bwd_add operator.
