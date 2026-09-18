@@ -135,9 +135,11 @@ class Utils:
         # the default group available to tests that create their own subgroups.
         groups = tuple(ps._global_process_group_list or ())
         ps.destroy_model_parallel()
-        # MACA may abort while closing a stale device IPC handle during explicit
-        # subgroup destruction. Reset the Python-side references only on MetaX.
-        if os.getenv('MEGATRON_TEST_PLATFORM') == 'metax':
+        # MACA may abort while closing stale IPC handles. In the current Kunlunxin
+        # CI image, explicit subgroup shutdown can invalidate device handles used
+        # by the next test. Keep these groups registered until session teardown;
+        # parallel_state has already performed its normal reference and Gloo cleanup.
+        if os.getenv('MEGATRON_TEST_PLATFORM') in ('metax', 'kunlunxin'):
             return
         for group in groups:
             # Gloo groups may already have been destroyed by parallel_state.
