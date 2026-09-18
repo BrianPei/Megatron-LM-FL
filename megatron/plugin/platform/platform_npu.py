@@ -260,10 +260,14 @@ class PlatformNPU(PlatformBase):
         pass
 
     # Graph operations
+    def graph_pool_handle(self):
+        graph_pool_handle = getattr(torch_npu.npu, 'graph_pool_handle', None)
+        return graph_pool_handle() if graph_pool_handle is not None else None
+
     def create_graph(self):
         return torch.npu.NPUGraph()
 
-    def capture_to_graph(self, graph, pool=None, stream=None):
+    def capture_to_graph(self, graph, pool=None, stream=None, capture_error_mode=None):
         return torch.npu.graph(graph, pool, stream)
 
     def replay_graph(self, graph):

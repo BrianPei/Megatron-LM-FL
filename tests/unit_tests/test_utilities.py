@@ -135,6 +135,10 @@ class Utils:
         # the default group available to tests that create their own subgroups.
         groups = tuple(ps._global_process_group_list or ())
         ps.destroy_model_parallel()
+        # MACA may abort while closing a stale device IPC handle during explicit
+        # subgroup destruction. Reset the Python-side references only on MetaX.
+        if os.getenv('MEGATRON_TEST_PLATFORM') == 'metax':
+            return
         for group in groups:
             # Gloo groups may already have been destroyed by parallel_state.
             if group is not None and group in torch.distributed.distributed_c10d._world.pg_map:

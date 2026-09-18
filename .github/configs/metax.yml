@@ -287,7 +287,7 @@ test_matrix:
       # dynamic memory allocation or runtime-dependent launch params that violate
       # CUDA Graph constraints. TE-FL FlagOS backend wrapper may not handle graph
       # mode correctly. Warmup iteration succeeds; crash occurs when starting capture.
-      - tests/unit_tests/distributed/megatron_fsdp/test_mcore_fully_sharded_data_parallel.py::TestMcoreFullyShardedDataParallel::test_full_iteration_cuda_graph_e2e
+      - tests/unit_tests/distributed/megatron_fsdp/test_mcore_fully_sharded_data_parallel.py::TestMegatronFSDPE2E::test_full_iteration_cuda_graph_e2e
       # MACA multimodal context-parallel tests hit similar IPC/memory lifetime issues
       # as MIMO colocated tests above. Shared GPU memory across ranks experiences
       # cleanup race conditions or premature deallocation during teardown, leading

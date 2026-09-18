@@ -1359,7 +1359,7 @@ def _create_mock_platform(name):
         def create_graph(self):
             return None
 
-        def capture_to_graph(self, graph, pool=None, stream=None):
+        def capture_to_graph(self, graph, pool=None, stream=None, capture_error_mode=None):
             pass
 
         def replay_graph(self, graph):

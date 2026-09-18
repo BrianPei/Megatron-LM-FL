@@ -345,7 +345,7 @@ test_matrix:
 
 # TE-FL runtime configuration
 te_fl:
-  prepare: false
+  prepare: true
   build_mode: python
   build_environment:
     TE_FL_SKIP_CUDA: "1"
@@ -353,5 +353,5 @@ te_fl:
     environment:
       TE_FL_SKIP_CUDA: "1"
       TE_FL_PREFER: flagos
-    install_pip_args: [--ignore-requires-python, --no-deps]
-    pip_packages: [flag-gems]
+    install_pip_args: [--ignore-requires-python]
+    pip_packages: [flag-gems, sqlalchemy]

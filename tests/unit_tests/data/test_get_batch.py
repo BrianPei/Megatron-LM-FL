@@ -8,10 +8,14 @@ import torch
 
 from megatron.core import mpu
 from megatron.core.num_microbatches_calculator import destroy_num_microbatches_calculator
+from megatron.plugin.platform import get_platform
 from megatron.training.arguments import parse_args, validate_args
 from megatron.training.global_vars import destroy_global_vars, set_global_variables
 from pretrain_hybrid import get_batch
 from tests.unit_tests.test_utilities import Utils
+
+
+cur_platform = get_platform()
 
 
 def initialize_test_environment(
@@ -157,9 +161,9 @@ def create_sft_data_iterator(max_seq_length: int = 1024, cp_size: int = 1):
 @pytest.mark.parametrize("cp_size", [1, 2, 4, 8])
 @pytest.mark.parametrize("seq_length", [1024, 4096])
 def test_sft_batch(tp_size, pp_size, cp_size, seq_length):
-    if tp_size * pp_size * cp_size > torch.cuda.device_count():
+    if tp_size * pp_size * cp_size > cur_platform.device_count():
         pytest.skip(
-            f"Skipping test because tp_size * pp_size * cp_size > torch.cuda.device_count() ({tp_size * pp_size * cp_size} > {torch.cuda.device_count()})"
+            f"Skipping test because tp_size * pp_size * cp_size > cur_platform.device_count() ({tp_size * pp_size * cp_size} > {cur_platform.device_count()})"
         )
 
     global_batch_size = int(os.environ.get("WORLD_SIZE", 1)) // (tp_size * pp_size * cp_size)
@@ -389,9 +393,9 @@ def create_pretrain_data_iterator(
 def test_pretrain_batch(
     tp_size, pp_size, cp_size, seq_length, create_attention_mask, micro_batch_size
 ):
-    if tp_size * pp_size * cp_size > torch.cuda.device_count():
+    if tp_size * pp_size * cp_size > cur_platform.device_count():
         pytest.skip(
-            f"Skipping test because tp_size * pp_size * cp_size > torch.cuda.device_count() ({tp_size * pp_size * cp_size} > {torch.cuda.device_count()})"
+            f"Skipping test because tp_size * pp_size * cp_size > cur_platform.device_count() ({tp_size * pp_size * cp_size} > {cur_platform.device_count()})"
         )
     dp_size = int(os.environ.get("WORLD_SIZE", 1)) // (tp_size * pp_size * cp_size)
     global_batch_size = micro_batch_size * dp_size
@@ -622,9 +626,9 @@ def create_hybrid_cp_data_iterator(seq_length: int = 1024, cp_size: int = 1):
 @pytest.mark.parametrize("seq_length", [1024])
 @pytest.mark.parametrize("create_attention_mask", [False])
 def test_hybrid_cp_batch(tp_size, cp_size, seq_length, create_attention_mask):
-    if tp_size * cp_size > torch.cuda.device_count():
+    if tp_size * cp_size > cur_platform.device_count():
         pytest.skip(
-            f"Skipping test because tp_size * cp_size > torch.cuda.device_count() ({tp_size * cp_size} > {torch.cuda.device_count()})"
+            f"Skipping test because tp_size * cp_size > cur_platform.device_count() ({tp_size * cp_size} > {cur_platform.device_count()})"
         )
 
     initialize_test_environment(
