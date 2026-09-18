@@ -74,14 +74,21 @@ done <<< "$parsed_install_pip_args"
   "${install_pip_args[@]}" \
   "${wheels[0]}"
 
-# Disable torch backend autoloading when verifying the TE-FL import. Vendor backends
-# (torch_musa, torch_npu, etc.) may require vendor-specific Triton, which is installed
-# later by ci_install_runtime_packages(). The import check only validates that the
-# TE-FL wheel is installed correctly, not that all downstream dependencies are ready.
-TORCH_DEVICE_BACKEND_AUTOLOAD=0 "$python_bin" - <<'PY'
+# Do not import transformer_engine here. Importing the package registers Triton
+# autotuners, which can explicitly import a vendor backend (for example
+# torch_musa) before the runtime packages and vendor Triton are installed.
+# Verify the installed distribution without executing its runtime initialization.
+"$python_bin" - <<'PY'
+import importlib.metadata
+import importlib.util
 import sys
-import transformer_engine
+
+distribution = importlib.metadata.distribution("transformer-engine")
+module = importlib.util.find_spec("transformer_engine")
+if module is None:
+    raise SystemExit("transformer_engine package was not installed")
 
 print(f"TE-FL Python: {sys.executable}")
-print(f"TE-FL wheel import passed: {transformer_engine.__file__}")
+print(f"TE-FL distribution: {distribution.version}")
+print(f"TE-FL package: {module.origin}")
 PY

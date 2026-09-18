@@ -24,7 +24,11 @@ from megatron.core.tensor_parallel.cross_entropy import (
     vocab_parallel_cross_entropy,
     vocab_parallel_cross_entropy_chunked,
 )
-from tests.unit_tests.test_utilities import Utils
+from megatron.plugin.platform import get_platform
+from tests.unit_tests.test_utilities import Utils, get_current_device
+
+
+cur_platform = get_platform()
 
 
 # ---------------------------------------------------------------------------
@@ -55,11 +59,13 @@ def _generate_inputs(
     logits_gen = torch.Generator(device="cpu").manual_seed(seed + tp_rank)
     logits = torch.randn(
         seq_len, batch_size, partition_size, generator=logits_gen, dtype=dtype
-    ).cuda()
+    ).to(get_current_device())
 
     # Targets must match across TP ranks regardless of their logits RNG state.
     target_gen = torch.Generator(device="cpu").manual_seed(seed)
-    target = torch.randint(0, vocab_size, (seq_len, batch_size), generator=target_gen).cuda()
+    target = torch.randint(0, vocab_size, (seq_len, batch_size), generator=target_gen).to(
+        get_current_device()
+    )
 
     return logits, target
 
@@ -83,9 +89,9 @@ def _measure_peak_memory(
             result.sum().backward()
 
     # Reset peak stats
-    torch.cuda.synchronize()
-    torch.cuda.reset_peak_memory_stats()
-    mem_before = torch.cuda.memory_allocated()
+    cur_platform.synchronize()
+    cur_platform.reset_peak_memory_stats()
+    mem_before = cur_platform.memory_allocated()
 
     # Forward
     result = fn(*args, **kwargs)
@@ -93,8 +99,8 @@ def _measure_peak_memory(
     if result.requires_grad:
         result.sum().backward()
 
-    torch.cuda.synchronize()
-    peak_memory = torch.cuda.max_memory_allocated() - mem_before
+    cur_platform.synchronize()
+    peak_memory = cur_platform.max_memory_allocated() - mem_before
 
     return result, peak_memory / (1024 * 1024)  # Convert to MiB
 
@@ -118,14 +124,14 @@ def _measure_time(
         if result.requires_grad:
             result.sum().backward()
 
-    torch.cuda.synchronize()
+    cur_platform.synchronize()
     times = []
     for _ in range(repeats):
         start = time.perf_counter()
         result = fn(*args, **kwargs)
         if result.requires_grad:
             result.sum().backward()
-        torch.cuda.synchronize()
+        cur_platform.synchronize()
         times.append((time.perf_counter() - start) * 1000)
 
     avg_time_ms = sum(times) / len(times)
