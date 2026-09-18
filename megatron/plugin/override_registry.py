@@ -197,3 +197,9 @@ register(
     impl="megatron.plugin.mthreads.distributed.fsdp.uneven_dtensor.uneven_dtensor_to_full_tensor",
     vendor="musa",
 )
+
+register(
+    target="megatron.core.distributed.fsdp.src.megatron_fsdp.param_and_grad_buffer.gradient_reduce_preprocessing",
+    impl="megatron.plugin.mthreads.distributed.fsdp.param_and_grad_buffer.gradient_reduce_preprocessing",
+    vendor="musa",
+)
