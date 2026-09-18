@@ -157,12 +157,7 @@ class Utils:
         try:
             # Flush pending device work before tearing down process groups.
             cur_platform.synchronize()
-            if os.getenv('MEGATRON_TEST_PLATFORM') != 'kunlunxin':
-                torch.distributed.barrier()
-            # XMLIR maps the default NCCL-compatible barrier to an XCCL
-            # ALLREDUCE. KunLunXin can abort here while a rank is already
-            # entering the next test's process-group setup, so release the
-            # model-parallel groups without this teardown collective.
+            torch.distributed.barrier()
         except Exception:
             Utils.inited = False
             return
