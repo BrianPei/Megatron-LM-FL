@@ -165,9 +165,13 @@ def reset_env_vars():
     # Run the test
     yield
 
-    # After the test, restore the original environment
-    os.environ.clear()
-    os.environ.update(original_env)
+    # Restore only changed entries. Clearing the whole environment temporarily
+    # removes runtime settings that native communication threads may still read.
+    for name in os.environ.keys() - original_env.keys():
+        del os.environ[name]
+    for name, value in original_env.items():
+        if os.environ.get(name) != value:
+            os.environ[name] = value
 
 
 @pytest.fixture(autouse=True)
@@ -190,4 +194,3 @@ def cleanup_gpu_memory():
         # Fallback to torch.cuda if platform abstraction not available
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
-

@@ -160,6 +160,15 @@ test_matrix:
       - tests/unit_tests/models/test_clip_vit_model.py::TestCLIPViTModel::test_forward
       # TE-FL flaky: 8 FAILED then partial PASSED (Enflame-specific)
       - tests/unit_tests/models/test_clip_vit_model.py::TestCLIPViTModel::test_set_input_tensor
+      # dev-enflame-py3.12-202609151435 has no working grouped GEMM:
+      # FlagGems gcu.matmul compilation fails with an operandSegmentSizes mismatch,
+      # and vendor.enflame cannot import migration.patches.transformer_engine.
+      # TE reference has no grouped GEMM fallback, so these MoE forward tests fail.
+      # Keep strict weight-loading tests, which do not execute grouped GEMM.
+      # Re-enable after repairing the image dependencies/compiler and validating
+      # grouped GEMM on S60 with these model/parallelism configurations.
+      - tests/unit_tests/models/test_dsa_gpt_mamba_equivalence.py::TestDSAMoEGPTMambaEquivalence::test_dsa_moe_logprobs_match
+      - tests/unit_tests/models/test_dsa_gpt_mamba_equivalence.py::TestDSAMoEGPTMambaEquivalence::test_moe_record_and_compare_golden_values
       # ECCL deadlock: rank 2 runtime launch counter mismatch; same as ascend/metax
       - tests/unit_tests/models/test_heterogeneous_gpt_model.py
       # flash_attn not available on GCU; collection error during import
@@ -174,6 +183,13 @@ test_matrix:
       - tests/unit_tests/models/test_mamba_moe_model.py
       - tests/unit_tests/models/test_mimo_1f1b_schedule.py
       - tests/unit_tests/models/test_mimo_checkpoint.py
+      # dev-enflame-py3.12-202609151435 cannot load vendor FlashAttention:
+      # migration.patches.transformer_engine is missing. FlagGems rejects FP32,
+      # so these FP32 training cases fall back to PyTorch GCU efficient SDPA,
+      # whose backward aborts with TOPSATEN_STATUS_NOT_SUPPORT (unsupported dtype).
+      # Re-enable all eight variants after fixing the image/vendor dependencies
+      # and validating FP32 attention forward/backward without a TE math workaround.
+      - tests/unit_tests/models/test_mimo_colocated_correctness.py::TestColocatedGradientScalingCorrectness::test_dist_matches_dp1_reference_post_step_weights
       # TE-FL vendor.enflame layernorm_fwd DType error + tensors on different GCU devices; same as musa
       - tests/unit_tests/models/test_mimo_submodules.py
       - tests/unit_tests/models/test_multimodal_projector.py::TestMultimodalProjector::test_forward
