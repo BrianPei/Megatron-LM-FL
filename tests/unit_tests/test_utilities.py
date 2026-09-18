@@ -23,11 +23,11 @@ def get_current_device():
 
 
 def get_device_str():
-    """Get current accelerator device as string (e.g., 'cuda', 'xpu', 'npu').
+    """Get current accelerator device type as string (e.g., 'cuda', 'xpu', 'npu').
 
-    Returns device name for the active platform.
+    Returns device type without index, matching tensor.device.type behavior.
     """
-    return cur_platform.device_name(cur_platform.current_device())
+    return cur_platform.device_name()
 
 
 class TestModel(torch.nn.Module):
