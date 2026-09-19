@@ -9,11 +9,13 @@
 #   pytest -xvs tests/unit_tests/tensor_parallel/test_cross_entropy_chunked.py
 
 
-import sys
 import os
+import sys
 import time
+import weakref
 from typing import Tuple
 
+import pytest
 import torch
 
 # Add project root to path so 'tests' package is importable
@@ -21,12 +23,12 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', '..'))
 
 from megatron.core import parallel_state
 from megatron.core.tensor_parallel.cross_entropy import (
+    _VocabParallelCrossEntropyChunked,
     vocab_parallel_cross_entropy,
     vocab_parallel_cross_entropy_chunked,
 )
 from megatron.plugin.platform import get_platform
 from tests.unit_tests.test_utilities import Utils, get_current_device
-
 
 cur_platform = get_platform()
 
@@ -141,6 +143,43 @@ def _measure_time(
 # ---------------------------------------------------------------------------
 # Test 1: Correctness — chunked output matches baseline
 # ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("label_smoothing", [0.0, 0.1])
+def test_chunked_backward_releases_previous_chunk(monkeypatch, label_smoothing):
+    """Backward must release each fp32 chunk before recomputing the next one."""
+    Utils.initialize_model_parallel(tensor_model_parallel_size=4)
+    try:
+        logits, target = _generate_inputs(5, 1, 32, 4)
+        logits.requires_grad_(True)
+        loss = vocab_parallel_cross_entropy_chunked(
+            logits, target, label_smoothing=label_smoothing, chunk_size=2
+        )
+        run_chunk = _VocabParallelCrossEntropyChunked._run_chunk_forward
+        softmax_refs = []
+
+        def checked_run_chunk(*args, **kwargs):
+            assert all(ref() is None for ref in softmax_refs), (
+                "Previous backward chunk is still alive during recomputation"
+            )
+            result = run_chunk(*args, **kwargs)
+            softmax_refs.append(weakref.ref(result[0]))
+            return result
+
+        # Only instrument backward recomputation, not the original forward.
+        with monkeypatch.context() as patch:
+            patch.setattr(
+                _VocabParallelCrossEntropyChunked,
+                "_run_chunk_forward",
+                staticmethod(checked_run_chunk),
+            )
+            loss.sum().backward()
+
+        assert len(softmax_refs) == 3
+        assert all(ref() is None for ref in softmax_refs)
+        assert logits.grad is not None
+    finally:
+        Utils.destroy_model_parallel()
+
 
 def test_chunked_cross_entropy_correctness():
     """Verify chunked cross entropy produces identical results to baseline."""
