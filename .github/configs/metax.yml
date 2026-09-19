@@ -282,11 +282,9 @@ test_matrix:
       # multi-process shared memory cleanup, causing SIGABRT in all 8 ranks.
       # fan_in configurations reliably trigger; fan_out sometimes passes.
       - tests/unit_tests/models/test_mimo_colocated_correctness.py
-      # MACA FlashAttention kernel incompatible with CUDA Graph capture: SIGSEGV at
-      # flash_attn_interface.py:132 during graph recording. Suspect FA kernel uses
-      # dynamic memory allocation or runtime-dependent launch params that violate
-      # CUDA Graph constraints. TE-FL FlagOS backend wrapper may not handle graph
-      # mode correctly. Warmup iteration succeeds; crash occurs when starting capture.
+      # MetaX FlashAttention 2.6.3 crashes during graph capture with dropout=0.1.
+      # A standalone SDPA reproducer passes with dropout=0 or the math backend.
+      # Keep both FSDP variants disabled until the dropout capture path is supported.
       - tests/unit_tests/distributed/megatron_fsdp/test_mcore_fully_sharded_data_parallel.py::TestMegatronFSDPE2E::test_full_iteration_cuda_graph_e2e
       # MACA multimodal context-parallel tests hit similar IPC/memory lifetime issues
       # as MIMO colocated tests above. Shared GPU memory across ranks experiences
