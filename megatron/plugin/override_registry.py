@@ -203,3 +203,9 @@ register(
     impl="megatron.plugin.mthreads.distributed.fsdp.param_and_grad_buffer.gradient_reduce_preprocessing",
     vendor="musa",
 )
+
+# Shared FSDP optimizer compatibility.
+register(
+    target="megatron.core.distributed.fsdp.src.megatron_fsdp.fully_shard._configure_optimizer_for_dtensor_meshes",
+    impl="megatron.plugin.distributed.fsdp.fully_shard._configure_optimizer_for_dtensor_meshes",
+)
