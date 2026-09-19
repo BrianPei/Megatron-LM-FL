@@ -2,6 +2,7 @@
 """Exercise FSDP plugin dispatch and compatibility policies without GPU kernels."""
 
 import importlib
+from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
@@ -11,8 +12,12 @@ from torch.distributed.tensor import DTensor
 from megatron.core.distributed.fsdp.src.megatron_fsdp.fully_shard import (
     _configure_optimizer_for_dtensor_meshes,
 )
+from megatron.core.distributed.fsdp.src.megatron_fsdp.param_and_grad_buffer import (
+    _get_communication_stream,
+)
 from megatron.plugin import decorators, override_registry
 from megatron.plugin.distributed.fsdp import fully_shard as optimizer_plugin
+from megatron.plugin.metax.distributed.fsdp import param_and_grad_buffer as stream_plugin
 from megatron.plugin.platform import platform_manager
 
 
@@ -33,6 +38,52 @@ def select_platform(monkeypatch, name, maca):
     monkeypatch.setattr(platform_manager, "cur_platform", platform)
     monkeypatch.setattr(torch.version, "maca", maca, raising=False)
     return platform
+
+
+@pytest.mark.parametrize(
+    "platform,maca,preferred,expected",
+    [
+        ("cuda", "3.3.0.2", None, "metax"),
+        ("cuda", None, None, "cuda"),
+        ("kunlunxin", "3.3.0.2", None, "kunlunxin"),
+        ("musa", None, None, "musa"),
+        ("cpu", "3.3.0.2", None, "cpu"),
+        ("cuda", "3.3.0.2", " CUDA ", "cuda"),
+        ("cuda", "3.3.0.2", "musa", "musa"),
+        ("cuda", "3.3.0.2", "", None),
+    ],
+)
+def test_vendor_selection(monkeypatch, platform, maca, preferred, expected):
+    select_platform(monkeypatch, platform, maca)
+    if preferred is not None:
+        monkeypatch.setenv("MG_FL_PREFER", preferred)
+    assert decorators._get_preferred_vendor() == expected
+
+
+@pytest.mark.parametrize("graph_mode", [False, True])
+@pytest.mark.parametrize(
+    "maca,preferred", [("3.3.0.2", None), (None, None), (None, ""), ("3.3.0.2", "cuda")]
+)
+def test_stream_policy_dispatch(monkeypatch, graph_mode, maca, preferred):
+    platform = select_platform(monkeypatch, "cuda", maca)
+    if preferred is not None:
+        monkeypatch.setenv("MG_FL_PREFER", preferred)
+    # The core module retains its selected platform; both views must agree.
+    core = importlib.import_module(_get_communication_stream.__module__)
+    monkeypatch.setattr(core, "cur_platform", platform)
+    config = SimpleNamespace(megatron_fsdp_cuda_graph_mode=graph_mode)
+    communication_stream = object()
+    warmup_stream, capture_stream = object(), object()
+    uses_current_stream = bool(maca) and graph_mode and preferred != "cuda"
+    for current_stream in (warmup_stream, capture_stream):
+        platform.current_stream.return_value = current_stream
+        result = _get_communication_stream(communication_stream, config)
+        assert result is (current_stream if uses_current_stream else communication_stream)
+        assert _get_communication_stream(None, config) is current_stream
+    if maca and preferred is None:
+        assert decorators._plugin_impl_cache[_get_communication_stream.__wrapped__] is (
+            stream_plugin._get_communication_stream
+        )
 
 
 @pytest.mark.parametrize("modern_torch", [False, True])

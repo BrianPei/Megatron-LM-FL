@@ -204,8 +204,14 @@ register(
     vendor="musa",
 )
 
-# Shared FSDP optimizer compatibility.
+# Shared FSDP optimizer compatibility and MetaX graph stream policy.
 register(
     target="megatron.core.distributed.fsdp.src.megatron_fsdp.fully_shard._configure_optimizer_for_dtensor_meshes",
     impl="megatron.plugin.distributed.fsdp.fully_shard._configure_optimizer_for_dtensor_meshes",
+)
+
+register(
+    target="megatron.core.distributed.fsdp.src.megatron_fsdp.param_and_grad_buffer._get_communication_stream",
+    impl="megatron.plugin.metax.distributed.fsdp.param_and_grad_buffer._get_communication_stream",
+    vendor="metax",
 )
