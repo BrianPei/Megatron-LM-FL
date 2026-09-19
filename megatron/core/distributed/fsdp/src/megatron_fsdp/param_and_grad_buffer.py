@@ -111,6 +111,12 @@ except ImportError:
 NCCL_MEMORY_POOL = None
 
 
+@overridable
+def _get_communication_stream(stream, ddp_config):
+    """Resolve the communication stream for the current FSDP operation."""
+    return cur_platform.current_stream() if stream is None else stream
+
+
 def _p_assert(cond: Any, s: str, raise_assertion_error: bool = True) -> None:
     """Alternate to ``assert`` when in the backward context to print the error
     message ``s`` since otherwise, it is swallowed.
@@ -3568,7 +3574,7 @@ class GradReducePipeline:
             if len(double_buf_units) > 1:
                 keep_n -= 1
 
-        with torch.cuda.stream(self.rs_stream):
+        with cur_platform.stream(_get_communication_stream(self.rs_stream, self.buffer.ddp_config)):
             self.wait_for_previous_grad_reduce(keep_n)
 
     def get_ready_bucket_group_for_reduction(self, bucket_id: int) -> Optional[List[int]]:
@@ -3629,9 +3635,7 @@ class GradReducePipeline:
             self._enforce_double_buffer_limit(bucket_group)
 
         current_stream = cur_platform.current_stream()  # FlagScale Modify
-        reduce_scatter_stream = (
-            self.rs_stream if self.rs_stream is not None else cur_platform.current_stream()  # FlagScale Modify
-        )
+        reduce_scatter_stream = _get_communication_stream(self.rs_stream, ddp_config)
         reduce_scatter_stream.wait_stream(current_stream)
 
         # DP-Shard Gradient Reduction
@@ -3728,9 +3732,12 @@ class GradReducePipeline:
         # DP-Outer Gradient Reduction
         if outer_fsdp_group_grad_reduce:
             # Wait on the DP-Shard reduction before further reduction.
-            self.outer_fsdp_group_grad_reduce_stream.wait_stream(reduce_scatter_stream)
+            outer_reduce_stream = _get_communication_stream(
+                self.outer_fsdp_group_grad_reduce_stream, ddp_config
+            )
+            outer_reduce_stream.wait_stream(reduce_scatter_stream)
             outer_fsdp_group = self.buffer.dist_index.get_outer_fsdp_group()
-            with cur_platform.stream(self.outer_fsdp_group_grad_reduce_stream):  # FlagScale Modify
+            with cur_platform.stream(outer_reduce_stream):
                 with _coalescing_manager(outer_fsdp_group):
                     # List of gradient accumulation closure tasks.
                     # (grad_buffer, reduced_grad)
@@ -3816,7 +3823,7 @@ class GradReducePipeline:
                     # No accumulation should happen in the (DP-Shard, DP-Outer) gradient buffer.
                     main_grad_buffer.copy_(reduced_grad)
 
-            reduce_scatter_view_out_event = self.outer_fsdp_group_grad_reduce_stream.record_event()
+            reduce_scatter_view_out_event = outer_reduce_stream.record_event()
 
         free_up_grad_bucket_func = {}
         for bucket_id in bucket_group:
@@ -4118,14 +4125,15 @@ class AllGatherPipeline:
 
         # Coalesce all-gather operations for all buckets in the same data-parallel-group
         for _, buckets in bucket_group_to_buckets.items():
-            all_gather_stream = (
-                self.ag_stream if self.ag_stream is not None else cur_platform.current_stream()  # FlagScale Modify
-            )
+            all_gather_stream = _get_communication_stream(self.ag_stream, self.buffer.ddp_config)
             if outer_fsdp_group_param_gather:
                 ######## FlagScale Begin ########
-                self.outer_fsdp_group_param_gather_stream.wait_stream(cur_platform.current_stream())
-                with cur_platform.stream(self.outer_fsdp_group_param_gather_stream):
-                ######## FlagScale End ########
+                outer_gather_stream = _get_communication_stream(
+                    self.outer_fsdp_group_param_gather_stream, self.buffer.ddp_config
+                )
+                outer_gather_stream.wait_stream(cur_platform.current_stream())
+                with cur_platform.stream(outer_gather_stream):
+                    ######## FlagScale End ########
                     is_expert_parallel = parameter_groups[buckets[0]].is_expert_param
                     outer_fsdp_group = self.buffer.dist_index.get_outer_fsdp_group(
                         is_expert_parallel=is_expert_parallel
@@ -4143,7 +4151,7 @@ class AllGatherPipeline:
                                 group=outer_fsdp_group,
                             )
                 # Wait for the DP-Outer group all-gather to finish.
-                all_gather_stream.wait_stream(self.outer_fsdp_group_param_gather_stream)
+                all_gather_stream.wait_stream(outer_gather_stream)
 
             # Coalesce the asynchronous NCCL operations in this context.
             all_gather_stream.wait_stream(cur_platform.current_stream())  # FlagScale Modify
