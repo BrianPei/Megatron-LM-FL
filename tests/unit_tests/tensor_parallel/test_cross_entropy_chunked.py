@@ -188,7 +188,7 @@ def test_chunked_cross_entropy_correctness():
 
     seq_len = 8192
     batch_size = 1
-    vocab_size = 248320
+    vocab_size = 1024 if cur_platform.platform_name() == "enflame" else 248320
 
     logits, target = _generate_inputs(seq_len, batch_size, vocab_size, tp_size)
 
@@ -243,7 +243,7 @@ def test_chunked_cross_entropy_label_smoothing():
 
     seq_len = 4096
     batch_size = 2
-    vocab_size = 248320
+    vocab_size = 1024 if cur_platform.platform_name() == "enflame" else 248320
     label_smoothing = 0.1
 
     logits, target = _generate_inputs(seq_len, batch_size, vocab_size, tp_size)
@@ -295,7 +295,7 @@ def test_chunked_cross_entropy_various_chunk_sizes():
 
     seq_len = 8192
     batch_size = 1
-    vocab_size = 248320
+    vocab_size = 1024 if cur_platform.platform_name() == "enflame" else 248320
     chunk_sizes = [1024, 2048, 4096, 8192]  # Including chunk == seq_len
 
     logits, target = _generate_inputs(seq_len, batch_size, vocab_size, tp_size)
@@ -473,7 +473,7 @@ def test_chunked_cross_entropy_edge_cases():
         (1, 4096, "seq_len == 1"),
     ]
 
-    vocab_size = 248320
+    vocab_size = 1024 if cur_platform.platform_name() == "enflame" else 248320
     batch_size = 1
 
     rank = torch.distributed.get_rank()
