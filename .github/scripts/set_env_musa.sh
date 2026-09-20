@@ -68,6 +68,11 @@ prepare_musa_te_runtime() {
 
 install_musa_tensorboard() {
   # Preserve the image-provided Torch/MUSA, NumPy, and protobuf versions.
+  # tensorboard is installed --no-deps below, but absl-py is a hard runtime
+  # dependency (tensorboard.compat.tensorflow_stub.flags does `from absl.flags
+  # import *`) and is not preinstalled in the MUSA image. Install it explicitly
+  # so the SummaryWriter/event_accumulator validation below does not fail.
+  python3 -m pip install absl-py --no-cache-dir
   python3 -m pip install "tensorboard==2.17.1" --no-deps --no-cache-dir
   python3 -c \
     "from torch.utils.tensorboard import SummaryWriter; from tensorboard.backend.event_processing import event_accumulator; print('MUSA TensorBoard writer and reader validated')"
