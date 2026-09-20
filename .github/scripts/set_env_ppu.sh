@@ -31,12 +31,41 @@ device_count=$("$CI_PYTHON_BIN" -c 'import torch; print(torch.cuda.device_count(
   awk '/^[0-9]+$/ { count = $0 } END { print count }')
 ci_validate_device_capacity "$device_count"
 
-for asset in datasets tokenizers; do
-  if [ ! -d "/opt/data/$asset" ] || [ -z "$(ls -A "/opt/data/$asset")" ]; then
-    echo "::error::Missing /opt/data/$asset; build the completed PPU CI image first" >&2
-    exit 1
-  fi
-done
+# Validate the mounted fixtures before pytest; nonempty directories are insufficient.
+"$CI_PYTHON_BIN" - /opt/data <<'PY'
+import sys
+from pathlib import Path
+
+from transformers import AutoTokenizer
+
+root = Path(sys.argv[1])
+required_files = (
+    "datasets/fim/fim_text_document.bin",
+    "datasets/fim/fim_text_document.idx",
+    "tokenizers/sentencepiece/tokenizer.model",
+    "tokenizers/megatron/gpt2-vocab.json",
+    "tokenizers/megatron/gpt2-merges.txt",
+    "tokenizers/tiktoken/tiktoken.vocab.json",
+)
+missing = [
+    str(root / name)
+    for name in required_files
+    if not (root / name).is_file() or (root / name).stat().st_size == 0
+]
+if missing:
+    raise SystemExit("::error::Missing or empty PPU test assets: " + ", ".join(missing))
+
+for name in ("huggingface", "multimodal"):
+    path = root / "tokenizers" / name
+    if not path.is_dir():
+        raise SystemExit(f"::error::Missing PPU tokenizer fixture: {path}")
+    try:
+        AutoTokenizer.from_pretrained(str(path), local_files_only=True)
+    except Exception as error:
+        raise SystemExit(f"::error::Cannot load local PPU tokenizer fixture {path}: {error}")
+
+print(f"PPU test assets validated: {root}")
+PY
 
 # Install only the checked-out Megatron source. Never resolve the vendor stack here.
 ci_install_project
