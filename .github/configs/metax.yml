@@ -324,6 +324,10 @@ te_fl:
     environment:
       TE_FL_SKIP_CUDA: "1"
       TE_FL_PREFER: flagos
+      # Vendor softmax supports FP16/BF16 only; unfused attention uses FP32.
+      # Reference softmax avoids the FlagGems broadcast-mask kernel issue.
+      # Vendor l2norm returns the one-element tensor expected by Megatron.
+      TE_FL_PER_OP: "scaled_masked_softmax_forward=reference;scaled_masked_softmax_backward=reference;multi_tensor_l2norm=impl:vendor.metax"
     install_pip_args: []
     # MetaX Triton is supplied by the image; no public triton-metax package is
     # available from the runtime Python index.
