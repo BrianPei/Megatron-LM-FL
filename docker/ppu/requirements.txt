@@ -1,0 +1,26 @@
+# Additional build/test dependencies installed in the manual container.
+# Inherited image dependencies are retained; this is not a complete pip lock.
+packaging==26.3
+PyYAML==6.0.1
+sqlalchemy==2.0.54
+pytest==8.3.5
+coverage==7.16.1
+pytest-mock==3.15.1
+mock==5.2.0
+pytest-cov==7.1.0
+pytest-random-order==1.2.0
+pytest-asyncio==0.26.0
+pygithub==2.10.0
+flask-restful==0.3.10
+wandb==0.30.0
+tensorstore==0.1.85
+zarr==2.18.7
+boto3==1.43.98
+nltk==3.9.4
+msgpack==1.0.8
+httpx==0.28.1
+openai==1.107.3
+hatchling==1.32.3
+pybind11==3.0.4
+setuptools-scm==10.2.3
+nvdlfw-inspect==0.2.2

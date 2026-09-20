@@ -1,0 +1,11 @@
+# Runtime contract from the 2026-09-20 manual container. Do not replace vendor Torch/Triton.
+torch==2.10.0
+triton==3.5.0+gitcc5446cf
+numpy==1.26.0
+transformer-engine==2.17.0+3d077fe
+flag-gems==0.0+g649ee9a34
+mamba-ssm==2.3.1+v0.1.0.ppu2.1.0.ce
+causal-conv1d==1.6.2.post1+v0.1.0.ppu2.1.0.ce
+nvidia-modelopt==0.45.0
+pulp==3.3.2
+pytest==8.3.5

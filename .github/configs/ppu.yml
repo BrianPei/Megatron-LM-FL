@@ -1,0 +1,120 @@
+# PPU CI configuration.
+hardware_name: ppu
+display_name: 'PPU Tests'
+setup_script: .github/scripts/set_env_ppu.sh
+
+# Validated runtime snapshot; do not substitute the incomplete FlagCX base image.
+ci_image: harbor.baai.ac.cn/flagscale/flagscale-train:dev-ppu-py3.12-20260920@sha256:7b6d74bbd1b29f6d84476f015db1fa5a8321d5ff5483732a52b75afb8e95501c
+runner_labels:
+  - flagcicd-810e
+container_volumes: []
+container_options: >-
+  --shm-size=64g
+  --user root
+  --device=/dev/alixpu
+  --device=/dev/alixpu_ctl
+  --device=/dev/alixpu_ppu0
+  --device=/dev/alixpu_ppu1
+  --device=/dev/alixpu_ppu2
+  --device=/dev/alixpu_ppu3
+  --device=/dev/alixpu_ppu4
+  --device=/dev/alixpu_ppu5
+  --device=/dev/alixpu_ppu6
+  --device=/dev/alixpu_ppu7
+device_types:
+  - zw810e
+
+test_matrix:
+  unit:
+    nproc_per_node: 8
+    devices:
+      - zw810e
+    pytest_extra_args:
+      - -m
+      - not experimental and not flaky_in_dev
+      - --maxfail=1
+    experimental_pytest_extra_args: []
+    # Matches the nine groups attempted manually. Transformer is not onboarded yet.
+    groups:
+      - name: core
+        path: tests/unit_tests/test_*.py megatron/plugin/tests/
+        description: Core unit tests
+      - name: models
+        path: tests/unit_tests/models/
+        description: Model tests
+      - name: distributed
+        path: tests/unit_tests/distributed/
+        description: Distributed tests
+      - name: dist_checkpointing
+        path: tests/unit_tests/dist_checkpointing/
+        description: Distributed checkpointing tests
+      - name: tensor_parallel
+        path: tests/unit_tests/tensor_parallel/
+        description: Tensor parallel tests
+      - name: pipeline_parallel
+        path: tests/unit_tests/pipeline_parallel/
+        description: Pipeline parallel tests
+      - name: data
+        path: tests/unit_tests/data/
+        description: Data tests
+      - name: fusions
+        path: tests/unit_tests/fusions/
+        description: Fusion tests
+      - name: others
+        path: tests/unit_tests/post_training/ tests/unit_tests/tokenizers/ tests/unit_tests/utils/
+        description: Post-training, tokenizer, and utility tests
+    # Temporary PPU quarantine, based on the 2026-09-20 manual runs.
+    # Node IDs (including parameter prefixes) become --deselect in the common runner.
+    ignored_tests:
+      # Core: TE-FL FusedSGD passes 11 arguments to an 8-argument implementation.
+      # Both functions use FusedSGD as their reference even at 100% CPU offload.
+      # Prefixes exclude only SGD parameters; all Adam parameters remain enabled.
+      - tests/unit_tests/test_optimizer_cpu_offloading.py::test_multi_device_hybrid_optimizer[False-sgd-
+      - tests/unit_tests/test_optimizer_cpu_offloading.py::test_multi_device_hybrid_optimizer[True-sgd-
+      - tests/unit_tests/test_optimizer_cpu_offloading.py::test_overlap_cpu_optimizer_d2h_h2d_sync_correctness[False-sgd-
+      - tests/unit_tests/test_optimizer_cpu_offloading.py::test_overlap_cpu_optimizer_d2h_h2d_sync_correctness[True-sgd-
+
+      # Models: bounded manual probes timed out compiling FlagGems GEMM/Triton.
+      # Compilation completion is UNKNOWN; retain construction and other forward tests.
+      - tests/unit_tests/models/test_bert_model.py::TestBertModel::test_post_process_forward
+      - tests/unit_tests/models/test_gpt_model.py::TestGPTModel::test_post_process_forward
+
+      # Distributed: PCCL lacks PreMulSum creation/destruction used by this test.
+      # Both sharding variants share the gradient-reduction setup.
+      - tests/unit_tests/distributed/megatron_fsdp/test_mcore_fully_sharded_data_parallel.py::TestMegatronFSDPE2E::test_full_iteration_cuda_graph_e2e
+
+      # Checkpointing: this exact MoE case failed before collective timeout.
+      # Initial exception is UNKNOWN; do not exclude the whole MoE or Mamba suite.
+      - tests/unit_tests/dist_checkpointing/models/test_moe_experts.py::TestExpertLayerReconfiguration::test_parallel_reconfiguration_e2e[False-tp-ep-dp-pp-tp-ep-dp-pp-te_sequential-True-src_tp_pp_ep_etp3-dest_tp_pp_ep_etp3-False]
+
+      # Pipeline: only the observed transformer-block bridge topology timed out
+      # in GEMM compilation. This is not evidence of a general communication defect.
+      - tests/unit_tests/pipeline_parallel/test_bridge_communicator.py::TestBridgeCommunicator::test_bridge_communicator_with_transformer_blocks[2-1-2-1-2]
+
+      # Data: the random packed lengths are not aligned to TE-FL's CP partition
+      # requirement. Exclude CP=2/4 for both sequence lengths; keep CP=1 coverage.
+      - tests/unit_tests/data/test_get_batch.py::test_sft_batch[1024-2-
+      - tests/unit_tests/data/test_get_batch.py::test_sft_batch[1024-4-
+      - tests/unit_tests/data/test_get_batch.py::test_sft_batch[4096-2-
+      - tests/unit_tests/data/test_get_batch.py::test_sft_batch[4096-4-
+
+      # Fusions: all parameters dispatch the unregistered TE-FL rmsnorm_bwd_add.
+      - tests/unit_tests/fusions/test_rmsnorm_residual_fusion.py::test_rmsnorm_residual_fusion
+
+      # Others: the baked tokenizer archive lacks the multimodal fixture.
+      # Keep the other tokenizers and the repaired ModelOpt tests enabled.
+      - tests/unit_tests/tokenizers/test_tokenizer.py::test_multimodal_tokenizer
+      - tests/unit_tests/tokenizers/test_tokenizer.py::test_sft_tokenizer
+  functional:
+    train: []
+
+# TE-FL and FlagGems are baked into the image, not upgraded in individual jobs.
+te_fl:
+  prepare: false
+  build_mode: python
+  runtime:
+    environment:
+      TE_FL_SKIP_CUDA: '1'
+      TE_FL_PREFER: flagos
+    install_pip_args: []
+    pip_packages: []

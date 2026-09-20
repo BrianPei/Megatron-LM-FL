@@ -1,0 +1,12 @@
+# Finalize an already validated local container snapshot without reinstalling packages.
+# docker commit --change 'ENTRYPOINT []' can retain the source image entrypoint.
+ARG SNAPSHOT_IMAGE
+FROM ${SNAPSHOT_IMAGE}
+USER root
+ENV TE_FL_SKIP_CUDA=1 \
+    TE_FL_PREFER=flagos \
+    PIP_CONSTRAINT=/opt/megatron-ppu-ci/constraints.txt
+LABEL org.flagos.ppu.build-method="validated-container-snapshot"
+WORKDIR /workspace
+ENTRYPOINT []
+CMD ["/bin/bash"]
