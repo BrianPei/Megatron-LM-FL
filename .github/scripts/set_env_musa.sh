@@ -66,6 +66,13 @@ prepare_musa_te_runtime() {
     "import onnxscript; print(f'onnxscript import passed: {onnxscript.__file__}')"
 }
 
+install_musa_tensorboard() {
+  # Preserve the image-provided Torch/MUSA, NumPy, and protobuf versions.
+  python3 -m pip install "tensorboard==2.17.1" --no-deps --no-cache-dir
+  python3 -c \
+    "from torch.utils.tensorboard import SummaryWriter; from tensorboard.backend.event_processing import event_accumulator; print('MUSA TensorBoard writer and reader validated')"
+}
+
 install_flash_attn_collection_stub() {
   if [ "${CI_TEST_GROUP:-}" != "models" ]; then
     return
@@ -149,11 +156,7 @@ setup_unit_environment() {
   python3 -m pip install fastapi uvicorn --no-cache-dir
   if [ "${CI_TEST_GROUP:-}" = "models" ]; then
     # rl_utils imports SummaryWriter while model tests are being collected.
-    # Install only the frontend so the image-provided torch/MUSA, NumPy, and
-    # protobuf versions remain unchanged.
-    python3 -m pip install "tensorboard==2.17.1" --no-deps --no-cache-dir
-    python3 -c \
-      "from torch.utils.tensorboard import SummaryWriter; print('MUSA TensorBoard dependency validated')"
+    install_musa_tensorboard
   fi
   prepare_musa_te_runtime
 
@@ -185,6 +188,7 @@ case "$CI_TEST_SUITE" in
     ci_setup_functional_environment --ignore-requires-python
     prepare_musa_te_runtime
     ci_install_local_tokenizer_dependencies
+    install_musa_tensorboard
     ci_validate_qwen_assets /opt/data/datasets /opt/data/tokenizers
     install_musa_compatibility_layer
     validate_musa_capacity
