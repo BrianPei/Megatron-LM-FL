@@ -82,6 +82,10 @@ test_matrix:
       # ECCL communicator setup deadlock in torch.distributed.new_group(); same
       # file already has one test failing, full distributed path unstable on GCU.
       - tests/unit_tests/tensor_parallel/test_cross_entropy_chunked.py::test_chunked_cross_entropy_performance
+      # The 248320-token memory benchmark failed a 3396 MiB device allocation
+      # on S60 CI; failed ranks then leave peers waiting at cleanup barriers.
+      # Run this benchmark separately with sufficient free device memory.
+      - tests/unit_tests/tensor_parallel/test_cross_entropy_chunked.py::test_chunked_cross_entropy_memory
       # LayerWise optimizer suites require the optional Emerging Optimizers package.
       - tests/unit_tests/test_layer_wise_optimizer.py
       - tests/unit_tests/dist_checkpointing/test_layer_wise_optimizer.py
