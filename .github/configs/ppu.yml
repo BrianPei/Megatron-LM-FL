@@ -42,12 +42,12 @@ test_matrix:
     experimental_pytest_extra_args: []
     # Matches the nine groups attempted manually. Transformer is not onboarded yet.
     groups:
-      - name: core
-        path: tests/unit_tests/test_*.py megatron/plugin/tests/
-        description: Core unit tests
-      #- name: models
-      #  path: tests/unit_tests/models/
-      #  description: Model tests
+      #- name: core
+      #  path: tests/unit_tests/test_*.py megatron/plugin/tests/
+      #  description: Core unit tests
+      - name: models
+        path: tests/unit_tests/models/
+        description: Model tests
       #- name: distributed
       #  path: tests/unit_tests/distributed/
       #  description: Distributed tests
