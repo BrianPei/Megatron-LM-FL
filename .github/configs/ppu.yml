@@ -48,12 +48,12 @@ test_matrix:
       #- name: models
       #  path: tests/unit_tests/models/
       #  description: Model tests
-      - name: distributed
-        path: tests/unit_tests/distributed/
-        description: Distributed tests
-      #- name: dist_checkpointing
-      #  path: tests/unit_tests/dist_checkpointing/
-      #  description: Distributed checkpointing tests
+      #- name: distributed
+      #  path: tests/unit_tests/distributed/
+      #  description: Distributed tests
+      - name: dist_checkpointing
+        path: tests/unit_tests/dist_checkpointing/
+        description: Distributed checkpointing tests
       #- name: tensor_parallel
       #  path: tests/unit_tests/tensor_parallel/
       #  description: Tensor parallel tests
@@ -82,7 +82,7 @@ test_matrix:
       - tests/unit_tests/test_optimizer_cpu_offloading.py::test_overlap_cpu_optimizer_d2h_h2d_sync_correctness[False-sgd-
       - tests/unit_tests/test_optimizer_cpu_offloading.py::test_overlap_cpu_optimizer_d2h_h2d_sync_correctness[True-sgd-
 
-      # Distributed: shared cross-platform runtime incompatibilities.
+      # Distributed
       - tests/unit_tests/distributed/megatron_fsdp/test_mcore_fully_sharded_data_parallel.py
       - tests/unit_tests/distributed/megatron_fsdp/test_mfsdp_fully_shard.py
       - tests/unit_tests/distributed/test_distributed_data_parallel.py
