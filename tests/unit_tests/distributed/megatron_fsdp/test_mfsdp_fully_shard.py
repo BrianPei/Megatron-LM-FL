@@ -265,6 +265,7 @@ class TestMegatronFsdpFullyShard:
     def cleanup_device_mesh_process_groups(self):
         """Release groups created by a case, including flattened and implicit meshes."""
         from torch.distributed import device_mesh, distributed_c10d
+        from torch.distributed.tensor import DTensor
 
         existing_groups = set(distributed_c10d._world.pg_map)
         mesh_resources = getattr(device_mesh, "_mesh_resources", None)
@@ -325,6 +326,11 @@ class TestMegatronFsdpFullyShard:
                         current[:] = value
                     else:
                         setattr(mesh_resources, name, value)
+                # Cached output specs retain meshes whose groups were just destroyed.
+                # Equal-layout meshes in later cases must not reuse those stale specs.
+                propagate = DTensor._op_dispatcher.sharding_propagator.propagate_op_sharding
+                # PyTorch versions expose either an LRU wrapper or a thread-local cache.
+                getattr(propagate, "cache", propagate).cache_clear()
             if errors:
                 details = "; ".join(f"{name}: {error!r}" for name, error in errors)
                 raise RuntimeError(
