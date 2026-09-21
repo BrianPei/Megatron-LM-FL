@@ -106,6 +106,7 @@ test_matrix:
       - tests/unit_tests/models/test_hybrid_moe_model.py
       - tests/unit_tests/models/test_mamba_moe_model.py
       - tests/unit_tests/models/test_mimo_checkpoint.py
+      - tests/unit_tests/models/test_mimo_colocated_correctness.py::TestColocatedGradientScalingCorrectness::test_dist_matches_dp1_reference_post_step_weights
       - tests/unit_tests/models/test_bert_model.py::TestBertModel::test_post_process_forward
       - tests/unit_tests/models/test_clip_vit_model.py::TestCLIPViTModel::test_forward
       - tests/unit_tests/models/test_gpt_model.py::TestGPTModel
