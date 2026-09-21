@@ -47,6 +47,9 @@ from .async_utils import get_save_and_finalize_callbacks, is_empty_async_queue, 
 from .global_vars import get_args
 from .one_logger_utils import on_save_checkpoint_start, on_save_checkpoint_success
 from .utils import append_to_progress_log, is_last_rank, print_rank_0
+from megatron.plugin.platform import get_platform  # FlagScale Modify
+
+cur_platform = get_platform()  # FlagScale Modify
 
 try:
     from megatron.core.distributed.fsdp.src.megatron_fsdp.uneven_dtensor import (
@@ -375,7 +378,7 @@ def get_rng_state(ckpt_format: str, tp_group: torch.distributed.ProcessGroup, pp
         'random_rng_state': random.getstate(),
         'np_rng_state': np.random.get_state(),
         'torch_rng_state': torch.get_rng_state(),
-        'cuda_rng_state': torch.cuda.get_rng_state(),
+        'cuda_rng_state': cur_platform.get_rng_state(),  # FlagScale Modify
         'rng_tracker_states': tensor_parallel.get_cuda_rng_tracker().get_states()}
 
     rng_state_list = None
@@ -1998,7 +2001,7 @@ def load_checkpoint(ddp_model, optimizer, opt_param_scheduler, load_arg='load', 
                 random.setstate(rng_state['random_rng_state'])
                 np.random.set_state(rng_state['np_rng_state'])
                 torch.set_rng_state(rng_state['torch_rng_state'])
-                torch.cuda.set_rng_state(rng_state['cuda_rng_state'])
+                cur_platform.set_rng_state(rng_state['cuda_rng_state'])  # FlagScale Modify
                 # Check for empty states array
                 if not rng_state['rng_tracker_states']:
                     raise KeyError
@@ -2010,7 +2013,7 @@ def load_checkpoint(ddp_model, optimizer, opt_param_scheduler, load_arg='load', 
                 random.setstate(state_dict['random_rng_state'])
                 np.random.set_state(state_dict['np_rng_state'])
                 torch.set_rng_state(state_dict['torch_rng_state'])
-                torch.cuda.set_rng_state(state_dict['cuda_rng_state'])
+                cur_platform.set_rng_state(state_dict['cuda_rng_state'])  # FlagScale Modify
                 # Check for empty states array
                 if not state_dict['rng_tracker_states']:
                     raise KeyError
