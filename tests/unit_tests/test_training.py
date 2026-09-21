@@ -39,6 +39,7 @@ def mock_multi_valid_full_datasets_provider(train_val_test_num_samples):
 def create_test_args():
     # Set dummy values for the args.
     args = SimpleNamespace()
+    args.local_rank = Utils.rank
     args.iteration = 0
     args.train_samples = 1
     args.train_iters = 1
