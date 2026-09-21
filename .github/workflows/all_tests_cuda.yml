@@ -28,6 +28,7 @@ jobs:
       run_functional_tests: true
       te_fl_prepare: true
       te_fl_cache_key: ${{ needs.te_fl_prepare.outputs.cache_key }}
+      te_fl_local_cache_key: ${{ needs.te_fl_prepare.outputs.local_cache_key }}
 
   all_tests:
     needs: run_tests

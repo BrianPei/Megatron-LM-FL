@@ -8,6 +8,8 @@ on:
     outputs:
       cache_key:
         value: ${{ jobs.prepare.outputs.cache_key }}
+      local_cache_key:
+        value: ${{ jobs.prepare.outputs.local_cache_key }}
 
 jobs:
   resolve:
@@ -21,6 +23,7 @@ jobs:
       setup_script: ${{ steps.config.outputs.setup_script }}
       nproc_per_node: ${{ steps.config.outputs.nproc_per_node }}
       build_environment: ${{ steps.config.outputs.build_environment }}
+      cache_directory: ${{ steps.config.outputs.cache_directory }}
       skip_prepare: ${{ steps.config.outputs.skip_prepare }}
     steps:
       - name: Checkout source code
@@ -62,6 +65,17 @@ jobs:
           prepare=$(yq -r '.te_fl.prepare // false' "$config_file")
           build_mode=$(yq -r '.te_fl.build_mode // ""' "$config_file")
           build_environment=$(yq -o=json -I=0 '.te_fl.build_environment // {}' "$config_file")
+          cache_directory=$(yq -r '.te_fl.cache_directory // ""' "$config_file")
+
+          if [ -n "$cache_directory" ]; then
+            if ! [[ "$cache_directory" =~ ^/[a-zA-Z0-9_/-]+$ ]] || [[ "$cache_directory" = / || "$cache_directory" = */ ]]; then
+              echo "::error::te_fl.cache_directory must be a dedicated absolute path without a trailing slash" >&2
+              exit 1
+            fi
+            volumes=$(CACHE_DIRECTORY="$cache_directory" yq -o=json -I=0 \
+              '(.container_volumes // []) + [strenv(CACHE_DIRECTORY) + ":" + strenv(CACHE_DIRECTORY)]' "$config_file")
+          fi
+          echo "cache_directory=$cache_directory" >> "$GITHUB_OUTPUT"
 
           if [ -z "$image" ]; then
             echo "::error::ci_image is required in $config_file" >&2
@@ -130,6 +144,7 @@ jobs:
       options: ${{ needs.resolve.outputs.container_options }}
     outputs:
       cache_key: ${{ steps.cache_key.outputs.key }}
+      local_cache_key: ${{ steps.cache_key.outputs.local_key }}
     steps:
       - name: Checkout Megatron source (attempt 1)
         id: checkout_megatron_1
@@ -192,6 +207,7 @@ jobs:
         env:
           PLATFORM: ${{ inputs.platform }}
           IMAGE: ${{ needs.resolve.outputs.image }}
+          CACHE_DIRECTORY: ${{ needs.resolve.outputs.cache_directory }}
         run: |
           set -euo pipefail
           commit=$(git -C "$GITHUB_WORKSPACE/te-fl" rev-parse HEAD)
@@ -204,9 +220,14 @@ jobs:
           key="te-fl-${PLATFORM}-${commit}-${image_key}"
           echo "key=$key" >> "$GITHUB_OUTPUT"
           echo "TE-FL wheel cache key: $key"
+          if [ -n "$CACHE_DIRECTORY" ]; then
+            identity=$(printf '%s\n' "$GITHUB_REPOSITORY" "$GITHUB_REF" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" "$key" | sha256sum | awk '{print $1}')
+            echo "local_key=te-fl-backup-$identity" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Restore TE-FL wheel cache
         id: cache
+        continue-on-error: true
         uses: actions/cache/restore@v4
         with:
           path: te-fl-wheel
@@ -257,7 +278,18 @@ jobs:
 
       - name: Save TE-FL wheel cache
         if: steps.cache.outputs.cache-hit != 'true'
+        continue-on-error: true
         uses: actions/cache/save@v4
         with:
           path: te-fl-wheel
           key: ${{ steps.cache_key.outputs.key }}
+
+      - name: Publish local TE-FL wheel fallback
+        if: needs.resolve.outputs.cache_directory != ''
+        continue-on-error: true
+        timeout-minutes: 5
+        env:
+          TE_FL_CACHE_DIRECTORY: ${{ needs.resolve.outputs.cache_directory }}
+          TE_FL_CACHE_KEY: ${{ steps.cache_key.outputs.local_key }}
+          TE_FL_WHEEL_DIR: ${{ github.workspace }}/te-fl-wheel
+        run: python3 .github/scripts/te_fl_local_cache.py publish
