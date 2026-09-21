@@ -96,7 +96,16 @@ test_matrix:
       # Fusions: all parameters dispatch the unregistered TE-FL rmsnorm_bwd_add.
       - tests/unit_tests/fusions/test_rmsnorm_residual_fusion.py::test_rmsnorm_residual_fusion
 
+      # Distributed checkpointing models: incompatible with non-CUDA accelerators.
+      - tests/unit_tests/dist_checkpointing/models/test_bert_model.py
+      - tests/unit_tests/dist_checkpointing/models/test_gpt_model.py
+      - tests/unit_tests/dist_checkpointing/models/test_mamba.py
+
       # Models: TE-FL layernorm forward hangs in torch-ppu dtype parsing.
+      - tests/unit_tests/models/test_hybrid_model.py
+      - tests/unit_tests/models/test_hybrid_moe_model.py
+      - tests/unit_tests/models/test_mamba_moe_model.py
+      - tests/unit_tests/models/test_mimo_checkpoint.py
       - tests/unit_tests/models/test_bert_model.py::TestBertModel::test_post_process_forward
       - tests/unit_tests/models/test_clip_vit_model.py::TestCLIPViTModel::test_forward
       - tests/unit_tests/models/test_gpt_model.py::TestGPTModel
