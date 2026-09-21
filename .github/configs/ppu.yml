@@ -121,6 +121,7 @@ test_matrix:
       - tests/unit_tests/models/test_multimodal_projector.py::TestMultimodalProjector::test_forward
       - tests/unit_tests/models/test_radio_model.py::TestRADIOViTModel::test_forward
       - tests/unit_tests/models/test_base_embedding.py::TestBaseEmbedding::test_gpu_forward
+      - tests/unit_tests/models/test_mimo_model.py::TestMimoModel::test_forward_text_only
 
   functional:
     train: []
