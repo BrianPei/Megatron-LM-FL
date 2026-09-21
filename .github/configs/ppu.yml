@@ -96,8 +96,9 @@ test_matrix:
       # Fusions: all parameters dispatch the unregistered TE-FL rmsnorm_bwd_add.
       - tests/unit_tests/fusions/test_rmsnorm_residual_fusion.py::test_rmsnorm_residual_fusion
 
-      # Models: TE-FL layernorm forward hangs in test_post_process_forward.
+      # Models: TE-FL layernorm forward hangs in torch-ppu dtype parsing.
       - tests/unit_tests/models/test_bert_model.py::TestBertModel::test_post_process_forward
+      - tests/unit_tests/models/test_clip_vit_model.py::TestCLIPViTModel::test_forward
 
   functional:
     train: []
