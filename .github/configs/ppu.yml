@@ -45,12 +45,12 @@ test_matrix:
       #- name: core
       #  path: tests/unit_tests/test_*.py megatron/plugin/tests/
       #  description: Core unit tests
-      - name: models
-        path: tests/unit_tests/models/
-        description: Model tests
-      #- name: distributed
-      #  path: tests/unit_tests/distributed/
-      #  description: Distributed tests
+      #- name: models
+      #  path: tests/unit_tests/models/
+      #  description: Model tests
+      - name: distributed
+        path: tests/unit_tests/distributed/
+        description: Distributed tests
       #- name: dist_checkpointing
       #  path: tests/unit_tests/dist_checkpointing/
       #  description: Distributed checkpointing tests
@@ -82,9 +82,16 @@ test_matrix:
       - tests/unit_tests/test_optimizer_cpu_offloading.py::test_overlap_cpu_optimizer_d2h_h2d_sync_correctness[False-sgd-
       - tests/unit_tests/test_optimizer_cpu_offloading.py::test_overlap_cpu_optimizer_d2h_h2d_sync_correctness[True-sgd-
 
-      # Distributed: PCCL lacks PreMulSum creation/destruction used by this test.
-      # Both sharding variants share the gradient-reduction setup.
-      - tests/unit_tests/distributed/megatron_fsdp/test_mcore_fully_sharded_data_parallel.py::TestMegatronFSDPE2E::test_full_iteration_cuda_graph_e2e
+      # Distributed: shared cross-platform runtime incompatibilities.
+      - tests/unit_tests/distributed/megatron_fsdp/test_mcore_fully_sharded_data_parallel.py
+      - tests/unit_tests/distributed/megatron_fsdp/test_mfsdp_fully_shard.py
+      - tests/unit_tests/distributed/test_distributed_data_parallel.py
+      - tests/unit_tests/distributed/test_finalize_model_grads.py
+      - tests/unit_tests/distributed/test_grad_reduce_for_replicated_embedder.py
+      - tests/unit_tests/distributed/test_grad_sync_with_expert_parallel.py
+      - tests/unit_tests/distributed/test_param_and_grad_buffer.py
+      - tests/unit_tests/distributed/test_reduce_scatter_with_fp32_accumulation.py
+      - tests/unit_tests/distributed/test_torch_fully_sharded_parallel.py
 
       # Data: the random packed lengths are not aligned to TE-FL's CP partition
       # requirement. Exclude CP=2/4 for both sequence lengths; keep CP=1 coverage.
