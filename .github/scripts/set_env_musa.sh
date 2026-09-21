@@ -194,7 +194,7 @@ case "$CI_TEST_SUITE" in
     prepare_musa_te_runtime
     ci_install_local_tokenizer_dependencies
     install_musa_tensorboard
-    ci_validate_qwen_assets /opt/data/datasets /opt/data/tokenizers
+    ci_validate_qwen_assets /home/gitlab-runner/data /home/gitlab-runner/tokenizers
     install_musa_compatibility_layer
     validate_musa_capacity
     ;;
