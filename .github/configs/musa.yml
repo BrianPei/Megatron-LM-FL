@@ -17,8 +17,6 @@ container_volumes:
   - /home/flagscale_cicd/flask/config:/workspace/config
   - /data/megatron-ci-assets-20260726/baai_datasets:/home/gitlab-runner/data
   - /data/megatron-ci-assets-20260726/baai_tokenizers:/home/gitlab-runner/tokenizers
-  - /data/megatron-ci-assets-20260726/baai_datasets:/opt/data/datasets
-  - /data/megatron-ci-assets-20260726/baai_tokenizers:/opt/data/tokenizers
   # Override broken libmusa.so stub inside the image.
   - /usr/lib/x86_64-linux-gnu/libmusa.so:/usr/lib/x86_64-linux-gnu/libmusa.so
   - /usr/lib/x86_64-linux-gnu/libmusa.so.1:/usr/lib/x86_64-linux-gnu/libmusa.so.1
