@@ -51,12 +51,12 @@ test_matrix:
       #- name: distributed
       #  path: tests/unit_tests/distributed/
       #  description: Distributed tests
-      - name: dist_checkpointing
-        path: tests/unit_tests/dist_checkpointing/
-        description: Distributed checkpointing tests
-      #- name: tensor_parallel
-      #  path: tests/unit_tests/tensor_parallel/
-      #  description: Tensor parallel tests
+      #- name: dist_checkpointing
+      #  path: tests/unit_tests/dist_checkpointing/
+      #  description: Distributed checkpointing tests
+      - name: tensor_parallel
+        path: tests/unit_tests/tensor_parallel/
+        description: Tensor parallel tests
       #- name: pipeline_parallel
       #  path: tests/unit_tests/pipeline_parallel/
       #  description: Pipeline parallel tests
@@ -130,6 +130,49 @@ test_matrix:
       - tests/unit_tests/models/test_base_embedding.py::TestBaseEmbedding::test_gpu_forward
       - tests/unit_tests/models/test_mimo_model.py::TestMimoModel 
 
+      # Tensor parallel
+      - tests/unit_tests/tensor_parallel/test_cross_entropy.py::test_vocab_parallel_cross_entropy
+      - tests/unit_tests/tensor_parallel/test_data.py::test_broadcast_data
+      - tests/unit_tests/tensor_parallel/test_initialization.py::Test::test_row_init
+      - tests/unit_tests/tensor_parallel/test_initialization.py::Test::test_te_row_init
+      - tests/unit_tests/tensor_parallel/test_layers.py::test_LinearWithFrozenWeight[1-False]
+      - tests/unit_tests/tensor_parallel/test_layers.py::test_LinearWithFrozenWeight[8-True]
+      - tests/unit_tests/tensor_parallel/test_mappings.py::test_CopyToModelParallelRegion
+      - tests/unit_tests/tensor_parallel/test_mappings.py::test_GatherFromModelParallelRegion
+      - tests/unit_tests/tensor_parallel/test_mappings.py::test_GatherFromSequenceParallelRegion
+      - tests/unit_tests/tensor_parallel/test_mappings.py::test_ReduceFromModelParallelRegion
+      - tests/unit_tests/tensor_parallel/test_mappings.py::test_ReduceScatterToSequenceParallelRegion
+      - tests/unit_tests/tensor_parallel/test_mappings.py::test_ScatterToModelParallelRegion
+      - tests/unit_tests/tensor_parallel/test_mappings.py::test_ScatterToSequenceParallelRegion
+      - tests/unit_tests/tensor_parallel/test_random.py::test_checkpoint
+      - tests/unit_tests/tensor_parallel/test_random.py::test_convert_cuda_rng_state
+      - tests/unit_tests/tensor_parallel/test_random.py::test_double_fork_cuda_rng_states_tracker
+      - tests/unit_tests/tensor_parallel/test_random.py::test_model_parallel_cuda_manual_seed
+      - tests/unit_tests/tensor_parallel/test_tensor_parallel_utils.py::test_gather_split_1d_tensor
+
+      # Dis_checkpointing
+      - tests/unit_tests/dist_checkpointing/models/test_bert_model.py
+      - tests/unit_tests/dist_checkpointing/models/test_gpt_model.py
+      - tests/unit_tests/dist_checkpointing/models/test_mamba.py
+      - tests/unit_tests/dist_checkpointing/models/test_mlp_glu.py
+      - tests/unit_tests/dist_checkpointing/models/test_moe_experts.py
+      - tests/unit_tests/dist_checkpointing/models/test_t5_model.py::TestT5Model::test_sharded_state_dict_save_load
+      - tests/unit_tests/dist_checkpointing/models/test_t5_model.py::TestT5ModelReconfiguration::test_parallel_reconfiguration_e2e
+      - tests/unit_tests/dist_checkpointing/test_async_save.py::TestAsyncSave::test_async_is_equivalent_to_sync
+      - tests/unit_tests/dist_checkpointing/test_async_save.py::TestAsyncSave::test_get_async_strategy[nvrx]
+      - tests/unit_tests/dist_checkpointing/test_checkpointable.py
+      - tests/unit_tests/dist_checkpointing/test_fp8.py
+      - tests/unit_tests/dist_checkpointing/test_fully_parallel.py
+      - tests/unit_tests/dist_checkpointing/test_global_metadata_reuse.py
+      - tests/unit_tests/dist_checkpointing/test_layer_wise_optimizer.py
+      - tests/unit_tests/dist_checkpointing/test_msc.py
+      - tests/unit_tests/dist_checkpointing/test_nonpersistent.py
+      - tests/unit_tests/dist_checkpointing/test_optimizer.py
+      - tests/unit_tests/dist_checkpointing/test_pipeline_parallel_layout.py
+      - tests/unit_tests/dist_checkpointing/test_safe_globals.py
+      - tests/unit_tests/dist_checkpointing/test_serialization.py
+      - tests/unit_tests/dist_checkpointing/test_torch_dist.py::TestCPUTensors::test_cpu_tensors_dont_take_too_much_space
+      - tests/unit_tests/dist_checkpointing/test_torch_dist.py::TestCachedMetadata::test_cached_metadata
   functional:
     train: []
 
