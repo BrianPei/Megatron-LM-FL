@@ -11,6 +11,9 @@ runner_labels:
 container_volumes:
   - /home/gitlab-runner/data:/home/gitlab-runner/data
   - /home/gitlab-runner/tokenizers:/home/gitlab-runner/tokenizers
+  # The unit fixtures read these same asset roots through /opt/data.
+  - /home/gitlab-runner/data:/opt/data/datasets
+  - /home/gitlab-runner/tokenizers:/opt/data/tokenizers
 
 container_options: >-
   --shm-size=64g
