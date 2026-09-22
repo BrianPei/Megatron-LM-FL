@@ -11,9 +11,7 @@ runner_labels:
 container_volumes:
   - /home/gitlab-runner/data:/home/gitlab-runner/data
   - /home/gitlab-runner/tokenizers:/home/gitlab-runner/tokenizers
-  # The unit fixtures read these same asset roots through /opt/data.
-  - /home/gitlab-runner/data:/opt/data/datasets
-  - /home/gitlab-runner/tokenizers:/opt/data/tokenizers
+
 container_options: >-
   --shm-size=64g
   --user root
@@ -173,7 +171,25 @@ test_matrix:
       - tests/unit_tests/dist_checkpointing/test_torch_dist.py::TestCachedMetadata::test_cached_metadata
 
   functional:
-    train: []
+    train:
+      - model: gpt
+        test_case: qwen3_0p6b_mcore_te_tp1_pp1_no_mmap_bin_files_ppu
+        training_script: pretrain_gpt.py
+        n_repeat: 1
+        golden_environment: dev
+        golden_platform: zw810e
+        enable_lightweight_mode: false
+        data_path: /home/gitlab-runner/data
+        gpus_per_node: 1
+      - model: gpt
+        test_case: qwen3_0p6b_mcore_te_tp2_pp2_benchmark_ppu
+        training_script: pretrain_gpt.py
+        n_repeat: 1
+        golden_environment: dev
+        golden_platform: zw810e
+        enable_lightweight_mode: false
+        data_path: /home/gitlab-runner/data
+        gpus_per_node: 4
 
 # TE-FL and FlagGems are baked into the image, not upgraded in individual jobs.
 te_fl:

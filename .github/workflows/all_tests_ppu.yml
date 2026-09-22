@@ -22,7 +22,7 @@ jobs:
     with:
       platform: ppu
       run_unit_tests: true
-      run_functional_tests: false
+      run_functional_tests: true
       te_fl_prepare: false
 
   all_tests:
@@ -30,14 +30,14 @@ jobs:
     runs-on: ubuntu-latest
     if: always()
     steps:
-      - name: Verify PPU unit-test workflow status
+      - name: Verify PPU test workflow status
         env:
           TEST_STATUS: ${{ needs.run_tests.result }}
         shell: bash
         run: |
           set -euo pipefail
           if [ "$TEST_STATUS" != success ]; then
-            echo "::error::PPU unit-test workflow failed: $TEST_STATUS"
+            echo "::error::PPU test workflow failed: $TEST_STATUS"
             exit 1
           fi
-          echo "PPU CI passed for the configured unit-test scope."
+          echo "PPU CI passed for the configured unit-test and functional scope."
