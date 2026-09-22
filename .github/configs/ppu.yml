@@ -60,12 +60,12 @@ test_matrix:
       #- name: pipeline_parallel
       #  path: tests/unit_tests/pipeline_parallel/
       #  description: Pipeline parallel tests
-      - name: data
-        path: tests/unit_tests/data/
-        description: Data tests
-      #- name: fusions
-      #  path: tests/unit_tests/fusions/
-      #  description: Fusion tests
+      #- name: data
+      #  path: tests/unit_tests/data/
+      #  description: Data tests
+      - name: fusions
+        path: tests/unit_tests/fusions/
+        description: Fusion tests
       #- name: others
       #  path: tests/unit_tests/post_training/ tests/unit_tests/tokenizers/ tests/unit_tests/utils/
       #  description: Post-training, tokenizer, and utility tests
@@ -102,11 +102,6 @@ test_matrix:
 
       # Fusions: all parameters dispatch the unregistered TE-FL rmsnorm_bwd_add.
       - tests/unit_tests/fusions/test_rmsnorm_residual_fusion.py::test_rmsnorm_residual_fusion
-
-      # Distributed checkpointing models: incompatible with non-CUDA accelerators.
-      - tests/unit_tests/dist_checkpointing/models/test_bert_model.py
-      - tests/unit_tests/dist_checkpointing/models/test_gpt_model.py
-      - tests/unit_tests/dist_checkpointing/models/test_mamba.py
 
       # Models: TE-FL layernorm forward hangs in torch-ppu dtype parsing.
       - tests/unit_tests/models/test_hybrid_model.py
