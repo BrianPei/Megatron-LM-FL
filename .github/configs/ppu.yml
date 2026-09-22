@@ -149,28 +149,28 @@ test_matrix:
       - tests/unit_tests/pipeline_parallel/test_fine_grained_activation_offloading.py
 
       # Dis_checkpointing
-      #- tests/unit_tests/dist_checkpointing/models/test_bert_model.py
-      #- tests/unit_tests/dist_checkpointing/models/test_gpt_model.py
-      #- tests/unit_tests/dist_checkpointing/models/test_mamba.py
-      #- tests/unit_tests/dist_checkpointing/models/test_mlp_glu.py
-      #- tests/unit_tests/dist_checkpointing/models/test_moe_experts.py
-      #- tests/unit_tests/dist_checkpointing/models/test_t5_model.py::TestT5Model::test_sharded_state_dict_save_load
-      #- tests/unit_tests/dist_checkpointing/models/test_t5_model.py::TestT5ModelReconfiguration::test_parallel_reconfiguration_e2e
-      #- tests/unit_tests/dist_checkpointing/test_async_save.py::TestAsyncSave::test_async_is_equivalent_to_sync
-      #- tests/unit_tests/dist_checkpointing/test_async_save.py::TestAsyncSave::test_get_async_strategy[nvrx]
-      #- tests/unit_tests/dist_checkpointing/test_checkpointable.py
-      #- tests/unit_tests/dist_checkpointing/test_fp8.py
-      #- tests/unit_tests/dist_checkpointing/test_fully_parallel.py
-      #- tests/unit_tests/dist_checkpointing/test_global_metadata_reuse.py
-      #- tests/unit_tests/dist_checkpointing/test_layer_wise_optimizer.py
-      #- tests/unit_tests/dist_checkpointing/test_msc.py
-      #- tests/unit_tests/dist_checkpointing/test_nonpersistent.py
-      #- tests/unit_tests/dist_checkpointing/test_optimizer.py
-      #- tests/unit_tests/dist_checkpointing/test_pipeline_parallel_layout.py
-      #- tests/unit_tests/dist_checkpointing/test_safe_globals.py
-      #- tests/unit_tests/dist_checkpointing/test_serialization.py
-      #- tests/unit_tests/dist_checkpointing/test_torch_dist.py::TestCPUTensors::test_cpu_tensors_dont_take_too_much_space
-      #- tests/unit_tests/dist_checkpointing/test_torch_dist.py::TestCachedMetadata::test_cached_metadata
+      - tests/unit_tests/dist_checkpointing/models/test_bert_model.py
+      - tests/unit_tests/dist_checkpointing/models/test_gpt_model.py
+      - tests/unit_tests/dist_checkpointing/models/test_mamba.py
+      - tests/unit_tests/dist_checkpointing/models/test_mlp_glu.py
+      - tests/unit_tests/dist_checkpointing/models/test_moe_experts.py
+      - tests/unit_tests/dist_checkpointing/models/test_t5_model.py::TestT5Model::test_sharded_state_dict_save_load
+      - tests/unit_tests/dist_checkpointing/models/test_t5_model.py::TestT5ModelReconfiguration::test_parallel_reconfiguration_e2e
+      - tests/unit_tests/dist_checkpointing/test_async_save.py::TestAsyncSave::test_async_is_equivalent_to_sync
+      - tests/unit_tests/dist_checkpointing/test_async_save.py::TestAsyncSave::test_get_async_strategy[nvrx]
+      - tests/unit_tests/dist_checkpointing/test_checkpointable.py
+      - tests/unit_tests/dist_checkpointing/test_fp8.py
+      - tests/unit_tests/dist_checkpointing/test_fully_parallel.py
+      - tests/unit_tests/dist_checkpointing/test_global_metadata_reuse.py
+      - tests/unit_tests/dist_checkpointing/test_layer_wise_optimizer.py
+      - tests/unit_tests/dist_checkpointing/test_msc.py
+      - tests/unit_tests/dist_checkpointing/test_nonpersistent.py
+      - tests/unit_tests/dist_checkpointing/test_optimizer.py
+      - tests/unit_tests/dist_checkpointing/test_pipeline_parallel_layout.py
+      - tests/unit_tests/dist_checkpointing/test_safe_globals.py
+      - tests/unit_tests/dist_checkpointing/test_serialization.py
+      - tests/unit_tests/dist_checkpointing/test_torch_dist.py::TestCPUTensors::test_cpu_tensors_dont_take_too_much_space
+      - tests/unit_tests/dist_checkpointing/test_torch_dist.py::TestCachedMetadata::test_cached_metadata
 
   functional:
     train: []
