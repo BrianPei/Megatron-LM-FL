@@ -77,6 +77,13 @@ setup_functional_environment() {
   validate_ppu_capacity
 }
 
+setup_build_environment() {
+  ci_activate_python_environment
+  configure_ppu_runtime
+  validate_ppu_capacity
+  ci_install_project
+}
+
 ci_require_env CI_TEST_SUITE
 ci_require_env CI_NPROC_PER_NODE
 if ! [[ "$CI_NPROC_PER_NODE" =~ ^[1-9][0-9]*$ ]]; then
@@ -90,6 +97,9 @@ case "$CI_TEST_SUITE" in
     ;;
   functional)
     setup_functional_environment
+    ;;
+  build)
+    setup_build_environment
     ;;
   *)
     echo "::error::Unsupported CI_TEST_SUITE: $CI_TEST_SUITE"
