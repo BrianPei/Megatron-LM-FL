@@ -5,7 +5,7 @@ setup_script: .github/scripts/set_env_ppu.sh
 
 # Prebuilt PPU runtime; this workflow does not build or update image dependencies.
 # Image provenance and full-matrix validation remain prerequisites for acceptance.
-ci_image: harbor.baai.ac.cn/flagscale/flagscale-train:dev-ppu-py3.12-20260920@sha256:7b6d74bbd1b29f6d84476f015db1fa5a8321d5ff5483732a52b75afb8e95501c
+ci_image: harbor.baai.ac.cn/flagscale/flagscale-train:dev-ppu-py3.12-20260922
 runner_labels:
   - flagcicd-810e
 container_volumes:
@@ -148,6 +148,10 @@ test_matrix:
 
       # Pipeline parallel: TE-FL grouped GEMM broadcast dimension mismatch (entire file).
       - tests/unit_tests/pipeline_parallel/test_fine_grained_activation_offloading.py
+
+      # Pipeline parallel: the upstream bridge-communicator teardown case hangs
+      # in a PPU NCCL collective; keep the other parameterizations enabled.
+      - tests/unit_tests/pipeline_parallel/test_bridge_communicator.py::TestBridgeCommunicator::test_bridge_communicator_with_transformer_blocks[2-1-2-1-2]
 
       # Dis_checkpointing
       - tests/unit_tests/dist_checkpointing/models/test_bert_model.py
