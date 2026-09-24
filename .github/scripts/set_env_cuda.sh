@@ -18,13 +18,10 @@ validate_cuda_capacity() {
 }
 
 install_nvrx() {
-  if [ "${CI_TEST_SUITE:-}" = unit ] && [ "${CI_UNIT_SNAPSHOT_READY:-}" = true ]; then
-    return
-  fi
   git clone --branch v0.6.0-main \
     https://github.com/NVIDIA/nvidia-resiliency-ext.git \
     /tmp/nvidia-resiliency-ext
-  ci_install_unit_packages -e /tmp/nvidia-resiliency-ext --no-cache-dir
+  python3 -m pip install -e /tmp/nvidia-resiliency-ext --no-cache-dir
 }
 
 setup_unit_environment() {
@@ -49,11 +46,11 @@ setup_unit_environment() {
     nltk
     msgpack
   )
-  ci_install_unit_packages torch boto3 "${test_dependencies[@]}" --no-cache-dir
+  python3 -m pip install torch boto3 "${test_dependencies[@]}" --no-cache-dir
 
   install_nvrx
-  ci_install_unit_packages protobuf==6.33.1
-  ci_install_unit_packages \
+  python3 -m pip install protobuf==6.33.1
+  python3 -m pip install \
     git+https://github.com/NVIDIA-NeMo/Emerging-Optimizers.git@v0.2.0 \
     --no-cache-dir
 
@@ -71,8 +68,7 @@ setup_build_environment() {
 
 ci_require_env CI_TEST_SUITE
 case "$CI_TEST_SUITE" in
-  activate)
-    ci_activate_python_environment
+  unit_group)
     ;;
   unit)
     setup_unit_environment

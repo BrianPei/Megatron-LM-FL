@@ -26,13 +26,10 @@ all_tests_<platform>.yml
   -> all_tests_common.yml
      -> lint_common.yml
      -> unit_tests_common.yml
-        -> unit_runtime_prepare (once per platform/device)
-           -> set_env_<platform>.sh (all unit dependencies)
-           -> runtime packages + prepared TE-FL wheel
-           -> upload dependency wheels
-        -> parallel unit_test groups
-           -> shallow checkout + download snapshot + offline install
-           -> set_env_<platform>.sh (local configuration and device checks)
+        -> checkout + set_env_<platform>.sh once per device
+        -> install runtime packages + restore/install TE-FL once
+        -> run_unit_groups.py, in configured group order
+           -> set_env_<platform>.sh (unit_group, no installation)
            -> tests/test_utils/runners/run_ci_unit_tests.sh
      -> functional_tests_common.yml
         -> set_env_<platform>.sh
@@ -40,52 +37,40 @@ all_tests_<platform>.yml
 ```
 
 Unit tests run before functional tests when both suites are enabled. A failed
-unit matrix prevents the functional matrix from starting.
+unit job prevents the functional matrix from starting.
 
-### Shared unit runtime
+### Single-runner unit execution
 
-`test_matrix.unit.runtime_snapshot` defaults to `true`. Each platform/device
-prepares its dynamic dependencies once per run, using the same image, mounts,
-runner labels and setup script as its test groups. Existing dependency versions
-and pip resolution options are retained; no additional upgrade or constraint
-policy is introduced. Functional tests keep their existing path.
+Each platform/device uses one container and one unit job. Checkout, platform
+setup, dynamic dependency installation and TE-FL restoration/installation happen
+once, without dependency wheel snapshots or artifact transfers between test jobs.
+The existing dependency resolution policy and TE-FL build/cache workflow are
+unchanged. There is no new cross-run environment cache or image freshness policy.
 
-For each dependency install, pip first resolves what the image is missing with
-`--dry-run --report`. Only those packages are downloaded/built into wheels;
-the producer installs those same wheels and records their installation order.
-The existing TE-FL wheel is copied without rebuilding or installing it in the
-producer. There is no full-environment inventory or new runtime validation job.
+Initial setup receives `CI_TEST_SUITE=unit` and `CI_TEST_GROUP=__all__` and installs
+the union of unit-group dependencies. Each group then gets a fresh shell and
+distributed test process, invoking the setup script with `CI_TEST_SUITE=unit_group`
+for lightweight group-specific runtime settings only. Those hooks must not install
+packages. Their environment exports do not propagate to other groups or later
+Actions steps. The container filesystem is shared; tests must still clean up their
+own files and external resources. Processes remaining in the group's process group
+are killed before starting the next group.
 
-The artifact contains dependency wheels and an installation list, not a copied
-virtualenv or accelerator runtime. Consumers install with `--no-index --no-deps`
-only for these wheels; subsequent steps retain their normal network settings.
-Images and native runtimes must still be compatible across a platform's jobs;
-artifacts are not shared across platforms. Every CI run prepares its own bundle,
-so moving dependencies are resolved once per run using the existing policy.
+Each group retains a 60-minute timeout. Failed or timed-out groups do not prevent
+later groups from running, but any nonzero group result fails the unit job. The job
+has a 12-hour total limit to accommodate sequential groups and setup. There is no
+new retry of tests and no change to assertions, ignore lists, distributed process
+counts or experimental passes. Rerunning the job reruns all configured groups.
 
-Each group retains checkout retries (with `fetch-depth: 1`), editable project
-installation, device/fixture validation, group-specific ports and compatibility
-patches. Setup installs must use `ci_install_unit_packages`; the producer
-builds the wheel bundle and consumers skip those calls only after successful
-bundle installation. `CI_TEST_SUITE=activate` must activate Python
-without installing packages, and `CI_TEST_GROUP=__all__` must prepare the union
-of group-specific dependencies. Non-package filesystem patches stay in setup
-and run in each consumer.
+Coverage data is isolated per group. The coverage artifact retains each completed
+group's JSON and `unit-results.json`; a combined `coverage-<platform>-<device>-all.json`
+is sent to FlagCICD. Available reports are uploaded even after test failures.
+The Actions summary lists per-group exit codes. Hardware timing and residual
+cross-group filesystem effects still need validation in the platform container.
 
-Producer outputs supply the artifact name. Failed
-group reruns reuse that successful producer's artifact, while a rerun of the
-producer gets a new attempt-qualified name. Artifacts expire after seven days;
-after expiry, rerun the full workflow. Artifact/download/install failures remain
-failures, without silently resolving different dependencies in each group.
-
-Platforms with no dynamic unit dependencies can set
-`runtime_snapshot: false` to avoid a producer job and artifact transfer.
-Preparation is nested inside the unit reusable workflow so device-specific
-outputs reach their own matrix directly; the existing aggregate unit gate
-also fails when preparation fails. Compare producer time, artifact transfer,
-per-group setup time, queue time and total elapsed time in real CI before
-claiming a speedup or timeout reduction. The benefit is expected to be greatest
-when downloads/builds repeat or accelerator runner capacity is limited.
+The unit check is now `unit-<device>` instead of separate `unit-<device>-<group>`
+checks. Before merging, update any branch protection rules that require individual
+group checks; the existing `all_tests_complete` aggregate gate remains unchanged.
 
 ## Platform configuration contract
 
@@ -96,7 +81,6 @@ workflow are:
 | --- | --- |
 | `setup_script` | Repository-relative platform setup script |
 | `test_matrix.unit.nproc_per_node` | Number of distributed processes used by each unit-test group |
-| `test_matrix.unit.runtime_snapshot` | Prepare shared unit dependencies once (default `true`) |
 | `ci_image` | Container image used by test jobs |
 | `runner_labels` | Labels that select the self-hosted runner |
 | `container_volumes` | Host-to-container mounts |
@@ -114,7 +98,7 @@ workflow does not read it. Do not add that field to new configs.
 The setup script receives the suite and distributed process count:
 
 ```text
-CI_TEST_SUITE=activate|unit|functional|build
+CI_TEST_SUITE=unit|unit_group|functional|build
 CI_NPROC_PER_NODE=<positive integer>
 ```
 
@@ -156,7 +140,8 @@ The complete unit-test selection path is:
 .github/configs/<platform>.yml
   test_matrix.unit.groups[].path
     -> all_tests_common.yml reads the groups
-    -> unit_tests_common.yml creates one job per device and group
+    -> unit_tests_common.yml creates one job per device
+    -> run_unit_groups.py iterates the configured groups in that job
     -> CI_TEST_PATH=<group path>
     -> run_ci_unit_tests.sh expands paths and platform exclusions
     -> torch.distributed.run starts CI_NPROC_PER_NODE processes
@@ -535,6 +520,7 @@ GitHub Actions path.
 2. Add `.github/scripts/set_env_<platform>.sh`. Reuse
    `set_env_common.sh`, preserve the image's vendor packages, and implement the
    `unit`, `functional`, and `build` suite branches that the platform supports.
+   Add an install-free `unit_group` branch (a no-op if no group settings are needed).
 3. Add `.github/workflows/all_tests_<platform>.yml` that calls
    `all_tests_common.yml` with `platform: <platform>`.
 4. Register an online self-hosted runner with every label in `runner_labels`.

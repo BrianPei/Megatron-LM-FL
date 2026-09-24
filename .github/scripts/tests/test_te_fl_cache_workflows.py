@@ -60,10 +60,7 @@ class WheelCacheWorkflowTests(unittest.TestCase):
         self.assertEqual(save["if"], "steps.cache.outputs.cache-hit != 'true'")
 
     def test_consumer_fallback_and_failure_gate(self):
-        for name, consume_step in (
-            ("unit_tests_common.yml", "Bundle prepared unit dependencies"),
-            ("functional_tests_common.yml", "Install TE-FL wheel"),
-        ):
+        for name in ("unit_tests_common.yml", "functional_tests_common.yml"):
             document = workflow(name)
             steps = next(job["steps"] for job in document["jobs"].values() if "steps" in job)
             by_id = {step["id"]: step for step in steps if "id" in step}
@@ -100,7 +97,7 @@ class WheelCacheWorkflowTests(unittest.TestCase):
                     ["bash", "-c", gate["run"]], env=env, capture_output=True, timeout=5
                 )
                 self.assertEqual(result.returncode == 0, any(hits))
-            install = next(step for step in steps if step["name"] == consume_step)
+            install = next(step for step in steps if step["name"] == "Install TE-FL wheel")
             self.assertIn("steps.local_cache.outputs.cache-hit", install["env"]["TE_FL_WHEEL_DIR"])
 
 

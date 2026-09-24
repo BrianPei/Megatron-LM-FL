@@ -36,8 +36,6 @@ device_types:
 # the top-level setup_script, then declare test groups and runner arguments here.
 test_matrix:
   unit:
-    # Disable only when the image already provides all unit dependencies.
-    runtime_snapshot: true
     nproc_per_node: 8
     pytest_extra_args: []
     groups:

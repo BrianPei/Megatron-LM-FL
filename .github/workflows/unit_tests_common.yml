@@ -27,11 +27,6 @@ on:
         required: true
         type: string
         description: Repository-relative platform environment setup script
-      runtime_snapshot:
-        required: false
-        type: boolean
-        default: true
-        description: Prepare dynamic unit dependencies once before the test matrix
       test_groups:
         required: true
         type: string
@@ -81,28 +76,20 @@ on:
         type: string
 
 jobs:
-  unit_runtime_prepare:
-    name: prepare-unit-runtime-${{ inputs.device }}
-    if: inputs.runtime_snapshot
+  unit_test:
     defaults:
       run:
         shell: bash
     runs-on: ${{ fromJson(inputs.runs_on) }}
-    timeout-minutes: 60
+    name: unit-${{ inputs.device }}
+    # Groups retain their individual 60-minute limits in the sequential runner.
+    timeout-minutes: 720
     container:
       image: ${{ inputs.image }}
+      ports:
+        - 80
       volumes: ${{ fromJson(inputs.container_volumes) }}
       options: ${{ inputs.container_options }}
-    env:
-      CI_TEST_SUITE: unit
-      CI_PLATFORM: ${{ inputs.platform }}
-      CI_DEVICE: ${{ inputs.device }}
-      CI_TEST_GROUP: __all__
-      CI_NPROC_PER_NODE: ${{ inputs.nproc_per_node }}
-      MEGATRON_CI_IMAGE: ${{ inputs.image }}
-      CI_UNIT_SNAPSHOT_DIRECTORY: ${{ github.workspace }}/unit-runtime-snapshot
-    outputs:
-      artifact_name: ${{ steps.snapshot.outputs.name }}
     steps:
       - name: Checkout Source Code (attempt 1)
         id: checkout1
@@ -159,7 +146,6 @@ jobs:
 
       - name: Install configured runtime packages
         env:
-          CI_TEST_SUITE: unit
           CI_PLATFORM: ${{ inputs.platform }}
           CI_RUNTIME_PIP_PACKAGES_JSON: ${{ inputs.te_fl_runtime_pip_packages }}
           CI_RUNTIME_PIP_INSTALL_ARGS_JSON: ${{ inputs.te_fl_install_pip_args }}
@@ -227,244 +213,37 @@ jobs:
             exit 1
           fi
 
-      - name: Bundle prepared unit dependencies
-        id: snapshot
-        timeout-minutes: 5
-        env:
-          TE_FL_CACHE_KEY: ${{ inputs.te_fl_prepare && inputs.te_fl_cache_key || '' }}
-          TE_FL_WHEEL_DIR: ${{ github.workspace }}/${{ steps.local_cache.outputs.cache-hit == 'true' && 'te-fl-wheel-fallback' || 'te-fl-wheel' }}
-          CI_UNIT_SNAPSHOT_NAME: unit-runtime-${{ inputs.platform }}-${{ inputs.device }}-${{ github.run_id }}-${{ github.run_attempt }}
-        run: '"$CI_PYTHON_BIN" .github/scripts/runtime_snapshot.py prepare'
-
-      - name: Upload unit runtime snapshot
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ steps.snapshot.outputs.name }}
-          path: unit-runtime-snapshot/
-          if-no-files-found: error
-          compression-level: 0
-          retention-days: 7
-
-  unit_test:
-    needs: unit_runtime_prepare
-    if: >-
-      always() && !cancelled() &&
-      (needs.unit_runtime_prepare.result == 'success' ||
-       (!inputs.runtime_snapshot && needs.unit_runtime_prepare.result == 'skipped'))
-    defaults:
-      run:
-        shell: bash
-    runs-on: ${{ fromJson(inputs.runs_on) }}
-    strategy:
-      fail-fast: false
-      matrix:
-        test_group: ${{ fromJson(inputs.test_groups) }}
-    name: unit-${{ inputs.device }}-${{ matrix.test_group.name }}
-    container:
-      image: ${{ inputs.image }}
-      ports:
-        - 80
-      volumes: ${{ fromJson(inputs.container_volumes) }}
-      options: ${{ inputs.container_options }}
-    steps:
-      - name: Checkout Source Code (attempt 1)
-        id: checkout1
-        uses: actions/checkout@v4
-        continue-on-error: true
-        with:
-          fetch-depth: 1
-          set-safe-directory: true
-
-      - name: Checkout Source Code (attempt 2)
-        id: checkout2
-        if: steps.checkout1.outcome == 'failure'
-        uses: actions/checkout@v4
-        continue-on-error: true
-        with:
-          fetch-depth: 1
-          set-safe-directory: true
-
-      - name: Checkout Source Code (attempt 3)
-        id: checkout3
-        if: steps.checkout2.outcome == 'failure'
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
-          set-safe-directory: true
-
-      - name: Activate platform Python
-        if: inputs.runtime_snapshot
-        working-directory: ${{ github.workspace }}
-        env:
-          CI_TEST_SUITE: activate
-          CI_TEST_GROUP: __all__
-          CI_NPROC_PER_NODE: ${{ inputs.nproc_per_node }}
-          MEGATRON_CI_IMAGE: ${{ inputs.image }}
-          TE_FL_RUNTIME_ENV_JSON: ${{ inputs.te_fl_runtime_environment }}
-        run: |
-          set -euo pipefail
-
-          SETUP_SCRIPT='${{ inputs.setup_script }}'
-          if [[ "$SETUP_SCRIPT" = /* || "$SETUP_SCRIPT" == *".."* ]]; then
-            echo "::error::setup_script must be a repository-relative path"
-            exit 1
-          fi
-          if [ ! -f "$GITHUB_WORKSPACE/$SETUP_SCRIPT" ]; then
-            echo "::error::Platform setup script not found: $SETUP_SCRIPT"
-            exit 1
-          fi
-
-          source "$GITHUB_WORKSPACE/.github/scripts/set_env_common.sh"
-          if [ "$TE_FL_RUNTIME_ENV_JSON" != "{}" ]; then
-            ci_apply_env_json "$TE_FL_RUNTIME_ENV_JSON"
-          fi
-          bash "$GITHUB_WORKSPACE/$SETUP_SCRIPT"
-        timeout-minutes: 5
-
-      - name: Download prepared unit runtime
-        if: inputs.runtime_snapshot
-        uses: actions/download-artifact@v4
-        with:
-          # Use the producer output, not this job's run_attempt, on failed-job reruns.
-          name: ${{ needs.unit_runtime_prepare.outputs.artifact_name }}
-          path: unit-runtime-snapshot/
-
-      - name: Install prepared unit runtime offline
-        if: inputs.runtime_snapshot
-        timeout-minutes: 15
-        env:
-          TE_FL_CACHE_KEY: ${{ inputs.te_fl_prepare && inputs.te_fl_cache_key || '' }}
-          TE_FL_INSTALL_PIP_ARGS_JSON: ${{ inputs.te_fl_install_pip_args }}
-        run: '"$CI_PYTHON_BIN" .github/scripts/runtime_snapshot.py install'
-
-      - name: Setup platform environment
-        working-directory: ${{ github.workspace }}
-        env:
-          CI_TEST_SUITE: unit
-          CI_TEST_GROUP: ${{ matrix.test_group.name }}
-          CI_NPROC_PER_NODE: ${{ inputs.nproc_per_node }}
-          MEGATRON_CI_IMAGE: ${{ inputs.image }}
-          TE_FL_RUNTIME_ENV_JSON: ${{ inputs.te_fl_runtime_environment }}
-        run: |
-          set -euo pipefail
-
-          SETUP_SCRIPT='${{ inputs.setup_script }}'
-          if [[ "$SETUP_SCRIPT" = /* || "$SETUP_SCRIPT" == *".."* ]]; then
-            echo "::error::setup_script must be a repository-relative path"
-            exit 1
-          fi
-          if [ ! -f "$GITHUB_WORKSPACE/$SETUP_SCRIPT" ]; then
-            echo "::error::Platform setup script not found: $SETUP_SCRIPT"
-            exit 1
-          fi
-
-          source "$GITHUB_WORKSPACE/.github/scripts/set_env_common.sh"
-          if [ "$TE_FL_RUNTIME_ENV_JSON" != "{}" ]; then
-            ci_apply_env_json "$TE_FL_RUNTIME_ENV_JSON"
-          fi
-          bash "$GITHUB_WORKSPACE/$SETUP_SCRIPT"
-        timeout-minutes: 30
-
-      - name: Install configured runtime packages
-        if: ${{ !inputs.runtime_snapshot }}
-        env:
-          CI_PLATFORM: ${{ inputs.platform }}
-          CI_RUNTIME_PIP_PACKAGES_JSON: ${{ inputs.te_fl_runtime_pip_packages }}
-          CI_RUNTIME_PIP_INSTALL_ARGS_JSON: ${{ inputs.te_fl_install_pip_args }}
-        run: |
-          set -euo pipefail
-          source "$GITHUB_WORKSPACE/.github/scripts/set_env_common.sh"
-          ci_install_runtime_packages
-
-      - name: Restore TE-FL wheel (attempt 1)
-        if: ${{ !inputs.runtime_snapshot && inputs.te_fl_prepare && inputs.te_fl_cache_key != '' }}
-        id: te_fl_cache_1
-        continue-on-error: true
-        uses: actions/cache/restore@v4
-        with:
-          path: te-fl-wheel
-          key: ${{ inputs.te_fl_cache_key }}
-
-      - name: Wait before restoring TE-FL wheel (attempt 2)
-        if: ${{ !inputs.runtime_snapshot && inputs.te_fl_prepare && inputs.te_fl_cache_key != '' && steps.te_fl_cache_1.outputs.cache-hit != 'true' }}
-        run: sleep 5
-
-      - name: Restore TE-FL wheel (attempt 2)
-        if: ${{ !inputs.runtime_snapshot && inputs.te_fl_prepare && inputs.te_fl_cache_key != '' && steps.te_fl_cache_1.outputs.cache-hit != 'true' }}
-        id: te_fl_cache_2
-        continue-on-error: true
-        uses: actions/cache/restore@v4
-        with:
-          path: te-fl-wheel
-          key: ${{ inputs.te_fl_cache_key }}
-
-      - name: Wait before restoring TE-FL wheel (attempt 3)
-        if: ${{ !inputs.runtime_snapshot && inputs.te_fl_prepare && inputs.te_fl_cache_key != '' && steps.te_fl_cache_1.outputs.cache-hit != 'true' && steps.te_fl_cache_2.outputs.cache-hit != 'true' }}
-        run: sleep 15
-
-      - name: Restore TE-FL wheel (attempt 3)
-        if: ${{ !inputs.runtime_snapshot && inputs.te_fl_prepare && inputs.te_fl_cache_key != '' && steps.te_fl_cache_1.outputs.cache-hit != 'true' && steps.te_fl_cache_2.outputs.cache-hit != 'true' }}
-        id: te_fl_cache_3
-        continue-on-error: true
-        uses: actions/cache/restore@v4
-        with:
-          path: te-fl-wheel
-          key: ${{ inputs.te_fl_cache_key }}
-
-      - name: Restore local TE-FL wheel fallback
-        if: ${{ !inputs.runtime_snapshot && inputs.te_fl_prepare && inputs.te_fl_cache_key != '' && inputs.te_fl_cache_directory != '' && inputs.te_fl_local_cache_key != '' && steps.te_fl_cache_1.outputs.cache-hit != 'true' && steps.te_fl_cache_2.outputs.cache-hit != 'true' && steps.te_fl_cache_3.outputs.cache-hit != 'true' }}
-        id: local_cache
-        timeout-minutes: 5
-        env:
-          TE_FL_CACHE_DIRECTORY: ${{ inputs.te_fl_cache_directory }}
-          TE_FL_CACHE_KEY: ${{ inputs.te_fl_local_cache_key }}
-          TE_FL_WHEEL_DIR: ${{ github.workspace }}/te-fl-wheel-fallback
-        run: python3 .github/scripts/te_fl_local_cache.py restore --required
-
-      - name: Check TE-FL wheel cache
-        if: ${{ !inputs.runtime_snapshot && inputs.te_fl_prepare && inputs.te_fl_cache_key != '' }}
-        env:
-          CACHE_HIT_1: ${{ steps.te_fl_cache_1.outputs.cache-hit }}
-          CACHE_HIT_2: ${{ steps.te_fl_cache_2.outputs.cache-hit }}
-          CACHE_HIT_3: ${{ steps.te_fl_cache_3.outputs.cache-hit }}
-          LOCAL_CACHE_HIT: ${{ steps.local_cache.outputs.cache-hit }}
-        run: |
-          set -euo pipefail
-          if [ "$CACHE_HIT_1" != true ] && [ "$CACHE_HIT_2" != true ] && [ "$CACHE_HIT_3" != true ] && [ "$LOCAL_CACHE_HIT" != true ]; then
-            echo "::error::TE-FL wheel cache was not restored" >&2
-            exit 1
-          fi
-
       - name: Install TE-FL wheel
-        if: ${{ !inputs.runtime_snapshot && inputs.te_fl_prepare && inputs.te_fl_cache_key != '' }}
+        if: inputs.te_fl_prepare && inputs.te_fl_cache_key != ''
         env:
           TE_FL_WHEEL_DIR: ${{ github.workspace }}/${{ steps.local_cache.outputs.cache-hit == 'true' && 'te-fl-wheel-fallback' || 'te-fl-wheel' }}
           TE_FL_INSTALL_PIP_ARGS_JSON: ${{ inputs.te_fl_install_pip_args }}
         run: .github/scripts/install_te_fl_runtime.sh
 
-      - name: Run unit tests - ${{ matrix.test_group.name }}
+      - name: Run unit test groups sequentially
         id: unit_test
         working-directory: ${{ github.workspace }}
         env:
           CI_PLATFORM: ${{ inputs.platform }}
           CI_DEVICE: ${{ inputs.device }}
-          CI_TEST_GROUP: ${{ matrix.test_group.name }}
-          CI_TEST_PATH: ${{ matrix.test_group.path }}
+          CI_TEST_GROUPS: ${{ inputs.test_groups }}
+          CI_SETUP_SCRIPT: ${{ inputs.setup_script }}
           CI_NPROC_PER_NODE: ${{ inputs.nproc_per_node }}
           CI_IGNORED_TESTS: ${{ inputs.ignored_tests }}
           CI_PYTEST_EXTRA_ARGS: ${{ inputs.pytest_extra_args }}
           CI_EXPERIMENTAL_PYTEST_EXTRA_ARGS: ${{ inputs.experimental_pytest_extra_args }}
-        run: tests/test_utils/runners/run_ci_unit_tests.sh
-        timeout-minutes: 60
+        run: python3 .github/scripts/run_unit_groups.py
 
       - name: Upload Coverage Report
+        if: ${{ !cancelled() && steps.unit_test.outcome != 'skipped' }}
         uses: actions/upload-artifact@v4
         continue-on-error: true
         with:
-          name: coverage-${{ inputs.platform }}-${{ inputs.device }}-${{ matrix.test_group.name }}
-          path: coverage-report/coverage-${{ inputs.platform }}-${{ inputs.device }}-${{ matrix.test_group.name }}.json
+          name: coverage-${{ inputs.platform }}-${{ inputs.device }}
+          path: coverage-report/**/*.json
 
       - name: Upload Coverage Report to FlagCICD
+        if: ${{ !cancelled() && steps.unit_test.outcome != 'skipped' }}
         uses: flagos-ai/FlagOps/actions/post-pytest-report@v2
         continue-on-error: true
         env:
@@ -472,5 +251,5 @@ jobs:
         with:
           backend_url: 'http://flagcicd-inner.flagos.net:8000/metrics/'
           user_id: '000000000000000000'
-          report_path: 'coverage-report/coverage-${{ inputs.platform }}-${{ inputs.device }}-${{ matrix.test_group.name }}.json'
+          report_path: 'coverage-report/coverage-${{ inputs.platform }}-${{ inputs.device }}-all.json'
           fail_on_error: 'false'

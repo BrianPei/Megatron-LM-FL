@@ -77,19 +77,6 @@ ci_activate_python_environment() {
   echo "Python: $python_bin ($($python_bin --version 2>&1))"
 }
 
-# Only the unit producer resolves/builds dependencies; other jobs keep local setup.
-ci_install_unit_packages() {
-  if [ "${CI_TEST_SUITE:-}" = unit ] && [ "${CI_UNIT_SNAPSHOT_READY:-}" = true ]; then
-    return
-  fi
-  local python_bin="${CI_PYTHON_BIN:-$(command -v python3)}"
-  if [ "${CI_TEST_SUITE:-}" = unit ] && [ -n "${CI_UNIT_SNAPSHOT_DIRECTORY:-}" ]; then
-    "$python_bin" "$CI_SETUP_DIR/runtime_snapshot.py" collect -- "$@"
-  else
-    "$python_bin" -m pip install "$@"
-  fi
-}
-
 ci_ensure_curl() {
   if command -v curl >/dev/null 2>&1; then
     command -v curl
@@ -161,9 +148,6 @@ ENVEOF
 }
 
 ci_install_runtime_packages() {
-  if [ "${CI_TEST_SUITE:-}" = unit ] && [ "${CI_UNIT_SNAPSHOT_READY:-}" = true ]; then
-    return
-  fi
   local python_bin="${CI_PYTHON_BIN:-$(command -v python3)}"
   local packages_json="${CI_RUNTIME_PIP_PACKAGES_JSON:-[]}"
   local install_args_json="${CI_RUNTIME_PIP_INSTALL_ARGS_JSON:-[]}"
@@ -231,7 +215,7 @@ PY
   # Do not uninstall image triton.
 
   echo "Installing configured runtime pip packages: ${packages[*]}"
-  ci_install_unit_packages --no-cache-dir "${install_args[@]}" "${packages[@]}"
+  "$python_bin" -m pip install --no-cache-dir "${install_args[@]}" "${packages[@]}"
 }
 
 ci_install_uv_compatibility_shim() {
