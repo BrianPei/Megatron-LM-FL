@@ -85,6 +85,9 @@ if ! [[ "$CI_NPROC_PER_NODE" =~ ^[1-9][0-9]*$ ]]; then
 fi
 
 case "$CI_TEST_SUITE" in
+  activate)
+    ci_activate_python_environment
+    ;;
   unit)
     setup_unit_environment
     ;;

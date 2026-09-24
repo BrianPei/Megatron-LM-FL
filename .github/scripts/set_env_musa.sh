@@ -44,7 +44,7 @@ prepare_musa_te_runtime() {
   # Install only the adapter package so the image-provided Torch/MUSA pair is
   # not replaced by pip dependency resolution.
   if ! python3 -c "import torchada" >/dev/null 2>&1; then
-    python3 -m pip install torchada \
+    ci_install_unit_packages torchada \
       --ignore-requires-python --no-deps --no-cache-dir
   fi
   python3 -c \
@@ -60,7 +60,7 @@ prepare_musa_te_runtime() {
   # image-provided Torch/MUSA pair. Let onnxscript resolve its own ONNX-only
   # dependencies, including onnx_ir, before TE imports its ONNX extensions.
   if ! python3 -c "import onnxscript" >/dev/null 2>&1; then
-    python3 -m pip install onnxscript --no-cache-dir
+    ci_install_unit_packages onnxscript --no-cache-dir
   fi
   python3 -c \
     "import onnxscript; print(f'onnxscript import passed: {onnxscript.__file__}')"
@@ -72,8 +72,8 @@ install_musa_tensorboard() {
   # dependency (tensorboard.compat.tensorflow_stub.flags does `from absl.flags
   # import *`) and is not preinstalled in the MUSA image. Install it explicitly
   # so the SummaryWriter/event_accumulator validation below does not fail.
-  python3 -m pip install absl-py --no-cache-dir
-  python3 -m pip install "tensorboard==2.17.1" --no-deps --no-cache-dir
+  ci_install_unit_packages absl-py --no-cache-dir
+  ci_install_unit_packages "tensorboard==2.17.1" --no-deps --no-cache-dir
   python3 -c \
     "from torch.utils.tensorboard import SummaryWriter; from tensorboard.backend.event_processing import event_accumulator; print('MUSA TensorBoard writer and reader validated')"
 }
@@ -157,9 +157,9 @@ setup_unit_environment() {
     nltk
     absl-py
   )
-  python3 -m pip install "${test_dependencies[@]}" --no-cache-dir
-  python3 -m pip install fastapi uvicorn --no-cache-dir
-  if [ "${CI_TEST_GROUP:-}" = "models" ]; then
+  ci_install_unit_packages "${test_dependencies[@]}" --no-cache-dir
+  ci_install_unit_packages fastapi uvicorn --no-cache-dir
+  if [[ "${CI_TEST_GROUP:-}" = models || "${CI_TEST_GROUP:-}" = __all__ ]]; then
     # rl_utils imports SummaryWriter while model tests are being collected.
     install_musa_tensorboard
   fi
@@ -183,6 +183,9 @@ setup_build_environment() {
 
 ci_require_env CI_TEST_SUITE
 case "$CI_TEST_SUITE" in
+  activate)
+    ci_activate_python_environment
+    ;;
   unit)
     setup_unit_environment
     ;;

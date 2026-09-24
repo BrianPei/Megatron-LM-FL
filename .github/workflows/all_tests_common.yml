@@ -52,6 +52,7 @@ jobs:
       container_options: ${{ steps.config.outputs.container_options }}
       device_types: ${{ steps.config.outputs.device_types }}
       setup_script: ${{ steps.config.outputs.setup_script }}
+      unit_runtime_snapshot: ${{ steps.config.outputs.unit_runtime_snapshot }}
       unit_nproc_per_node: ${{ steps.config.outputs.unit_nproc_per_node }}
       train_test_matrix: ${{ steps.config.outputs.train_test_matrix }}
       unit_test_groups: ${{ steps.config.outputs.unit_test_groups }}
@@ -106,6 +107,12 @@ jobs:
           options=$(yq -r '.container_options // ""' "$config_file")
           devices=$(yq -o=json -I=0 '.device_types // []' "$config_file")
           setup_script=$(yq -r '.setup_script // ""' "$config_file")
+          unit_snapshot=$(yq -r '.test_matrix.unit.runtime_snapshot' "$config_file")
+          case "$unit_snapshot" in
+            null) unit_snapshot=true ;;
+            true|false) ;;
+            *) echo "::error::unit.runtime_snapshot must be a boolean" >&2; exit 1 ;;
+          esac
           unit_nproc=$(yq -r '.test_matrix.unit.nproc_per_node // ""' "$config_file")
           unit_groups=$(yq -o=json -I=0 '.test_matrix.unit.groups // []' "$config_file")
           unit_extra=$(yq -o=json -I=0 '.test_matrix.unit.pytest_extra_args // []' "$config_file")
@@ -156,6 +163,7 @@ jobs:
             echo "container_options=$options"
             echo "device_types=$devices"
             echo "setup_script=$setup_script"
+            echo "unit_runtime_snapshot=$unit_snapshot"
             echo "unit_nproc_per_node=$unit_nproc"
             echo "train_test_matrix=$train_matrix"
             echo "unit_test_groups=$unit_groups"
@@ -200,6 +208,7 @@ jobs:
       container_volumes: ${{ needs.checkout_and_config.outputs.container_volumes }}
       container_options: ${{ needs.checkout_and_config.outputs.container_options }}
       setup_script: ${{ needs.checkout_and_config.outputs.setup_script }}
+      runtime_snapshot: ${{ needs.checkout_and_config.outputs.unit_runtime_snapshot == 'true' }}
       test_groups: ${{ needs.checkout_and_config.outputs.unit_test_groups }}
       nproc_per_node: ${{ needs.checkout_and_config.outputs.unit_nproc_per_node }}
       pytest_extra_args: ${{ needs.checkout_and_config.outputs.unit_pytest_extra_args }}

@@ -63,8 +63,8 @@ setup_unit_environment() {
     --retries 10
     --no-cache-dir
   )
-  python3 -m pip install torch boto3 "${test_dependencies[@]}" "${pip_index_args[@]}"
-  python3 -m pip install fastapi uvicorn "${pip_index_args[@]}"
+  ci_install_unit_packages torch boto3 "${test_dependencies[@]}" "${pip_index_args[@]}"
+  ci_install_unit_packages fastapi uvicorn "${pip_index_args[@]}"
 
   echo "Skipping NVIDIA CUPTI dependencies on MetaX."
   ci_install_project
@@ -80,6 +80,9 @@ setup_build_environment() {
 
 ci_require_env CI_TEST_SUITE
 case "$CI_TEST_SUITE" in
+  activate)
+    ci_activate_python_environment
+    ;;
   unit)
     setup_unit_environment
     ;;

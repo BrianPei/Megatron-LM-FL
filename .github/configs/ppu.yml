@@ -33,6 +33,8 @@ device_types:
 
 test_matrix:
   unit:
+    # No dynamic unit dependencies: avoid an unnecessary producer and artifact transfer.
+    runtime_snapshot: false
     nproc_per_node: 8
     devices:
       - zw810e

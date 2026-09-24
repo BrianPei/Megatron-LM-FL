@@ -165,12 +165,12 @@ setup_unit_environment() {
 
   # boto3 is intentionally omitted: S3 unit tests provide a local mock, while
   # botocore downloads have been unreliable through the CI proxy.
-  python3 -m pip install ninja "${test_dependencies[@]}" "${pip_index_args[@]}"
+  ci_install_unit_packages ninja "${test_dependencies[@]}" "${pip_index_args[@]}"
   echo "Ninja: $(ninja --version)"
 
   # Collection-only dependencies are installed without dependencies to preserve
   # the torch, protobuf, and numpy versions validated in the Ascend image.
-  python3 -m pip install "tensorboard<2.18" fastapi starlette uvicorn griffe \
+  ci_install_unit_packages "tensorboard<2.18" fastapi starlette uvicorn griffe \
     --no-deps "${pip_index_args[@]}"
 
   echo "Skipping NVIDIA CUPTI dependencies and Emerging-Optimizers on Ascend."
@@ -189,6 +189,9 @@ setup_build_environment() {
 
 ci_require_env CI_TEST_SUITE
 case "$CI_TEST_SUITE" in
+  activate)
+    ci_activate_python_environment
+    ;;
   unit)
     setup_unit_environment
     ;;
