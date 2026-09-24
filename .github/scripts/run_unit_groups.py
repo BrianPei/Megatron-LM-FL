@@ -4,9 +4,9 @@
 import json
 import os
 import re
+import shutil
 import signal
 import subprocess
-import tempfile
 from pathlib import Path
 
 
@@ -77,6 +77,32 @@ def combine_coverage(directories: list, output: Path, environment: dict) -> None
         print(f"::warning::Could not combine unit coverage: {error}", flush=True)
 
 
+def restore_results(path: Path, identity: dict, attempt: int) -> dict:
+    if attempt <= 1 or not identity["GITHUB_RUN_ID"] or not identity["GITHUB_SHA"]:
+        return {}
+    try:
+        state = json.loads(path.read_text())
+        if state["identity"] != identity or not 0 < state["attempt"] < attempt:
+            return {}
+        results = state["results"]
+        names = {group["name"] for group in json.loads(identity["CI_TEST_GROUPS"])}
+        if not isinstance(results, dict) or any(
+            name not in names or result["name"] != name or type(result["exit_code"]) is not int
+            for name, result in results.items()
+        ):
+            raise ValueError("Invalid group results")
+        return {name: result for name, result in results.items() if result["exit_code"] == 0}
+    except (OSError, ValueError, KeyError, TypeError) as error:
+        print(f"::warning::No usable unit checkpoint; running all groups: {error}", flush=True)
+        return {}
+
+
+def save_results(path: Path, identity: dict, attempt: int, results: dict) -> None:
+    temporary = path.with_suffix(".tmp")
+    temporary.write_text(json.dumps({"identity": identity, "attempt": attempt, "results": results}))
+    temporary.replace(path)
+
+
 def main() -> int:
     groups = json.loads(os.environ["CI_TEST_GROUPS"])
     if not isinstance(groups, list) or not groups:
@@ -94,13 +120,56 @@ def main() -> int:
     reports = workspace / "coverage-report"
     reports.mkdir(exist_ok=True)
     prefix = f"coverage-{os.environ['CI_PLATFORM']}-{os.environ['CI_DEVICE']}"
+    for name in [group["name"] for group in groups] + ["all"]:
+        (reports / f"{prefix}-{name}.json").unlink(missing_ok=True)
+    checkpoint = workspace / ".unit-checkpoint"
+    checkpoint.mkdir(exist_ok=True)
+    state_path = checkpoint / "state.json"
+    attempt = int(os.environ.get("GITHUB_RUN_ATTEMPT", "1"))
+    identity = {
+        key: os.environ.get(key, "")
+        for key in (
+            "GITHUB_RUN_ID",
+            "GITHUB_SHA",
+            "GITHUB_WORKSPACE",
+            "CI_PLATFORM",
+            "CI_DEVICE",
+            "CI_TEST_GROUPS",
+            "CI_SETUP_SCRIPT",
+            "CI_NPROC_PER_NODE",
+            "CI_IGNORED_TESTS",
+            "CI_PYTEST_EXTRA_ARGS",
+            "CI_EXPERIMENTAL_PYTEST_EXTRA_ARGS",
+        )
+    }
+    completed = (
+        restore_results(state_path, identity, attempt)
+        if os.environ.get("CI_UNIT_RESUME") == "true"
+        else {}
+    )
+    # Persist all previous successes before running anything, including groups later in the list.
+    save_results(state_path, identity, attempt, completed)
+    summary = os.environ.get("GITHUB_STEP_SUMMARY")
+    if summary:
+        with open(summary, "a") as stream:
+            stream.write(
+                "| Unit group | Status | Exit code | Execution |\n| --- | --- | --- | --- |\n"
+            )
     results = []
-    with tempfile.TemporaryDirectory(prefix="unit-coverage-") as temporary:
-        directories = []
-        for group in groups:
-            name = group["name"]
-            directory = Path(temporary) / name
-            directories.append(directory)
+    directories = []
+    for group in groups:
+        name = group["name"]
+        directory = checkpoint / name
+        directories.append(directory)
+        reused = name in completed
+        print(f"::group::Unit tests: {name}", flush=True)
+        if reused:
+            code = 0
+            print("Previously passed in this workflow run; skipping.", flush=True)
+        else:
+            # A retry must replace the failed attempt's partial coverage, not merge into it.
+            if directory.exists():
+                shutil.rmtree(directory)
             environment = {
                 **os.environ,
                 "CI_TEST_SUITE": "unit_group",
@@ -112,23 +181,37 @@ def main() -> int:
                 "GITHUB_ENV": os.devnull,
                 "GITHUB_PATH": os.devnull,
             }
-            print(f"::group::Unit tests: {name}", flush=True)
-            code = run_group(environment)
-            print("::endgroup::", flush=True)
-            if code:
-                print(f"::error::Unit group {name} failed with exit code {code}", flush=True)
-            results.append({"name": name, "exit_code": code})
-            report = directory / f"{prefix}-{name}.json"
-            if report.exists():
-                (reports / report.name).write_bytes(report.read_bytes())
-        combine_coverage(directories, reports / f"{prefix}-all.json", dict(os.environ))
+            try:
+                code = run_group(environment)
+            except BaseException:
+                print("::endgroup::", flush=True)
+                print(f"::warning::INCOMPLETE: Unit tests: {name}", flush=True)
+                if summary:
+                    with open(summary, "a") as stream:
+                        stream.write(f"| {name} | INCOMPLETE | - | Interrupted |\n")
+                raise
+        print("::endgroup::", flush=True)
+        status = "PASS" if code == 0 else "TIMEOUT" if code == 124 else "FAIL"
+        execution = "Previously passed" if reused else "Executed"
+        if code:
+            print(f"::error::{status}: Unit group {name} failed with exit code {code}", flush=True)
+        else:
+            print(f"PASS: Unit tests: {name} ({execution})", flush=True)
+        result = {"name": name, "exit_code": code}
+        if reused:
+            result["reused"] = True
+        completed[name] = result
+        save_results(state_path, identity, attempt, completed)
+        results.append(result)
+        (reports / "unit-results.json").write_text(json.dumps(results, indent=2) + "\n")
+        report = directory / f"{prefix}-{name}.json"
+        if report.exists():
+            (reports / report.name).write_bytes(report.read_bytes())
+        if summary:
+            with open(summary, "a") as stream:
+                stream.write(f"| {name} | {status} | {code} | {execution} |\n")
+    combine_coverage(directories, reports / f"{prefix}-all.json", dict(os.environ))
 
-    (reports / "unit-results.json").write_text(json.dumps(results, indent=2) + "\n")
-    if os.environ.get("GITHUB_STEP_SUMMARY"):
-        with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as stream:
-            stream.write("| Unit group | Exit code |\n| --- | --- |\n")
-            for result in results:
-                stream.write(f"| {result['name']} | {result['exit_code']} |\n")
     return int(any(result["exit_code"] for result in results))
 
 

@@ -60,13 +60,34 @@ Each group retains a 60-minute timeout. Failed or timed-out groups do not preven
 later groups from running, but any nonzero group result fails the unit job. The job
 has a 12-hour total limit to accommodate sequential groups and setup. There is no
 new retry of tests and no change to assertions, ignore lists, distributed process
-counts or experimental passes. Rerunning the job reruns all configured groups.
+counts or experimental passes.
+
+On GitHub's **Re-run failed jobs**, unit jobs restore a small checkpoint containing
+group results and coverage data. Groups that already passed in the same workflow
+run are skipped; failed, timed-out and unfinished groups run again. Each completed
+group updates the checkpoint, and the workflow attempts to cache it even after a
+failure or cancellation. Missing, evicted or invalid checkpoints fall back to
+running all groups. A hard runner shutdown may prevent saving the checkpoint.
+Checkpoints are scoped to the run, commit, platform/device and test configuration;
+they are never reused by a new workflow run. Multiple reruns retain prior successes.
+**Re-run all jobs** also reuses successful unit groups; start a new workflow run to
+force all groups to execute again.
+
+Environment setup still runs normally on every attempt. Dependencies may change
+between attempts: this is result reuse, not a frozen environment or container
+snapshot. No automatic test retries are added.
 
 Coverage data is isolated per group. The coverage artifact retains each completed
 group's JSON and `unit-results.json`; a combined `coverage-<platform>-<device>-all.json`
 is sent to FlagCICD. Available reports are uploaded even after test failures.
-The Actions summary lists per-group exit codes. Hardware timing and residual
-cross-group filesystem effects still need validation in the platform container.
+Each completed group prints `PASS`, `FAIL` or `TIMEOUT` outside its collapsible log
+section, so its result remains visible without expanding test output. The Actions
+summary lists the same status and exit code. Interrupted groups are marked
+`INCOMPLETE`, not passed, and remain eligible for rerun. Reused successes show
+`PASS` with `Previously passed`; their JSON results have `reused: true`. Reused groups retain
+their coverage, while retries replace the failed attempt's coverage. Hardware timing
+and residual cross-group filesystem effects still need validation in the platform
+container.
 
 The unit check is now `unit-<device>` instead of separate `unit-<device>-<group>`
 checks. Before merging, update any branch protection rules that require individual

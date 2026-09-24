@@ -220,10 +220,23 @@ jobs:
           TE_FL_INSTALL_PIP_ARGS_JSON: ${{ inputs.te_fl_install_pip_args }}
         run: .github/scripts/install_te_fl_runtime.sh
 
+      - name: Restore previous unit results
+        id: unit_results_cache
+        if: github.run_attempt > 1
+        continue-on-error: true
+        timeout-minutes: 5
+        uses: actions/cache/restore@v4
+        with:
+          path: .unit-checkpoint
+          key: unit-results-v1-${{ github.run_id }}-${{ github.sha }}-${{ inputs.platform }}-${{ inputs.device }}-${{ github.run_attempt }}
+          restore-keys: |
+            unit-results-v1-${{ github.run_id }}-${{ github.sha }}-${{ inputs.platform }}-${{ inputs.device }}-
+
       - name: Run unit test groups sequentially
         id: unit_test
         working-directory: ${{ github.workspace }}
         env:
+          CI_UNIT_RESUME: ${{ steps.unit_results_cache.outcome == 'success' && steps.unit_results_cache.outputs.cache-matched-key != '' }}
           CI_PLATFORM: ${{ inputs.platform }}
           CI_DEVICE: ${{ inputs.device }}
           CI_TEST_GROUPS: ${{ inputs.test_groups }}
@@ -234,12 +247,22 @@ jobs:
           CI_EXPERIMENTAL_PYTEST_EXTRA_ARGS: ${{ inputs.experimental_pytest_extra_args }}
         run: python3 .github/scripts/run_unit_groups.py
 
+      - name: Save unit results for reruns
+        if: ${{ always() && steps.unit_test.outcome != 'skipped' }}
+        continue-on-error: true
+        timeout-minutes: 5
+        uses: actions/cache/save@v4
+        with:
+          path: .unit-checkpoint
+          key: unit-results-v1-${{ github.run_id }}-${{ github.sha }}-${{ inputs.platform }}-${{ inputs.device }}-${{ github.run_attempt }}
+
       - name: Upload Coverage Report
         if: ${{ !cancelled() && steps.unit_test.outcome != 'skipped' }}
         uses: actions/upload-artifact@v4
         continue-on-error: true
         with:
           name: coverage-${{ inputs.platform }}-${{ inputs.device }}
+          overwrite: true
           path: coverage-report/**/*.json
 
       - name: Upload Coverage Report to FlagCICD
