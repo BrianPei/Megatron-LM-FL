@@ -122,6 +122,10 @@ test_matrix:
       # platform config ignores this file (CUDA: "not present in FL CI assets").
       - tests/unit_tests/data/test_fim_dataset.py
 
+      # Data: fetches the gpt2 tokenizer config from hf-mirror.com despite local
+      # vocab/merges, hanging the workers until the 60-minute timeout.
+      - tests/unit_tests/data/test_preprocess_data.py
+
       # Fusions: all parameters dispatch the unregistered TE-FL rmsnorm_bwd_add.
       - tests/unit_tests/fusions/test_rmsnorm_residual_fusion.py::test_rmsnorm_residual_fusion
 
@@ -180,6 +184,9 @@ test_matrix:
       # Ignore the whole file like KunLunXin/Enflame/MUSA to avoid burning 10+
       # minutes per new parameterization and losing the rest of the session.
       - tests/unit_tests/pipeline_parallel/test_bridge_communicator.py
+
+      # Pipeline parallel: same BridgeCommunicator P2P recv deadlock (SIGABRT).
+      - tests/unit_tests/pipeline_parallel/test_multimodule_communicator.py
 
       # Dis_checkpointing
       - tests/unit_tests/dist_checkpointing/models/test_bert_model.py
