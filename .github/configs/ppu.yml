@@ -84,6 +84,11 @@ test_matrix:
       - tests/unit_tests/test_optimizer_cpu_offloading.py::test_overlap_cpu_optimizer_d2h_h2d_sync_correctness[True-sgd-
 
       # Distributed
+      # PPU NCCL/PCCL backend ignores the premul factor of _make_nccl_premul_sum
+      # and runs it as a plain SUM, so the fused gradient_reduce_div_fusion path
+      # drops the 1/world_size scaling (result 36 instead of the expected 4.5).
+      - tests/unit_tests/distributed/megatron_fsdp/test_gradient_reduce_preprocessing.py::test_gradient_scaling_matches_rank_average[all_reduce-True]
+      - tests/unit_tests/distributed/megatron_fsdp/test_gradient_reduce_preprocessing.py::test_gradient_scaling_matches_rank_average[reduce_scatter-True]
       - tests/unit_tests/distributed/megatron_fsdp/test_mcore_fully_sharded_data_parallel.py
       - tests/unit_tests/distributed/megatron_fsdp/test_mfsdp_fully_shard.py
       - tests/unit_tests/distributed/test_distributed_data_parallel.py
@@ -149,9 +154,14 @@ test_matrix:
       # Pipeline parallel: TE-FL grouped GEMM broadcast dimension mismatch (entire file).
       - tests/unit_tests/pipeline_parallel/test_fine_grained_activation_offloading.py
 
-      # Pipeline parallel: the upstream bridge-communicator teardown case hangs
-      # in a PPU NCCL collective; keep the other parameterizations enabled.
+      # Pipeline parallel: the bridge-communicator shape negotiation hangs on PPU
+      # when both grids are pure tensor-parallel (dp=1): the P2P
+      # batch_isend_irecv times out after 600s (watchdog aborts the NCCL
+      # communicator), and the receiver's torch.empty(shape) then raises
+      # "SymIntArrayRef expected to contain only concrete integers".
+      # Keep the dp=2 parameterizations enabled.
       - tests/unit_tests/pipeline_parallel/test_bridge_communicator.py::TestBridgeCommunicator::test_bridge_communicator_with_transformer_blocks[2-1-2-1-2]
+      - tests/unit_tests/pipeline_parallel/test_bridge_communicator.py::TestBridgeCommunicator::test_bridge_communicator_with_transformer_blocks[4-1-4-1-4]
 
       # Dis_checkpointing
       - tests/unit_tests/dist_checkpointing/models/test_bert_model.py
@@ -176,6 +186,16 @@ test_matrix:
       - tests/unit_tests/dist_checkpointing/test_serialization.py
       - tests/unit_tests/dist_checkpointing/test_torch_dist.py::TestCPUTensors::test_cpu_tensors_dont_take_too_much_space
       - tests/unit_tests/dist_checkpointing/test_torch_dist.py::TestCachedMetadata::test_cached_metadata
+
+      # others: test_sharded_state_dict_restore exercises the dist_checkpointing
+      # save/load path with the modelopt + TE-layernorm-remap spec. Its tensor
+      # exchange hangs in an NCCL all_gather on PPU (600s watchdog, one rank
+      # never enqueues the collective, then communicator abort + segfault).
+      # KunLunXin ignores the same test for a FLAGCX gather_object backend error.
+      - tests/unit_tests/post_training/test_modelopt_module_spec.py::TestModelOptGPTModel::test_sharded_state_dict_restore
+      - tests/unit_tests/post_training/test_modelopt_module_spec.py::TestModelOptMLAMoE::test_sharded_state_dict_restore
+      - tests/unit_tests/post_training/test_modelopt_module_spec.py::TestModelOptLlama4MoE::test_sharded_state_dict_restore
+      - tests/unit_tests/post_training/test_modelopt_module_spec.py::TestModelOptHybridModel::test_sharded_state_dict_restore
 
   functional:
     train:
