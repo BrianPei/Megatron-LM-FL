@@ -13,6 +13,11 @@ configure_ppu_runtime() {
   ci_export_env NCCL_NVLS_ENABLE 0
   # The manual tests use the vendor NCCL/PCCL interface, not the FlagCX plugin.
   ci_export_env DISTRIBUTED_BACKEND nccl
+
+  # The snapshot pins TE, but prepare owns its version now. Keep vendor pins.
+  if [ "${PIP_CONSTRAINT:-}" = /opt/megatron-ppu-ci/constraints.txt ]; then
+    sed -i '/^[[:space:]]*transformer-engine==/d' "$PIP_CONSTRAINT"
+  fi
 }
 
 validate_ppu_capacity() {
