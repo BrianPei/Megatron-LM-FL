@@ -199,6 +199,9 @@ setup_build_environment() {
 
 ci_require_env CI_TEST_SUITE
 case "$CI_TEST_SUITE" in
+  activate)
+    ci_activate_python_environment
+    ;;
   unit)
     setup_unit_environment
     ;;

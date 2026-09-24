@@ -26,8 +26,14 @@ all_tests_<platform>.yml
   -> all_tests_common.yml
      -> lint_common.yml
      -> unit_tests_common.yml
-        -> set_env_<platform>.sh
-        -> tests/test_utils/runners/run_ci_unit_tests.sh
+        -> unit_runtime_prepare (once per platform/device)
+           -> set_env_<platform>.sh (all unit dependencies)
+           -> runtime packages + prepared TE-FL wheel
+           -> upload dependency wheels
+        -> parallel unit_test groups
+           -> shallow checkout + download snapshot + offline install
+           -> set_env_<platform>.sh (local configuration and device checks)
+           -> tests/test_utils/runners/run_ci_unit_tests.sh
      -> functional_tests_common.yml
         -> set_env_<platform>.sh
         -> tests/functional_tests/shell_test_utils/run_ci_test.sh
@@ -35,6 +41,51 @@ all_tests_<platform>.yml
 
 Unit tests run before functional tests when both suites are enabled. A failed
 unit matrix prevents the functional matrix from starting.
+
+### Shared unit runtime
+
+`test_matrix.unit.runtime_snapshot` defaults to `true`. Each platform/device
+prepares its dynamic dependencies once per run, using the same image, mounts,
+runner labels and setup script as its test groups. Existing dependency versions
+and pip resolution options are retained; no additional upgrade or constraint
+policy is introduced. Functional tests keep their existing path.
+
+For each dependency install, pip first resolves what the image is missing with
+`--dry-run --report`. Only those packages are downloaded/built into wheels;
+the producer installs those same wheels and records their installation order.
+The existing TE-FL wheel is copied without rebuilding or installing it in the
+producer. There is no full-environment inventory or new runtime validation job.
+
+The artifact contains dependency wheels and an installation list, not a copied
+virtualenv or accelerator runtime. Consumers install with `--no-index --no-deps`
+only for these wheels; subsequent steps retain their normal network settings.
+Images and native runtimes must still be compatible across a platform's jobs;
+artifacts are not shared across platforms. Every CI run prepares its own bundle,
+so moving dependencies are resolved once per run using the existing policy.
+
+Each group retains checkout retries (with `fetch-depth: 1`), editable project
+installation, device/fixture validation, group-specific ports and compatibility
+patches. Setup installs must use `ci_install_unit_packages`; the producer
+builds the wheel bundle and consumers skip those calls only after successful
+bundle installation. `CI_TEST_SUITE=activate` must activate Python
+without installing packages, and `CI_TEST_GROUP=__all__` must prepare the union
+of group-specific dependencies. Non-package filesystem patches stay in setup
+and run in each consumer.
+
+Producer outputs supply the artifact name. Failed
+group reruns reuse that successful producer's artifact, while a rerun of the
+producer gets a new attempt-qualified name. Artifacts expire after seven days;
+after expiry, rerun the full workflow. Artifact/download/install failures remain
+failures, without silently resolving different dependencies in each group.
+
+Platforms with no dynamic unit dependencies can set
+`runtime_snapshot: false` to avoid a producer job and artifact transfer.
+Preparation is nested inside the unit reusable workflow so device-specific
+outputs reach their own matrix directly; the existing aggregate unit gate
+also fails when preparation fails. Compare producer time, artifact transfer,
+per-group setup time, queue time and total elapsed time in real CI before
+claiming a speedup or timeout reduction. The benefit is expected to be greatest
+when downloads/builds repeat or accelerator runner capacity is limited.
 
 ## Platform configuration contract
 
@@ -45,6 +96,7 @@ workflow are:
 | --- | --- |
 | `setup_script` | Repository-relative platform setup script |
 | `test_matrix.unit.nproc_per_node` | Number of distributed processes used by each unit-test group |
+| `test_matrix.unit.runtime_snapshot` | Prepare shared unit dependencies once (default `true`) |
 | `ci_image` | Container image used by test jobs |
 | `runner_labels` | Labels that select the self-hosted runner |
 | `container_volumes` | Host-to-container mounts |
@@ -62,7 +114,7 @@ workflow does not read it. Do not add that field to new configs.
 The setup script receives the suite and distributed process count:
 
 ```text
-CI_TEST_SUITE=unit|functional|build
+CI_TEST_SUITE=activate|unit|functional|build
 CI_NPROC_PER_NODE=<positive integer>
 ```
 
