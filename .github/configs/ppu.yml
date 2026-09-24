@@ -83,6 +83,15 @@ test_matrix:
       - tests/unit_tests/test_optimizer_cpu_offloading.py::test_overlap_cpu_optimizer_d2h_h2d_sync_correctness[False-sgd-
       - tests/unit_tests/test_optimizer_cpu_offloading.py::test_overlap_cpu_optimizer_d2h_h2d_sync_correctness[True-sgd-
 
+      # Core: test_save_checkpoint hangs in the dist_checkpointing metadata
+      # exchange on PPU: rank0 blocks in the NCCL GATHER (SeqNum=32,
+      # NumelIn=2505 -> NumelOut=20040) while ranks 2/3/4/5/7 block in the
+      # following BROADCAST (SeqNum=33, single element), so the collective never
+      # completes and the 600s watchdog aborts the communicator (exit 1). Both
+      # the [torch] and [torch_dcp] parameterizations drive this same
+      # save/load metadata path. Enflame, Hygon and MUSA ignore the entire file.
+      - tests/unit_tests/test_checkpointing.py
+
       # Distributed
       # PPU NCCL/PCCL backend ignores the premul factor of _make_nccl_premul_sum
       # and runs it as a plain SUM, so the fused gradient_reduce_div_fusion path
@@ -105,6 +114,13 @@ test_matrix:
       - tests/unit_tests/data/test_get_batch.py::test_sft_batch[1024-4-
       - tests/unit_tests/data/test_get_batch.py::test_sft_batch[4096-2-
       - tests/unit_tests/data/test_get_batch.py::test_sft_batch[4096-4-
+
+      # Data: test_fim_gpt_dataset requires the upstream HuggingFace tokenizer
+      # fixture. AutoTokenizer rejects the mounted asset path
+      # /opt/data/tokenizers/huggingface because it is not in the 'repo_name' /
+      # 'namespace/repo_name' form required by transformers >= 4.x. Every other
+      # platform config ignores this file (CUDA: "not present in FL CI assets").
+      - tests/unit_tests/data/test_fim_dataset.py
 
       # Fusions: all parameters dispatch the unregistered TE-FL rmsnorm_bwd_add.
       - tests/unit_tests/fusions/test_rmsnorm_residual_fusion.py::test_rmsnorm_residual_fusion
@@ -154,14 +170,16 @@ test_matrix:
       # Pipeline parallel: TE-FL grouped GEMM broadcast dimension mismatch (entire file).
       - tests/unit_tests/pipeline_parallel/test_fine_grained_activation_offloading.py
 
-      # Pipeline parallel: the bridge-communicator shape negotiation hangs on PPU
-      # when both grids are pure tensor-parallel (dp=1): the P2P
-      # batch_isend_irecv times out after 600s (watchdog aborts the NCCL
-      # communicator), and the receiver's torch.empty(shape) then raises
-      # "SymIntArrayRef expected to contain only concrete integers".
-      # Keep the dp=2 parameterizations enabled.
-      - tests/unit_tests/pipeline_parallel/test_bridge_communicator.py::TestBridgeCommunicator::test_bridge_communicator_with_transformer_blocks[2-1-2-1-2]
-      - tests/unit_tests/pipeline_parallel/test_bridge_communicator.py::TestBridgeCommunicator::test_bridge_communicator_with_transformer_blocks[4-1-4-1-4]
+      # Pipeline parallel: every test_bridge_communicator_with_transformer_blocks
+      # parameterization deadlocks on PPU in _communicate_shapes(): the P2P
+      # batch_isend_irecv (COALESCED) times out after 600s (watchdog aborts the
+      # NCCL communicator) and the receiver's torch.empty(shape) then raises
+      # "SymIntArrayRef expected to contain only concrete integers"
+      # (bridge_communicator.py:402). Confirmed for [2-1-2-1-2], [4-1-4-1-4]
+      # and now the dp=2 case [2-2-4-1-2], so no parameterization is safe.
+      # Ignore the whole file like KunLunXin/Enflame/MUSA to avoid burning 10+
+      # minutes per new parameterization and losing the rest of the session.
+      - tests/unit_tests/pipeline_parallel/test_bridge_communicator.py
 
       # Dis_checkpointing
       - tests/unit_tests/dist_checkpointing/models/test_bert_model.py
@@ -196,6 +214,12 @@ test_matrix:
       - tests/unit_tests/post_training/test_modelopt_module_spec.py::TestModelOptMLAMoE::test_sharded_state_dict_restore
       - tests/unit_tests/post_training/test_modelopt_module_spec.py::TestModelOptLlama4MoE::test_sharded_state_dict_restore
       - tests/unit_tests/post_training/test_modelopt_module_spec.py::TestModelOptHybridModel::test_sharded_state_dict_restore
+
+      # others: test_megatron_tokenizer tries to instantiate a HuggingFace
+      # AutoTokenizer (gpt2) and fails to reach huggingface.co from the runner
+      # (FileMetadataError: firewall/proxy/SSL). Missing tokenizer asset; every
+      # other platform config ignores this file.
+      - tests/unit_tests/tokenizers/test_tokenizer.py
 
   functional:
     train:
