@@ -482,7 +482,7 @@ class UnitWorkflowTests(unittest.TestCase):
         self.assertTrue(steps["Upload Coverage Report"]["with"]["overwrite"])
 
     def test_all_platforms_have_install_free_group_hooks(self):
-        for name in ("cuda", "musa", "ascend", "enflame", "hygon", "kunlunxin", "metax"):
+        for name in ("cuda", "musa", "ascend", "enflame", "hygon", "kunlunxin", "metax", "ppu"):
             script = (ROOT / f".github/scripts/set_env_{name}.sh").read_text()
             hook = script.split("  unit_group)\n", 1)[1].split("    ;;", 1)[0]
             self.assertNotIn("pip", hook)
