@@ -1,10 +1,6 @@
 name: s5000_tests
 
 on:
-  push:
-    branches: ["main", "dev", "dev-musa"]
-  pull_request:
-    branches: ["main"]
   workflow_dispatch:
     inputs:
       image_override:

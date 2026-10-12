@@ -1,12 +1,6 @@
 name: hygon_tests
 
 on:
-  push:
-    branches:
-      - dev-hygon
-  pull_request:
-    branches:
-      - main
   workflow_dispatch:
     inputs:
       run_functional_tests:

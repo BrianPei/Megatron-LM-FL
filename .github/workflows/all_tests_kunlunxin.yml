@@ -1,10 +1,6 @@
 name: kunlunxin_tests
 
 on:
-  push:
-    branches: ["main", "dev-kunlun"]
-  pull_request:
-    branches: ["main"]
   workflow_dispatch: # Allows manual triggering
 
 concurrency:
