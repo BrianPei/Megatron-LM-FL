@@ -206,6 +206,7 @@ case "$CI_TEST_SUITE" in
     ;;
   functional)
     ci_setup_functional_environment
+    ci_validate_qwen_assets /home/gitlab-runner/data /home/gitlab-runner/tokenizers
     install_kunlunxin_python_config_shim
     install_kunlunxin_functional_dependencies
     configure_kunlunxin_runtime

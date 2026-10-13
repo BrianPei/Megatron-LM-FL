@@ -323,6 +323,7 @@ test_matrix:
         golden_environment: dev
         golden_platform: p800
         enable_lightweight_mode: false
+        data_path: /home/gitlab-runner/data
         data_cache_path: /tmp/megatron-data-cache
         gpus_per_node: 1
       # Benchmark disabled: with the KunLunXin vendor backend, the first iteration takes

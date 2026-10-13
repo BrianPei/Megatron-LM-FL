@@ -144,6 +144,7 @@ case "$CI_TEST_SUITE" in
     validate_enflame_torch
     export PIP_BREAK_SYSTEM_PACKAGES=1
     ci_setup_functional_environment --break-system-packages
+    ci_install_local_tokenizer_dependencies
     configure_enflame_runtime
     ;;
   build)

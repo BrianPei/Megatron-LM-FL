@@ -143,8 +143,8 @@ PY
 }
 
 prepare_hygon_functional_assets() {
-  local data_root=/opt/data/datasets
-  local tokenizer_root=/opt/data/tokenizers
+  local data_root=/home/gitlab-runner/data
+  local tokenizer_root=/home/gitlab-runner/tokenizers
   local hf_home=/tmp/hygon-huggingface
 
   ci_validate_qwen_assets "$data_root" "$tokenizer_root"
