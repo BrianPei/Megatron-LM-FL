@@ -13,8 +13,12 @@
 # limitations under the License.
 
 # Reusable per-platform pipeline for Megatron-LM-FL CI:
-#   all_tests_common.
+#   prepare_te_fl -> all_tests_common.
 # Called from ci.yml with a platform matrix so each platform runs independently.
+#
+# TE-FL is prepared once per platform and restored from cache by the common test
+# jobs.  Skipping this step leaves the test jobs on whatever Transformer Engine
+# the image ships, which is not the version this commit is built against.
 
 name: Platform Pipeline
 
@@ -27,8 +31,18 @@ on:
         description: Platform identifier (must match a .github/configs/*.yml stem)
 
 jobs:
+  te_fl_prepare:
+    name: prepare-te-fl-${{ inputs.platform }}
+    uses: ./.github/workflows/prepare_te_fl.yml
+    with:
+      platform: ${{ inputs.platform }}
+
   test:
     name: test / ${{ inputs.platform }}
+    needs: te_fl_prepare
     uses: ./.github/workflows/all_tests_common.yml
     with:
       platform: ${{ inputs.platform }}
+      te_fl_prepare: true
+      te_fl_cache_key: ${{ needs.te_fl_prepare.outputs.cache_key }}
+      te_fl_local_cache_key: ${{ needs.te_fl_prepare.outputs.local_cache_key }}
