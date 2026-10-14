@@ -18,10 +18,37 @@ validate_cuda_capacity() {
 }
 
 install_nvrx() {
-  git clone --branch v0.6.0-main \
-    https://github.com/NVIDIA/nvidia-resiliency-ext.git \
-    /tmp/nvidia-resiliency-ext
-  python3 -m pip install -e /tmp/nvidia-resiliency-ext --no-cache-dir
+  local attempt
+  local download_root
+
+  if ! command -v timeout >/dev/null 2>&1; then
+    echo "::error::GNU timeout is required for the NVRx download" >&2
+    return 1
+  fi
+
+  for attempt in 1 2 3; do
+    # A fresh directory prevents a partial clone from breaking subsequent attempts.
+    download_root=$(mktemp -d /tmp/megatron-nvrx.XXXXXX)
+    echo "Downloading NVRx: attempt $attempt/3"
+
+    if timeout --kill-after=10s 300s \
+      git -c http.version=HTTP/1.1 clone \
+        --depth 1 \
+        --single-branch \
+        --branch v0.6.0-main \
+        https://github.com/NVIDIA/nvidia-resiliency-ext.git \
+        "$download_root/source"; then
+      python3 -m pip install -e "$download_root/source" --no-cache-dir || return $?
+      return 0
+    fi
+
+    if [ "$attempt" -lt 3 ]; then
+      sleep 10
+    fi
+  done
+
+  echo "::error::NVRx download failed after 3 attempts" >&2
+  return 1
 }
 
 setup_unit_environment() {
