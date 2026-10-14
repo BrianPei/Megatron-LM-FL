@@ -156,12 +156,15 @@ prepare_hygon_functional_assets() {
   ci_export_env TRANSFORMERS_OFFLINE 1
 
   # Populate the dynamic-module cache before torchrun starts multiple ranks.
-  python3 - <<'PY'
+  python3 - "$tokenizer_root/qwentokenizer" <<'PY'
+import sys
 from transformers import AutoTokenizer
 
-path = "/opt/data/tokenizers/qwentokenizer"
-tokenizer = AutoTokenizer.from_pretrained(path, trust_remote_code=True)
-print(f"Hygon tokenizer prewarm passed: {type(tokenizer)}; vocab={tokenizer.vocab_size}")
+path = sys.argv[1]
+tokenizer = AutoTokenizer.from_pretrained(
+    path, trust_remote_code=True, local_files_only=True
+)
+print(f"Hygon tokenizer prewarm passed: {path}; vocab={tokenizer.vocab_size}")
 PY
 }
 

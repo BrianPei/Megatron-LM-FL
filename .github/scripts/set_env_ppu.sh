@@ -54,6 +54,26 @@ setup_build_environment() {
   ci_install_project
 }
 
+prepare_ppu_gpt2_cache() {
+  # The GPT2BPETokenizer wrapper loads "gpt2" even with local vocab/merges.
+  # Point it at a complete Hub cache supplied by the runner's tokenizer mount.
+  local cache_root=/home/gitlab-runner/tokenizers/hf-cache
+  if [ ! -d "$cache_root/models--gpt2" ]; then
+    echo "::error::PPU GPT-2 Hub cache is missing: $cache_root/models--gpt2" >&2
+    return 1
+  fi
+  ci_export_env HF_HUB_CACHE "$cache_root"
+  ci_export_env HF_HUB_OFFLINE 1
+  ci_export_env TRANSFORMERS_OFFLINE 1
+
+  "$CI_PYTHON_BIN" - <<'PY'
+from transformers import AutoTokenizer
+
+tokenizer = AutoTokenizer.from_pretrained("gpt2", local_files_only=True)
+print(f"PPU GPT-2 offline cache passed; vocab={tokenizer.vocab_size}")
+PY
+}
+
 ci_require_env CI_TEST_SUITE
 ci_require_env CI_NPROC_PER_NODE
 if ! [[ "$CI_NPROC_PER_NODE" =~ ^[1-9][0-9]*$ ]]; then
@@ -63,6 +83,9 @@ fi
 
 case "$CI_TEST_SUITE" in
   unit_group)
+    if [ "${CI_TEST_GROUP:-}" = data ]; then
+      prepare_ppu_gpt2_cache
+    fi
     ;;
   unit)
     setup_unit_environment
