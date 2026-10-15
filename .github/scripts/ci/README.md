@@ -80,6 +80,27 @@ Normal cancellation completes the check. A force-cancelled reporter may leave a
 check pending; the next identical request closes that stale check before starting.
 Do not make `CI Requested Tests` a required merge check.
 
+## Coverage and performance reports
+
+Unit coverage (`megatron/training/*`, `megatron/plugin/*`) is combined into
+`coverage-report/coverage-<platform>-<device>-all.json` and uploaded as a GitHub
+artifact and to FlagCICD via `flagos-ai/FlagOps/actions/post-pytest-report@v2`.
+
+Existing functional training tests generate
+`performance-report/perf-smoke-<platform>-<device>-<test_case>.json`, uploaded to
+both destinations with `file_type: performance`. Reports include configuration,
+commit, exit status, latency samples/statistics, and throughput when logged.
+Only the final retry attempt is measured; iteration one is excluded as warmup.
+Failed tests keep partial metrics; successful tests without metrics are marked
+`unavailable`. No new benchmark or performance threshold is added.
+
+Configure `FLAGCICD_API_TOKEN` and runner access to
+`http://flagcicd-inner.flagos.net:8000/metrics/`. Automatic/manual entrypoints
+forward this named secret through the reusable workflows. Fork PRs and requested
+tests (`/ci run`) receive no token and retain GitHub artifacts; backend uploads
+fail non-blockingly. Reporting never overrides test results. Verify live upload
+and backend parsing in a repository CI run with the token configured.
+
 ## Validation
 
 ```sh

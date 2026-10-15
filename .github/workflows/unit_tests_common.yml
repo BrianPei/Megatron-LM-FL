@@ -2,6 +2,9 @@ name: Common Unit Tests
 
 on:
   workflow_call:
+    secrets:
+      FLAGCICD_API_TOKEN:
+        required: false
     inputs:
       te_fl_artifact: {required: true, type: string}
       test_retries:
@@ -217,12 +220,11 @@ jobs:
         if: ${{ !cancelled() && steps.unit_test.outcome != 'skipped' }}
         uses: flagos-ai/FlagOps/actions/post-pytest-report@v2
         continue-on-error: true
-        env:
-          NO_PROXY: "flagcicd-inner.flagos.net"
         with:
           backend_url: 'http://flagcicd-inner.flagos.net:8000/metrics/'
-          user_id: '000000000000000000'
+          api_token: ${{ secrets.FLAGCICD_API_TOKEN }}
           report_path: 'coverage-report/coverage-${{ inputs.platform }}-${{ inputs.device }}-all.json'
+          job_name: coverage-${{ inputs.platform }}-${{ inputs.device }}-all
           fail_on_error: 'false'
 
       - name: Upload unit retry attempts
