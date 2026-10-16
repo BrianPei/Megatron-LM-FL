@@ -216,12 +216,30 @@ jobs:
           overwrite: true
           path: coverage-report/**/*.json
 
-      - name: Upload Coverage Report to FlagCICD
+      - name: Check FlagCICD upload prerequisites
+        id: flagcicd
         if: ${{ !cancelled() && steps.unit_test.outcome != 'skipped' }}
+        env:
+          FLAGCICD_API_TOKEN: ${{ secrets.FLAGCICD_API_TOKEN }}
+          COVERAGE_REPORT_PATH: coverage-report/coverage-${{ inputs.platform }}-${{ inputs.device }}-all.json
+        run: |
+          if [ ! -f "$COVERAGE_REPORT_PATH" ]; then
+            echo "::notice::Skipping FlagCICD upload: coverage report was not generated."
+            echo "upload_ready=false" >> "$GITHUB_OUTPUT"
+          elif [ -z "$FLAGCICD_API_TOKEN" ]; then
+            echo "::notice::Skipping FlagCICD upload: FLAGCICD_API_TOKEN is unavailable."
+            echo "upload_ready=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "upload_ready=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Upload Coverage Report to FlagCICD
+        if: ${{ !cancelled() && steps.flagcicd.outputs.upload_ready == 'true' }}
         uses: flagos-ai/FlagOps/actions/post-pytest-report@v2
         continue-on-error: true
+        timeout-minutes: 2
         with:
-          backend_url: 'http://flagcicd-inner.flagos.net:8000/metrics/'
+          backend_url: 'https://flagcicd.flagos.net/flagcicd/api/v1/cicd/metrics/'
           api_token: ${{ secrets.FLAGCICD_API_TOKEN }}
           report_path: 'coverage-report/coverage-${{ inputs.platform }}-${{ inputs.device }}-all.json'
           job_name: coverage-${{ inputs.platform }}-${{ inputs.device }}-all

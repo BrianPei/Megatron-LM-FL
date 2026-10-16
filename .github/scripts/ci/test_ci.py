@@ -213,9 +213,7 @@ class WorkflowGateTests(unittest.TestCase):
             workflow("all_tests_common.yml")["jobs"]["all_tests_complete"]["if"], "always()"
         )
         env = dict(
-            RUN_COMMON_CHECKS="true",
             CHECKOUT_RESULT="success",
-            LINT_RESULT="success",
             TE_FL_ARTIFACT="prepared-wheel",
             RUN_UNIT_TESTS="true",
             UNIT_RESULT="success",
@@ -223,15 +221,14 @@ class WorkflowGateTests(unittest.TestCase):
             FUNCTIONAL_RESULT="success",
         )
         for unit_enabled, functional_enabled in itertools.product((False, True), repeat=2):
-            for checkout, lint, unit, functional in itertools.product(STATUSES, repeat=4):
+            for checkout, unit, functional in itertools.product(STATUSES, repeat=3):
                 expected = (
-                    checkout == lint == "success"
+                    checkout == "success"
                     and (not unit_enabled or unit == "success")
                     and (not functional_enabled or functional == "success")
                 )
                 env.update(
                     CHECKOUT_RESULT=checkout,
-                    LINT_RESULT=lint,
                     RUN_UNIT_TESTS=str(unit_enabled).lower(),
                     UNIT_RESULT=unit,
                     RUN_FUNCTIONAL_TESTS=str(functional_enabled).lower(),
@@ -240,41 +237,39 @@ class WorkflowGateTests(unittest.TestCase):
                 self.check_gate("all_tests_common.yml", "all_tests_complete", expected, **env)
         env.update(
             CHECKOUT_RESULT="success",
-            LINT_RESULT="success",
             UNIT_RESULT="success",
             FUNCTIONAL_RESULT="success",
             TE_FL_ARTIFACT="",
         )
         self.check_gate("all_tests_common.yml", "all_tests_complete", False, **env)
 
-    def test_only_top_level_checks_can_disable_platform_lint(self):
-        common = workflow("all_tests_common.yml")
-        self.assertTrue(common[True]["workflow_call"]["inputs"]["run_common_checks"]["default"])
-        pipeline = workflow("_platform_pipeline.yml")
-        self.assertTrue(pipeline[True]["workflow_call"]["inputs"]["run_common_checks"]["default"])
-        self.assertEqual(
-            pipeline["jobs"]["test"]["with"]["run_common_checks"], "${{ inputs.run_common_checks }}"
+    def test_common_checks_gate_every_entrypoint_without_platform_lint(self):
+        for name in ("all_tests_common.yml", "_platform_pipeline.yml"):
+            data = workflow(name)
+            self.assertNotIn("lint", data["jobs"])
+            self.assertNotIn("run_common_checks", data[True]["workflow_call"]["inputs"])
+        entrypoints = [("ci.yml", "platform-pipeline"), ("ci-requested.yml", "platform-pipeline")]
+        entrypoints.extend(
+            (path.name, "run_tests")
+            for path in (ROOT / ".github/workflows").glob("all_tests_*.yml")
+            if path.name != "all_tests_common.yml"
         )
-        for name in ("ci.yml", "ci-requested.yml"):
-            self.assertFalse(
-                workflow(name)["jobs"]["platform-pipeline"]["with"]["run_common_checks"]
-            )
-            self.assertEqual(
-                workflow(name)["jobs"]["lint"]["uses"], "./.github/workflows/lint_common.yml"
-            )
-        env = dict(
-            RUN_COMMON_CHECKS="false",
-            CHECKOUT_RESULT="success",
-            LINT_RESULT="skipped",
-            TE_FL_ARTIFACT="wheel",
-            RUN_UNIT_TESTS="true",
-            UNIT_RESULT="success",
-            RUN_FUNCTIONAL_TESTS="true",
-            FUNCTIONAL_RESULT="success",
-        )
-        self.check_gate("all_tests_common.yml", "all_tests_complete", True, **env)
-        env["RUN_COMMON_CHECKS"] = "true"
-        self.check_gate("all_tests_common.yml", "all_tests_complete", False, **env)
+        for name, job_name in entrypoints:
+            with self.subTest(workflow=name):
+                jobs = workflow(name)["jobs"]
+                self.assertEqual(jobs["lint"]["uses"], "./.github/workflows/lint_common.yml")
+                if name != "ci-requested.yml":
+                    self.assertNotIn("if", jobs["lint"])
+
+                # Walk prerequisites: no platform can start before common checks succeed.
+                def ancestors(job):
+                    needs = jobs[job].get("needs", [])
+                    needs = [needs] if isinstance(needs, str) else needs
+                    return set(needs).union(*(ancestors(parent) for parent in needs))
+
+                self.assertIn("lint", ancestors(job_name))
+                self.assertNotIn("always()", jobs[job_name].get("if", ""))
+                self.assertNotIn("run_common_checks", jobs[job_name]["with"])
 
     def test_platform_pipeline_requires_prepared_te_fl(self):
         jobs = workflow("_platform_pipeline.yml")["jobs"]

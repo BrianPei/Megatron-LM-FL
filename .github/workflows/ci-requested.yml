@@ -81,7 +81,6 @@ jobs:
     uses: ./.github/workflows/_platform_pipeline.yml
     with:
       platform: ${{ matrix.platform }}
-      run_common_checks: false
       source_ref: ${{ needs.validate.outputs.source_ref }}
 
   report:

@@ -28,7 +28,6 @@ on:
       FLAGCICD_API_TOKEN:
         required: false
     inputs:
-      run_common_checks: {required: false, type: boolean, default: true}
       run_unit_tests: {required: false, type: boolean, default: true}
       run_functional_tests: {required: false, type: boolean, default: true}
       image_override: {required: false, type: string, default: ''}
@@ -60,7 +59,6 @@ jobs:
     with:
       platform: ${{ inputs.platform }}
       source_ref: ${{ inputs.source_ref }}
-      run_common_checks: ${{ inputs.run_common_checks }}
       run_unit_tests: ${{ inputs.run_unit_tests }}
       run_functional_tests: ${{ inputs.run_functional_tests }}
       image_override: ${{ inputs.image_override }}

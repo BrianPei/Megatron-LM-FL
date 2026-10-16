@@ -38,7 +38,7 @@ class WheelCacheWorkflowTests(unittest.TestCase):
         for platform in ("ascend", "cuda", "enflame", "hygon", "kunlunxin", "metax", "musa", "ppu"):
             name = f"all_tests_{platform}.yml"
             data = workflow(name)
-            self.assertEqual(set(data["jobs"]), {"run_tests"})
+            self.assertEqual(set(data["jobs"]), {"lint", "run_tests"})
             call = data["jobs"]["run_tests"]
             self.assertEqual(call["uses"], "./.github/workflows/_platform_pipeline.yml")
             self.assertEqual(call["with"]["platform"], platform)

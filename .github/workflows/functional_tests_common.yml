@@ -2,9 +2,6 @@ name: Common Functional Tests - Training
 
 on:
   workflow_call:
-    secrets:
-      FLAGCICD_API_TOKEN:
-        required: false
     inputs:
       te_fl_artifact: {required: true, type: string}
       test_retries:
@@ -57,8 +54,6 @@ on:
 jobs:
   functional_test_train:
     name: functional-train-${{ inputs.device }}-${{ matrix.test_config.test_case }}
-    env:
-      PERFORMANCE_REPORT_NAME: perf-smoke-${{ inputs.platform }}-${{ inputs.device }}-${{ matrix.test_config.test_case }}
     defaults:
       run:
         shell: bash
@@ -155,7 +150,6 @@ jobs:
         run: .github/scripts/install_te_fl_runtime.sh
 
       - name: Run functional tests
-        id: functional_test
         env:
           CI_TEST_RETRIES: ${{ inputs.test_retries }}
           CI_TEST_CONFIG: ${{ toJson(matrix.test_config) }}
@@ -233,45 +227,8 @@ jobs:
             echo "❌ Functional test failed: ${MODEL}/${TEST_CASE} (exit code: $exit_code)"
           fi
 
-          echo "exit_code=$exit_code" >> $GITHUB_OUTPUT
           exit $exit_code
         timeout-minutes: 125
-
-      - name: Generate performance smoke report
-        id: performance_report
-        if: ${{ !cancelled() && steps.functional_test.outputs.exit_code != '' }}
-        continue-on-error: true
-        env:
-          CI_PLATFORM: ${{ inputs.platform }}
-          CI_DEVICE: ${{ inputs.device }}
-          CI_IMAGE: ${{ inputs.image }}
-          CI_SOURCE_REF: ${{ inputs.source_ref || github.sha }}
-          CI_TEST_CONFIG: ${{ toJson(matrix.test_config) }}
-          CI_TEST_EXIT_CODE: ${{ steps.functional_test.outputs.exit_code }}
-        run: python3 .github/scripts/ci/performance_report.py
-
-      - name: Upload performance smoke artifact
-        if: ${{ !cancelled() && steps.performance_report.outcome == 'success' }}
-        continue-on-error: true
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ env.PERFORMANCE_REPORT_NAME }}
-          path: performance-report/*.json
-          overwrite: true
-          if-no-files-found: warn
-          retention-days: 14
-
-      - name: Upload performance smoke report to FlagCICD
-        if: ${{ !cancelled() && steps.performance_report.outcome == 'success' }}
-        continue-on-error: true
-        uses: flagos-ai/FlagOps/actions/post-pytest-report@v2
-        with:
-          backend_url: 'http://flagcicd-inner.flagos.net:8000/metrics/'
-          api_token: ${{ secrets.FLAGCICD_API_TOKEN }}
-          report_path: performance-report/${{ env.PERFORMANCE_REPORT_NAME }}.json
-          file_type: performance
-          job_name: ${{ env.PERFORMANCE_REPORT_NAME }}
-          fail_on_error: 'false'
 
       - name: Upload Functional Test Logs
         if: always()
