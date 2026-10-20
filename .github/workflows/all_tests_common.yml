@@ -6,6 +6,7 @@ on:
       FLAGCICD_API_TOKEN:
         required: false
     inputs:
+      flagcicd_metadata: {required: false, type: string, default: '{}'}
       te_fl_artifact: {required: true, type: string}
       source_ref:
         required: false
@@ -282,3 +283,55 @@ jobs:
             exit 1
           fi
           echo "All requested checks completed successfully"
+
+      - name: Checkout report source
+        if: always()
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_ref || github.sha }}
+          persist-credentials: false
+      - name: Checkout report tooling
+        if: always()
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: flagcicd-control
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        if: always()
+        with:
+          python-version: '3.12'
+      - name: Install report dependencies
+        if: always()
+        run: python -m pip install --quiet PyYAML==6.0.3
+      - name: Download unit coverage
+        if: always() && inputs.run_unit_tests
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          pattern: coverage-${{ inputs.platform }}-*
+          path: flagcicd-coverage
+          merge-multiple: true
+      - name: Report platform results
+        if: always()
+        env:
+          PLATFORM: ${{ inputs.platform }}
+          FLAGCICD_METADATA: ${{ inputs.flagcicd_metadata }}
+          CI_IMAGE: ${{ needs.checkout_and_config.outputs.image }}
+          TEST_LEVEL: ${{ inputs.run_functional_tests && 'L2' || inputs.run_unit_tests && 'L1' || 'L0' }}
+          RUN_UNIT_TESTS: ${{ inputs.run_unit_tests }}
+          RUN_FUNCTIONAL_TESTS: ${{ inputs.run_functional_tests }}
+          JOB_RESULTS: >-
+            {"configuration":"${{ needs.checkout_and_config.result }}","unit":"${{ needs.unit_tests.result }}","functional":"${{ needs.functional_tests.result }}"}
+        run: >-
+          python flagcicd-control/.github/scripts/ci/flagcicd.py report
+          --reports-dir flagcicd-coverage --output "flagcicd-report-$PLATFORM.json"
+      - name: Upload platform report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: flagcicd-report-${{ inputs.platform }}
+          path: flagcicd-report-${{ inputs.platform }}.json
+          overwrite: true
+          if-no-files-found: error
+          retention-days: 14

@@ -28,6 +28,7 @@ on:
       FLAGCICD_API_TOKEN:
         required: false
     inputs:
+      flagcicd_metadata: {required: false, type: string, default: '{}'}
       run_unit_tests: {required: false, type: boolean, default: true}
       run_functional_tests: {required: false, type: boolean, default: true}
       image_override: {required: false, type: string, default: ''}
@@ -62,4 +63,5 @@ jobs:
       run_unit_tests: ${{ inputs.run_unit_tests }}
       run_functional_tests: ${{ inputs.run_functional_tests }}
       image_override: ${{ inputs.image_override }}
+      flagcicd_metadata: ${{ inputs.flagcicd_metadata }}
       te_fl_artifact: ${{ needs.te_fl_prepare.outputs.wheel_artifact }}

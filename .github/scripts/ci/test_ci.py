@@ -513,8 +513,13 @@ class WorkflowIsolationTests(unittest.TestCase):
                     if options.get("repository") == "flagos-ai/TransformerEngine-FL":
                         self.assertEqual(options["ref"], "main")
                         continue
-                    self.assertEqual(options["ref"], "${{ inputs.source_ref || github.sha }}")
                     self.assertIs(options["persist-credentials"], False)
+                    if step.get("name") == "Checkout report tooling":
+                        self.assertEqual(name, "all_tests_common.yml")
+                        self.assertEqual(options["path"], "flagcicd-control")
+                        self.assertEqual(options["ref"], "${{ github.workflow_sha }}")
+                    else:
+                        self.assertEqual(options["ref"], "${{ inputs.source_ref || github.sha }}")
 
     def test_sha_is_forwarded_through_all_reusable_calls(self):
         for name in ("_platform_pipeline.yml", "all_tests_common.yml"):

@@ -7,6 +7,77 @@ All manual platform entrypoints reuse `_platform_pipeline.yml`, preserving image
 and test-scope inputs. Every entrypoint runs common checks once before invoking
 the platform pipeline; platform workflows contain no duplicate lint job. The shared test gate reports the platform result.
 
+## FlagCICD and nightly
+
+Adapted from `BrianPei/TransformerEngine-FL:ci/flagcicd-unified`.
+The platform YAML files remain the source of truth for runners, images, test
+matrices and TE wheel preparation. [`project.yaml`](../../../.flagcicd/project.yaml) defines the supported levels
+and ordered risk rules; the planner reads those rules directly.
+
+| Level | Scope |
+| --- | --- |
+| L0 | Validate selected platform configurations and run common CI checks; no hardware or TE build |
+| L1 | Common checks, TE wheel preparation and existing unit tests |
+| L2 | L1 plus existing functional training and golden-value validation |
+
+L3/L4 are rejected until extended regression/release validation is implemented.
+No uncalibrated coverage thresholds or synthetic performance baselines are added.
+
+Use **Actions → FlagCICD Entry → Run workflow**, or `repository_dispatch` with
+`event_type: flagcicd`. Both accept `checkout_ref`, `platforms`, `test_level`,
+`risk_level`, `changed_files`, `task_id` and `parent_run_id`. The platform names
+match `.github/configs/*.yml` (including `kunlunxin`, not TE's `kunlun`).
+`platforms` and `changed_files` accept JSON arrays; dispatch also accepts arrays
+as native JSON values. For example, a dispatch payload can contain:
+
+```json
+{
+  "event_type": "flagcicd",
+  "client_payload": {
+    "checkout_ref": "cicd-nightly",
+    "platforms": ["cuda", "ppu"],
+    "test_level": "L2",
+    "task_id": "training-validation-42"
+  }
+}
+```
+
+`changed_files` is an optional caller-supplied risk hint, not a computed diff.
+Empty input preserves the requested level. Known runtime/training changes raise
+it to L2/R3; CI/build/functional and unknown paths raise it to at least L2/R2.
+Explicit requests can raise but cannot lower inferred requirements.
+
+Nightly runs at **02:00 Asia/Shanghai** on the default branch and selects all
+configured platforms at L2. Its schedule lives only in `flagcicd-entry.yml`;
+`ci.yml` continues to handle automatic PR/push routing. GitHub activates scheduled
+and repository dispatch events after the workflow reaches the default branch.
+
+The source ref is resolved once to an immutable SHA and passed through the
+existing `_platform_pipeline.yml` TE preparation and test chain. L0 skips that
+chain. Common checks run once before hardware jobs. Existing manual and comment
+commands keep their scope controls, retries, wheel cache and coverage uploads.
+
+Artifacts retained for 14 days:
+
+- `flagcicd-plan`: resolved platforms, scope, risk and task/source identity.
+- `flagcicd-report-<platform>`: configuration, unit and functional job conclusions,
+  with combined unit coverage reported separately for each device. These reports
+  are also produced by existing platform entrypoints.
+- `flagcicd-run-summary`: entry/nightly results and validated child reports.
+
+Summaries check source SHA, run ID, attempt, task, scope and risk. Successful
+platform reports from earlier attempts of the same run can be reused when rerunning
+failed jobs; future-attempt reports are rejected. Missing,
+duplicate, stale or failed reports cannot pass. Functional failures and skipped
+required jobs cannot be hidden by successful unit coverage. L0 reports preflight
+results without pretending to have coverage. Line percentages use line counts;
+branch percentages use branch counts. Platform/device denominators are never
+merged. Existing raw coverage artifacts and FlagOps backend uploads are retained;
+structured reports use GitHub artifacts and do not introduce another backend API.
+
+Run the local CI helper suites in [Validation](#validation). Hardware execution
+and backend ingestion must be verified on actual runners.
+
 ## Platform selection
 
 - `paths_watch` accepts exact files and directory prefixes ending in `/`.

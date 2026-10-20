@@ -1,0 +1,124 @@
+name: FlagCICD Entry
+
+on:
+  schedule:
+    - cron: '0 18 * * *'   # 02:00 Asia/Shanghai; all platforms at L2
+  workflow_dispatch:
+    inputs:
+      checkout_ref: {description: 'Source ref (resolved to a commit SHA)', type: string, default: ''}
+      platforms: {description: 'JSON platform array, for example ["cuda","ppu"]', type: string, default: '["cuda"]'}
+      test_level:
+        description: Minimum scope (risk rules may upgrade it)
+        type: choice
+        default: L1
+        options: [L0, L1, L2]
+      risk_level: {description: 'auto or R1-R4', type: string, default: auto}
+      changed_files: {description: 'Optional JSON path array for risk mapping', type: string, default: '[]'}
+      task_id: {description: External task ID, type: string, default: ''}
+      parent_run_id: {description: Parent run ID, type: string, default: ''}
+  repository_dispatch:
+    types: [flagcicd]
+
+permissions:
+  contents: read
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      platforms: ${{ steps.plan.outputs.platforms }}
+      metadata: ${{ steps.plan.outputs.metadata }}
+      source_sha: ${{ steps.plan.outputs.source_sha }}
+      run_unit_tests: ${{ steps.plan.outputs.run_unit_tests }}
+      run_functional_tests: ${{ steps.plan.outputs.run_functional_tests }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      # Keep request validation on the workflow revision, separate from tested code.
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.checkout_ref || github.event.client_payload.checkout_ref || github.sha }}
+          path: source
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install --quiet PyYAML==6.0.3
+      - name: Validate platforms and resolve test scope
+        id: plan
+        run: python .github/scripts/ci/flagcicd.py plan --root source --output flagcicd-plan.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: flagcicd-plan
+          overwrite: true
+          path: flagcicd-plan.json
+          if-no-files-found: error
+          retention-days: 14
+
+  lint:
+    needs: plan
+    uses: ./.github/workflows/lint_common.yml
+    with:
+      source_ref: ${{ needs.plan.outputs.source_sha }}
+
+  run_tests:
+    needs: [plan, lint]
+    if: needs.plan.outputs.run_unit_tests == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: ${{ fromJson(needs.plan.outputs.platforms) }}
+    uses: ./.github/workflows/_platform_pipeline.yml
+    secrets:
+      FLAGCICD_API_TOKEN: ${{ secrets.FLAGCICD_API_TOKEN }}
+    with:
+      platform: ${{ matrix.platform }}
+      source_ref: ${{ needs.plan.outputs.source_sha }}
+      run_unit_tests: ${{ needs.plan.outputs.run_unit_tests == 'true' }}
+      run_functional_tests: ${{ needs.plan.outputs.run_functional_tests == 'true' }}
+      flagcicd_metadata: ${{ needs.plan.outputs.metadata }}
+
+  complete:
+    if: always()
+    needs: [plan, lint, run_tests]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install --quiet PyYAML==6.0.3
+      - name: Download resolved plan
+        if: needs.plan.result == 'success'
+        uses: actions/download-artifact@v4
+        with:
+          name: flagcicd-plan
+      - name: Download platform reports
+        if: needs.plan.outputs.run_unit_tests == 'true'
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          pattern: flagcicd-report-*
+          path: flagcicd-reports
+          merge-multiple: true
+      - name: Aggregate and verify required results
+        if: always()
+        env:
+          JOB_RESULTS: >-
+            {"configuration":"${{ needs.plan.result }}","lint":"${{ needs.lint.result }}","platforms":"${{ needs.run_tests.result }}"}
+        run: >-
+          python .github/scripts/ci/flagcicd.py aggregate
+          --input flagcicd-plan.json --output flagcicd-run-summary.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: flagcicd-run-summary
+          overwrite: true
+          path: flagcicd-run-summary.json
+          if-no-files-found: error
+          retention-days: 14

@@ -24,8 +24,6 @@
 name: CI
 
 on:
-  schedule:
-    - cron: '0 18 * * *'   # 02:00 CST daily
   push:
     branches: [main]
     paths-ignore:

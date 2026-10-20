@@ -1,0 +1,35 @@
+schema_version: flagcicd.project/v1
+repository: Megatron-LM-FL
+entry_workflow: .github/workflows/flagcicd-entry.yml
+platform_config_glob: .github/configs/*.yml
+levels:
+  L0: configuration-preflight
+  L1: unit-tests
+  L2: unit-and-functional-tests
+unsupported_levels: [L3, L4]
+risk_rules:
+  version: v1
+  unknown_level: L2
+  unknown_risk: R2
+  rules:
+    - id: documentation
+      paths: ['docs/**', '**/*.md', '*.md', '**/*.rst']
+      minimum_level: L0
+      risk: R1
+    - id: unit-tests
+      paths: ['tests/unit_tests/**', 'megatron/plugin/tests/**']
+      minimum_level: L1
+      risk: R1
+    - id: training-and-runtime
+      paths: ['megatron/**', 'pretrain_*.py', '*_builders.py', 'model_provider.py', 'train_rl.py']
+      minimum_level: L2
+      risk: R3
+    - id: ci-build-and-functional
+      paths: ['.github/**', '.flagcicd/**', 'docker/**', 'tests/functional_tests/**', 'tests/test_utils/**', 'setup.py', 'pyproject.toml', 'uv.lock']
+      minimum_level: L2
+      risk: R2
+coverage:
+  source_roots: [megatron/training, megatron/plugin]
+  tool: coverage.py
+  aggregation: per-platform-and-device
+report_schema: flagcicd.report/v1
