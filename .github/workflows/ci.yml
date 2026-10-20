@@ -16,10 +16,9 @@
 #
 # Pipeline: lint → generate-matrix → platform-pipeline (matrix) → ci-complete
 #
-# Platform discovery is config-driven: generate_matrix.py scans
-# .github/configs/*.yml for platform names, then on pull_request events
-# intersects the changed-file list against per-platform paths_watch so
-# only affected platforms run.  All other events run the full matrix.
+# The registered baseline runs in full by default. ci:diff explicitly opts PRs
+# into platform routing; platform labels only add coverage. Plans freeze every
+# required group/case and all final results are checked against that plan.
 
 name: CI
 
@@ -53,6 +52,10 @@ jobs:
     timeout-minutes: 5
     outputs:
       platforms: ${{ steps.matrix.outputs.platforms }}
+      metadata: ${{ steps.matrix.outputs.metadata }}
+      source_sha: ${{ steps.matrix.outputs.source_sha }}
+      run_unit_tests: ${{ steps.matrix.outputs.run_unit_tests }}
+      run_functional_tests: ${{ steps.matrix.outputs.run_functional_tests }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -68,11 +71,14 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
           BASE_REF: ${{ github.base_ref || 'main' }}
         run: |
-          python .github/scripts/ci/generate_matrix.py \
-            --event-name "$EVENT_NAME" \
-            --base-ref "$BASE_REF" \
-            --configs-dir .github/configs \
-            >> "$GITHUB_OUTPUT"
+          python .github/scripts/ci/flagcicd.py plan --output flagcicd-plan.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: flagcicd-plan
+          path: flagcicd-plan.json
+          overwrite: true
+          if-no-files-found: error
+          retention-days: 14
 
   platform-pipeline:
     name: Platform pipeline (${{ matrix.platform }})
@@ -87,13 +93,17 @@ jobs:
       FLAGCICD_API_TOKEN: ${{ secrets.FLAGCICD_API_TOKEN }}
     with:
       platform: ${{ matrix.platform }}
+      source_ref: ${{ needs.generate-matrix.outputs.source_sha }}
+      run_unit_tests: ${{ fromJson(needs.generate-matrix.outputs.metadata).platform_plans[matrix.platform].run_unit_tests }}
+      run_functional_tests: ${{ fromJson(needs.generate-matrix.outputs.metadata).platform_plans[matrix.platform].run_functional_tests }}
+      flagcicd_metadata: ${{ needs.generate-matrix.outputs.metadata }}
 
   ci-complete:
     name: CI Complete
     needs: [lint, generate-matrix, platform-pipeline]
     if: always()
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     steps:
       # Keep the gate independent of checkout and PR-controlled dependencies.
       - name: Verify required CI results
@@ -121,3 +131,43 @@ jobs:
               raise SystemExit(f'Platform pipeline must be {expected}')
           print('All required CI checks passed')
           PY
+
+      - uses: actions/checkout@v4
+        if: always()
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        if: always()
+        with:
+          python-version: '3.12'
+      - run: python -m pip install --quiet PyYAML==6.0.3
+        if: always()
+      - name: Download resolved plan
+        if: always() && needs.generate-matrix.result == 'success'
+        uses: actions/download-artifact@v4
+        with:
+          name: flagcicd-plan
+      - name: Download platform reports
+        if: always() && needs.generate-matrix.outputs.platforms != '[]'
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          pattern: flagcicd-report-*
+          path: flagcicd-reports
+          merge-multiple: true
+      - name: Aggregate and verify required results
+        if: always()
+        env:
+          JOB_RESULTS: >-
+            {"configuration":"${{ needs.generate-matrix.result }}","lint":"${{ needs.lint.result }}","platforms":"${{ needs.platform-pipeline.result }}"}
+        run: >-
+          python .github/scripts/ci/flagcicd.py aggregate
+          --input flagcicd-plan.json --output flagcicd-run-summary.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: flagcicd-run-summary
+          overwrite: true
+          path: flagcicd-run-summary.json
+          if-no-files-found: error
+          retention-days: 14

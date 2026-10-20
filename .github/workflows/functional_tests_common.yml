@@ -150,6 +150,7 @@ jobs:
         run: .github/scripts/install_te_fl_runtime.sh
 
       - name: Run functional tests
+        id: training
         env:
           CI_TEST_RETRIES: ${{ inputs.test_retries }}
           CI_TEST_CONFIG: ${{ toJson(matrix.test_config) }}
@@ -248,3 +249,38 @@ jobs:
           include-hidden-files: true
           overwrite: true
           if-no-files-found: ignore
+
+
+      - name: Record functional execution result
+        if: always()
+        env:
+          PLATFORM: ${{ inputs.platform }}
+          DEVICE: ${{ inputs.device }}
+          CASE_MODEL: ${{ matrix.test_config.model }}
+          CASE_NAME: ${{ matrix.test_config.test_case }}
+          TEST_OUTCOME: ${{ steps.training.outcome }}
+        run: |
+          python3 - <<'PYTHON'
+          import json
+          import os
+          import subprocess
+          from pathlib import Path
+          receipt = {
+              'platform': os.environ['PLATFORM'],
+              'task_id': f"functional:{os.environ['DEVICE']}:{os.environ['CASE_MODEL']}/{os.environ['CASE_NAME']}",
+              'run_id': os.environ['GITHUB_RUN_ID'],
+              'attempt': int(os.environ['GITHUB_RUN_ATTEMPT']),
+              'source_sha': subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip(),
+              'outcome': os.environ['TEST_OUTCOME'],
+          }
+          Path('receipt.json').write_text(json.dumps(receipt))
+          PYTHON
+      - name: Upload functional execution receipt
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: execution-functional-${{ inputs.platform }}-${{ inputs.device }}-${{ matrix.test_config.test_case }}
+          path: receipt.json
+          overwrite: true
+          if-no-files-found: error
+          retention-days: 14

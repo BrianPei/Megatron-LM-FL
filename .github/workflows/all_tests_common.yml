@@ -49,8 +49,8 @@ jobs:
       device_types: ${{ steps.config.outputs.device_types }}
       setup_script: ${{ steps.config.outputs.setup_script }}
       unit_nproc_per_node: ${{ steps.config.outputs.unit_nproc_per_node }}
-      train_test_matrix: ${{ steps.config.outputs.train_test_matrix }}
-      unit_test_groups: ${{ steps.config.outputs.unit_test_groups }}
+      train_test_matrix: ${{ steps.selection.outputs.train_test_matrix }}
+      unit_test_groups: ${{ steps.selection.outputs.unit_test_groups }}
       unit_pytest_extra_args: ${{ steps.config.outputs.unit_pytest_extra_args }}
       unit_experimental_pytest_extra_args: ${{ steps.config.outputs.unit_experimental_pytest_extra_args }}
       ignored_tests: ${{ steps.config.outputs.ignored_tests }}
@@ -170,6 +170,25 @@ jobs:
 
           echo "Platform: $PLATFORM"
           echo "Image: $image"
+
+      - name: Checkout selection tooling
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: flagcicd-control
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install --quiet PyYAML==6.0.3
+      - name: Apply frozen execution plan
+        id: selection
+        env:
+          PLATFORM: ${{ inputs.platform }}
+          FLAGCICD_METADATA: ${{ inputs.flagcicd_metadata }}
+          RUN_UNIT_TESTS: ${{ inputs.run_unit_tests }}
+          RUN_FUNCTIONAL_TESTS: ${{ inputs.run_functional_tests }}
+        run: python flagcicd-control/.github/scripts/ci/flagcicd.py selection
 
   unit_tests:
     name: unit_tests
@@ -311,7 +330,15 @@ jobs:
         with:
           pattern: coverage-${{ inputs.platform }}-*
           path: flagcicd-coverage
-          merge-multiple: true
+          merge-multiple: false
+      - name: Download functional execution receipts
+        if: always() && inputs.run_functional_tests
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          pattern: execution-functional-${{ inputs.platform }}-*
+          path: flagcicd-coverage
+          merge-multiple: false
       - name: Report platform results
         if: always()
         env:

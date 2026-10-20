@@ -40,7 +40,7 @@ class PlatformRoutingTests(unittest.TestCase):
         cls.platforms = sorted(cls.rules)
 
     def select(self, *paths, event="pull_request"):
-        return matrix.select_platforms(self.rules, list(paths), event)[0]
+        return matrix.select_platforms(self.rules, list(paths), event, ['ci:diff'])[0]
 
     def test_platform_discovery_excludes_metadata(self):
         self.assertTrue(self.platforms, "At least one platform configuration is required")
@@ -84,7 +84,7 @@ class PlatformRoutingTests(unittest.TestCase):
             self.assertEqual(set(rules), {"existing", "new-accelerator"})
             self.assertEqual(
                 matrix.select_platforms(
-                    rules, ["megatron/plugin/new-accelerator/test.py"], "pull_request"
+                    rules, ["megatron/plugin/new-accelerator/test.py"], "pull_request", ["ci:diff"]
                 )[0],
                 ["new-accelerator"],
             )
@@ -292,22 +292,26 @@ RULES = {"ascend": ["ascend/"], "cuda": ["cuda/"]}
 
 
 class LabelTests(unittest.TestCase):
-    def test_labels_override_path_routing_like_te(self):
-        for paths, labels, expected in (
-            (["ascend/ops.py"], ["platform:cuda"], ["cuda"]),
-            (["common.py"], ["platform:ascend"], ["ascend"]),
-            (["common.py"], ["platform:cuda", "platform:ascend"], ["ascend", "cuda"]),
-            (["README.md"], ["platform:ascend"], ["ascend"]),
-            (["ascend/ops.py"], ["platform:all"], ["ascend", "cuda"]),
-            (["ascend/ops.py"], [], ["ascend"]),
-            (["ascend/ops.py"], ["Run tests"], ["ascend"]),
-        ):
+    def test_default_full_diff_opt_in_and_additive_labels(self):
+        cases = [
+            (["ascend/ops.py"], [], ["ascend", "cuda"]),
+            (["README.md"], ["platform:ascend"], ["ascend", "cuda"]),
+            (["ascend/ops.py"], ["ci:diff"], ["ascend"]),
+            (["ascend/ops.py"], ["ci:diff", "platform:cuda"], ["ascend", "cuda"]),
+            (["common.py"], ["ci:diff", "platform:ascend"], ["ascend", "cuda"]),
+            ([], ["ci:diff", "platform:ascend"], ["ascend", "cuda"]),
+            (["README.md"], ["ci:diff"], []),
+            (["README.md"], ["ci:diff", "platform:ascend"], ["ascend"]),
+            (["ascend/ops.py"], ["ci:diff", "platform:all"], ["ascend", "cuda"]),
+        ]
+        for paths, labels, expected in cases:
             with self.subTest(paths=paths, labels=labels):
                 self.assertEqual(
                     matrix.select_platforms(RULES, paths, "pull_request", labels)[0], expected
                 )
-        with self.assertRaises(ValueError):
-            matrix.select_platforms(RULES, ["README.md"], "pull_request", ["platform:typo"])
+        for label in ("platform:typo", "ci:scope:cuda", "ci:reduce:cuda"):
+            with self.subTest(label=label), self.assertRaises(ValueError):
+                matrix.select_platforms(RULES, ["common.py"], "pull_request", [label])
 
 
 class CommentTests(unittest.TestCase):
@@ -514,7 +518,10 @@ class WorkflowIsolationTests(unittest.TestCase):
                         self.assertEqual(options["ref"], "main")
                         continue
                     self.assertIs(options["persist-credentials"], False)
-                    if step.get("name") == "Checkout report tooling":
+                    if step.get("name") in (
+                        "Checkout report tooling",
+                        "Checkout selection tooling",
+                    ):
                         self.assertEqual(name, "all_tests_common.yml")
                         self.assertEqual(options["path"], "flagcicd-control")
                         self.assertEqual(options["ref"], "${{ github.workflow_sha }}")

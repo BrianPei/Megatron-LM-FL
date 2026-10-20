@@ -44,30 +44,39 @@ test_matrix:
     # Matches the nine groups attempted manually. Transformer is not onboarded yet.
     groups:
       - name: core
+        ci_level: L1
         path: tests/unit_tests/test_*.py megatron/plugin/tests/
         description: Core unit tests
       - name: models
+        ci_level: L1
         path: tests/unit_tests/models/
         description: Model tests
       - name: distributed
+        ci_level: L1
         path: tests/unit_tests/distributed/
         description: Distributed tests
       - name: dist_checkpointing
+        ci_level: L1
         path: tests/unit_tests/dist_checkpointing/
         description: Distributed checkpointing tests
       - name: tensor_parallel
+        ci_level: L1
         path: tests/unit_tests/tensor_parallel/
         description: Tensor parallel tests
       - name: pipeline_parallel
+        ci_level: L1
         path: tests/unit_tests/pipeline_parallel/
         description: Pipeline parallel tests
       - name: data
+        ci_level: L1
         path: tests/unit_tests/data/
         description: Data tests
       - name: fusions
+        ci_level: L1
         path: tests/unit_tests/fusions/
         description: Fusion tests
       - name: others
+        ci_level: L1
         path: tests/unit_tests/post_training/ tests/unit_tests/tokenizers/ tests/unit_tests/utils/
         description: Post-training, tokenizer, and utility tests
     # Temporary runtime-capability quarantine from the 2026-09-20 manual runs.
@@ -231,6 +240,7 @@ test_matrix:
   functional:
     train:
       - model: gpt
+        ci_level: L2
         test_case: qwen3_0p6b_mcore_te_tp1_pp1_no_mmap_bin_files_ppu
         training_script: pretrain_gpt.py
         n_repeat: 1
@@ -240,6 +250,7 @@ test_matrix:
         data_path: /home/gitlab-runner/data
         gpus_per_node: 1
       - model: gpt
+        ci_level: L2
         test_case: qwen3_0p6b_mcore_te_tp2_pp2_benchmark_ppu
         training_script: pretrain_gpt.py
         n_repeat: 1

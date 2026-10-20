@@ -31,6 +31,8 @@ jobs:
         run: |
           pre-commit run --show-diff-on-failure \
             --from-ref "$(git merge-base "origin/$BASE_REF" HEAD)" --to-ref HEAD
+      - name: Validate registered test manifest and resource contracts
+        run: python .github/scripts/ci/flagcicd.py validate
       - name: Test CI helpers
         run: |
           python -m unittest discover -s .github/scripts/ci -p 'test_*.py'

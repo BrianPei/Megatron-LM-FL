@@ -7,89 +7,121 @@ All manual platform entrypoints reuse `_platform_pipeline.yml`, preserving image
 and test-scope inputs. Every entrypoint runs common checks once before invoking
 the platform pipeline; platform workflows contain no duplicate lint job. The shared test gate reports the platform result.
 
-## FlagCICD and nightly
+## L0-L4: training risk and declared platform capabilities
 
-Adapted from `BrianPei/TransformerEngine-FL:ci/flagcicd-unified`.
-The platform YAML files remain the source of truth for runners, images, test
-matrices and TE wheel preparation. [`project.yaml`](../../../.flagcicd/project.yaml) defines the supported levels
-and ordered risk rules; the planner reads those rules directly.
+| Level | Goal | Registered execution |
+| --- | --- | --- |
+| L0 | Valid configuration and plan | Changed-file lint, CI helper tests, manifest/schema, routing, entry paths, resource/dependency contracts |
+| L1 | Correct components | Hardware-backed unit groups for models, training, plugins, data and distributed components |
+| L2 | Usable training pipeline | Small-model short training, loss/golden checks and representative TP/PP; save/resume must be explicitly onboarded |
+| L3 | Stable combinations and regression | Explicitly onboarded parallel/optimizer/overlap combinations, compatibility, repeat/stress and calibrated performance checks |
+| L4 | Model/scale/release acceptance | Explicitly onboarded long training, model/scale and candidate package/image acceptance |
 
-| Level | Scope |
+L1 is not a CPU-only tier. No blanket CPU claim is made for `tests/unit_tests`.
+L0 contract checks do not prove mounted datasets, tokenizer resources or runners
+are available; existing hardware setup still validates actual resources.
+
+Every existing unit group has `ci_level: L1`; every existing functional case has
+`ci_level: L2` in `.github/configs/*.yml`. Classification granularity is a unit
+group or functional case, per configured device. Existing pytest exclusions,
+markers, experimental passes and transient retry policies remain in effect.
+Upstream tests outside these platform configurations are not implicitly supported.
+
+[project.yaml](../../../.flagcicd/project.yaml) declares all five levels and a frozen
+`migration_baseline` of the original entry IDs per platform. Definitions remain
+in platform YAML; the baseline stores identities only. New entries require an
+explicit valid `ci_level`, and do not automatically expand the PR baseline.
+Missing baseline entries/platforms, duplicate IDs, overlapping unit-group paths,
+missing setup/training/config/golden files and invalid configuration fail L0.
+Changing the baseline requires an explicit reviewed configuration change.
+
+L3/L4 are defined, but **no platform currently has registered L3/L4 entries**.
+Manual requests for those levels fail explicitly. Register real tests, resource
+requirements and pass criteria before declaring capability; a lower-tier pass
+must never be described as complete L3/L4 acceptance. Calibration and hardware
+validation are required before introducing performance gates.
+
+## Default scope, diff and supplemental requests
+
+Automatic PR CI runs every configured platform's frozen baseline by default,
+including documentation-only PRs. Push CI retains its existing event/path filters.
+A PR label `ci:diff` explicitly opts into platform routing:
+
+- `paths_watch` supports exact paths and directory prefixes ending in `/`.
+- Vendor-only changes select affected platforms and their baseline entries.
+- Shared/unknown paths, missing watch rules, absent or failed diffs fall back to all platforms.
+- Diff mode can omit hardware for documentation-only changes, while L0 still runs.
+- Renames include old and new paths. Platform labels add to the result.
+- `platform:cuda` cannot reduce shared-code validation to CUDA; `platform:all` adds all platforms.
+- Runtime merge-scope reduction labels are disabled, including `ci:scope*` and
+  `ci:reduce*`. Ordinary labels never authorize narrowing. Maintainers can request
+  separate supplemental runs without changing `CI Complete`.
+
+The new entry supports manual `workflow_dispatch` and `repository_dispatch`
+(`event_type: flagcicd`) with `checkout_ref`, `platforms` (JSON array or `["all"]`),
+`mode`, `test_level`, `task_id`, and `parent_run_id`. Target refs must contain
+the classified platform configuration; legacy refs without `ci_level` fail L0.
+
+| Mode | Selection and meaning |
 | --- | --- |
-| L0 | Validate selected platform configurations and run common CI checks; no hardware or TE build |
-| L1 | Common checks, TE wheel preparation and existing unit tests |
-| L2 | L1 plus existing functional training and golden-value validation |
+| baseline (default) | Frozen baseline; level input is ignored; all platforms by default |
+| level | Cumulative registered entries through L0-L4; requested hardware tier must actually exist on every selected platform |
+| functional | Only registered functional cases through the chosen level, after L0 and necessary TE/runtime setup; always supplemental |
 
-L3/L4 are rejected until extended regression/release validation is implemented.
-No uncalibrated coverage thresholds or synthetic performance baselines are added.
+A selected-platform manual run is supplemental; it cannot complete the automatic
+merge check. Functional-only runs skip unit tests but retain TE preparation,
+resource setup and functional execution. Existing `/ci run` and `/test` commands
+remain separate `CI Requested Tests` checks, never replacements for `CI Complete`.
+`ci-requested.yml` does not inherit upload credentials.
 
-Use **Actions → FlagCICD Entry → Run workflow**, or `repository_dispatch` with
-`event_type: flagcicd`. Both accept `checkout_ref`, `platforms`, `test_level`,
-`risk_level`, `changed_files`, `task_id` and `parent_run_id`. The platform names
-match `.github/configs/*.yml` (including `kunlunxin`, not TE's `kunlun`).
-`platforms` and `changed_files` accept JSON arrays; dispatch also accepts arrays
-as native JSON values. For example, a dispatch payload can contain:
+## Nightly and weekly
 
-```json
-{
-  "event_type": "flagcicd",
-  "client_payload": {
-    "checkout_ref": "cicd-nightly",
-    "platforms": ["cuda", "ppu"],
-    "test_level": "L2",
-    "task_id": "training-validation-42"
-  }
-}
-```
+`flagcicd-entry.yml` owns both schedules; `ci.yml` has no duplicate cron.
 
-`changed_files` is an optional caller-supplied risk hint, not a computed diff.
-Empty input preserves the requested level. Known runtime/training changes raise
-it to L2/R3; CI/build/functional and unknown paths raise it to at least L2/R2.
-Explicit requests can raise but cannot lower inferred requirements.
+- Nightly: 02:00 Asia/Shanghai daily, all configured platforms, declared supported
+  entries through L3.
+- Weekly: Sunday 02:00 Asia/Shanghai, all configured platforms, declared supported
+  entries through L4. This overlaps the daily run by design; both represent their
+  independent requested scopes.
 
-Nightly runs at **02:00 Asia/Shanghai** on the default branch and selects all
-configured platforms at L2. Its schedule lives only in `flagcicd-entry.yml`;
-`ci.yml` continues to handle automatic PR/push routing. GitHub activates scheduled
-and repository dispatch events after the workflow reaches the default branch.
+Neither schedule uses PR diffs or platform labels. Until L3/L4 suites are onboarded,
+both run existing L1/L2 capabilities and record requested level, actual validated
+level and capability gaps per platform. A supported-scope pass is not full L3/L4
+or release acceptance. Schedules activate on the default branch, not merely when
+this branch is pushed. L4 release jobs must eventually validate the actual
+candidate artifact, not substitute a source checkout for artifact acceptance.
 
-The source ref is resolved once to an immutable SHA and passed through the
-existing `_platform_pipeline.yml` TE preparation and test chain. L0 skips that
-chain. Common checks run once before hardware jobs. Existing manual and comment
-commands keep their scope controls, retries, wheel cache and coverage uploads.
+## Plans, reports and final gates
 
-Artifacts retained for 14 days:
+The planner validates the entire registered inventory and freezes the actual
+source SHA, mode, selection reasons, scope, config hashes, required task IDs,
+existing exclusions and unsupported capability gaps. That plan selects the exact
+unit/functional matrices consumed by the existing platform pipeline.
 
-- `flagcicd-plan`: resolved platforms, scope, risk and task/source identity.
-- `flagcicd-report-<platform>`: configuration, unit and functional job conclusions,
-  with combined unit coverage reported separately for each device. These reports
-  are also produced by existing platform entrypoints.
-- `flagcicd-run-summary`: entry/nightly results and validated child reports.
+The unit runner already writes per-group `unit-results.json`; reports check those
+records for each device. Functional jobs now upload individual execution receipts
+bound to run ID, attempt, source SHA, platform and case. A receipt is produced even
+when training fails or is skipped. Missing receipts, skipped/cancelled tasks,
+nonzero group exits, duplicate/stale reports and omitted required tasks cannot pass.
+Successful receipts/reports from an earlier attempt of the same run remain reusable
+when rerunning failed jobs. Future-attempt results are rejected.
 
-Summaries check source SHA, run ID, attempt, task, scope and risk. Successful
-platform reports from earlier attempts of the same run can be reused when rerunning
-failed jobs; future-attempt reports are rejected. Missing,
-duplicate, stale or failed reports cannot pass. Functional failures and skipped
-required jobs cannot be hidden by successful unit coverage. L0 reports preflight
-results without pretending to have coverage. Line percentages use line counts;
-branch percentages use branch counts. Platform/device denominators are never
-merged. Existing raw coverage artifacts and FlagOps backend uploads are retained;
-structured reports use GitHub artifacts and do not introduce another backend API.
+Automatic `CI Complete` checks both upstream job status and the frozen plan's
+required reports/tasks. The manual/periodic entry checks the same contract, with
+`validation_scope` distinguishing baseline, selected level, supported capability
+and supplemental results. Summaries distinguish requested `test_level` from actual `validated_level`
+(L0 when an explicitly opted-in documentation diff requires no hardware), and
+include `merge_acceptance`; a supplemental
+or periodic pass is never promoted to baseline merge acceptance. Functional-only
+reports leave `validated_level` empty; their executed task IDs describe the partial
+verification rather than claiming complete L2/L3 acceptance.
 
-Run the local CI helper suites in [Validation](#validation). Hardware execution
-and backend ingestion must be verified on actual runners.
-
-## Platform selection
-
-- `paths_watch` accepts exact files and directory prefixes ending in `/`.
-- Vendor-only changes run the affected platforms; shared/unknown paths run all.
-- Documentation (`docs/`, `.md`, `.rst`) skips hardware tests but still reports
-  the gate. Revisit this rule if builds/tests start using documentation as input.
-- Missing diffs/watch rules select all platforms; invalid configs fail.
-- Renames include both old and new paths. Push/schedule/manual CI runs select all.
-- Labels `platform:<config-name>` override path routing, matching TE. Multiple
-  labels take their union; `platform:all` selects every platform. Removing all
-  platform labels restores automatic routing. Narrow shared-code changes after review.
-- A functional case shared by several platforms must appear in all their watch lists.
+Artifacts retained for 14 days include `flagcicd-plan`,
+`flagcicd-report-<platform>`, `flagcicd-run-summary`, and functional execution
+receipts. Existing raw unit coverage artifacts and FlagOps uploads are preserved.
+Coverage remains per platform/device; line and branch percentages are separate.
+Report schema is `flagcicd.report/v2` and plan schema is `flagcicd.plan/v2`.
+Structured reports are GitHub artifacts, not a new backend API.
 
 ## Prepared wheels
 
