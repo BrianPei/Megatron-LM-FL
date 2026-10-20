@@ -81,18 +81,17 @@ def junit_allows_retry(environment: dict) -> bool:
 
 def pytest_worker() -> None:
     """Give each distributed pytest rank and phase its own JUnit report."""
+    from coverage.cmdline import main as coverage_main
+
     directory = Path(os.environ["CI_JUNIT_DIRECTORY"])
     report = directory / f"{os.environ['CI_JUNIT_PHASE']}-{os.environ.get('RANK', '0')}.xml"
     args = [
-        sys.executable,
-        "-m",
-        "coverage",
         "run",
         f"--rcfile={os.environ['CI_COVERAGE_DIRECTORY']}/.coveragerc",
         *sys.argv[2:],
         f"--junitxml={report}",
     ]
-    os.execv(sys.executable, args)
+    raise SystemExit(coverage_main(args))
 
 
 def execute(
