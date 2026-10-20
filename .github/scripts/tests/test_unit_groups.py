@@ -95,6 +95,32 @@ class UnitGroupTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("PASS: Unit tests: passed (Executed)", result.stdout)
 
+    def test_pytest_worker_runs_coverage_in_process(self):
+        environment = {
+            "CI_COVERAGE_DIRECTORY": str(self.root / "coverage"),
+            "CI_JUNIT_DIRECTORY": str(self.root / "junit"),
+            "CI_JUNIT_PHASE": "normal",
+            "RANK": "3",
+        }
+        arguments = ["run_unit_groups.py", "pytest-worker", "pytest", "-q"]
+        with (
+            mock.patch.dict(os.environ, environment, clear=False),
+            mock.patch.object(sys, "argv", arguments),
+            mock.patch("coverage.cmdline.main", return_value=7) as coverage_main,
+            self.assertRaises(SystemExit) as raised,
+        ):
+            RUNNER.pytest_worker()
+        self.assertEqual(raised.exception.code, 7)
+        coverage_main.assert_called_once_with(
+            [
+                "run",
+                f"--rcfile={self.root}/coverage/.coveragerc",
+                "pytest",
+                "-q",
+                f"--junitxml={self.root}/junit/normal-3.xml",
+            ]
+        )
+
     def test_timeout_status_is_not_reported_as_pass(self):
         groups = [{"name": "slow", "path": "a"}, {"name": "passed", "path": "b"}]
         with (
