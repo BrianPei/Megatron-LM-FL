@@ -291,38 +291,50 @@ class FlagCICDTests(unittest.TestCase):
         with patch.object(flagcicd, 'CONTRACT', ROOT / '.flagcicd/project.yaml'):
             self.assertEqual(len(flagcicd.inventory(ROOT)), 8)
 
-    def test_failed_diff_falls_back_to_all_platforms(self):
+    def test_pr_cli_routes_without_diff_label_and_falls_back_on_failure(self):
         other = self.config_path.with_name('ascend.yml')
-        other.write_text(yaml.safe_dump(self.config))
+        other_config = copy.deepcopy(self.config)
+        other_config['paths_watch'] = ['ascend/']
+        other.write_text(yaml.safe_dump(other_config))
         self.contract['migration_baseline']['ascend'] = self.contract['migration_baseline']['cuda']
         self.contract_path.write_text(yaml.safe_dump(self.contract))
         event = self.root / 'event.json'
-        event.write_text(
-            json.dumps(
-                {'pull_request': {'labels': [{'name': 'ci:diff'}, {'name': 'platform:cuda'}]}}
-            )
-        )
+        event.write_text(json.dumps({'pull_request': {'labels': []}}))
         output, github_output = self.root / 'plan.json', self.root / 'outputs'
-        with (
-            patch.dict(
-                os.environ,
-                {
-                    'GITHUB_EVENT_PATH': str(event),
-                    'GITHUB_EVENT_NAME': 'pull_request',
-                    'GITHUB_OUTPUT': str(github_output),
-                },
-            ),
-            patch.object(
-                sys,
-                'argv',
-                ['flagcicd.py', 'plan', '--root', str(self.root), '--output', str(output)],
-            ),
-            patch.object(
-                flagcicd, '_changed_files', side_effect=subprocess.CalledProcessError(1, 'git')
-            ),
+        for changed, expected in (
+            (['vendor/ops.py'], ['cuda']),
+            (['vendor/ops.py', 'common.py'], ['ascend', 'cuda']),
+            (['README.md'], []),
+            ([], ['ascend', 'cuda']),
+            (subprocess.CalledProcessError(1, 'git'), ['ascend', 'cuda']),
+            (OSError('git unavailable'), ['ascend', 'cuda']),
         ):
-            flagcicd.main()
-        self.assertEqual(json.loads(output.read_text())['platforms'], ['ascend', 'cuda'])
+            diff_result = (
+                {'side_effect': changed}
+                if isinstance(changed, Exception)
+                else {'return_value': changed}
+            )
+            with (
+                self.subTest(changed=changed),
+                patch.dict(
+                    os.environ,
+                    {
+                        'GITHUB_EVENT_PATH': str(event),
+                        'GITHUB_EVENT_NAME': 'pull_request',
+                        'GITHUB_OUTPUT': str(github_output),
+                        'BASE_REF': 'main',
+                    },
+                ),
+                patch.object(
+                    sys,
+                    'argv',
+                    ['flagcicd.py', 'plan', '--root', str(self.root), '--output', str(output)],
+                ),
+                patch.object(flagcicd, '_changed_files', **diff_result) as changed_files,
+            ):
+                flagcicd.main()
+                changed_files.assert_called_once_with('main')
+                self.assertEqual(json.loads(output.read_text())['platforms'], expected)
 
     def test_functional_receipt_step_records_real_source_and_skips(self):
         workflow = yaml.safe_load(

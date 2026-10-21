@@ -26,7 +26,7 @@ levels:
     onboarding: Register long training, scale and release-candidate validation per platform
 selection:
   default: registered-supported-baseline
-  diff_label: ci:diff
+  pr_platform_routing: diff
   platform_labels: additive
   merge_scope_reduction: disabled
   functional_mode: supplemental

@@ -549,11 +549,10 @@ def main() -> None:
             request = {
                 'labels': [label['name'] for label in event['pull_request'].get('labels', [])]
             }
-            if 'ci:diff' in request['labels']:
-                try:
-                    request['changed_files'] = _changed_files(os.environ.get('BASE_REF', 'main'))
-                except (OSError, subprocess.CalledProcessError):
-                    request['changed_files'] = []
+            try:
+                request['changed_files'] = _changed_files(os.environ.get('BASE_REF', 'main'))
+            except (OSError, subprocess.CalledProcessError):
+                request['changed_files'] = []
         if event_name == 'schedule':
             contract = yaml.safe_load(CONTRACT.read_text())
             request = {

@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Run the full baseline by default; route platforms only for ci:diff PRs.
+"""Route PR platforms by diff by default; keep the full baseline per selected platform.
 
 paths_watch entries are exact repository paths or directory prefixes ending in
 "/". Unmapped code, unavailable diffs, and missing watch rules run all platforms.
@@ -110,7 +110,7 @@ def select_platforms(
     event_name: str,
     labels: list[str] | None = None,
 ) -> tuple[list[str], list[str]]:
-    """Keep the baseline full; opt into diff routing and only add label platforms."""
+    """Route PRs by diff; platform labels only add coverage."""
     if event_name != "pull_request":
         return _select_paths(rules, changed, event_name)
     extra = set()
@@ -126,10 +126,6 @@ def select_platforms(
             raise ValueError(f"Unknown platform label: {label}")
     if any(label.startswith('ci:scope') or label.startswith('ci:reduce') for label in labels or []):
         raise ValueError('Merge scope reduction is disabled; use a separate supplemental run')
-    if 'ci:diff' not in (labels or []):
-        return sorted(rules), [
-            'Default registered baseline: all platforms; labels cannot reduce it'
-        ]
     selected, reasons = _select_paths(rules, changed, event_name)
     return sorted(set(selected) | extra), reasons + (
         ['Platform labels add coverage'] if extra else []

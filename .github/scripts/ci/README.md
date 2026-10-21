@@ -41,16 +41,17 @@ requirements and pass criteria before declaring capability; a lower-tier pass
 must never be described as complete L3/L4 acceptance. Calibration and hardware
 validation are required before introducing performance gates.
 
-## Default scope, diff and supplemental requests
+## Default PR diff routing and supplemental requests
 
-Automatic PR CI runs every configured platform's frozen baseline by default,
-including documentation-only PRs. Push CI retains its existing event/path filters.
-A PR label `ci:diff` explicitly opts into platform routing:
+Automatic PR CI routes platforms by changed paths by default, with no label
+required. Each selected platform runs its full frozen baseline. Push CI retains
+its existing event/path filters. The legacy `ci:diff` label is no longer required
+and has no effect on selection:
 
 - `paths_watch` supports exact paths and directory prefixes ending in `/`.
 - Vendor-only changes select affected platforms and their baseline entries.
 - Shared/unknown paths, missing watch rules, absent or failed diffs fall back to all platforms.
-- Diff mode can omit hardware for documentation-only changes, while L0 still runs.
+- Documentation-only PRs omit hardware tests, while L0 still runs.
 - Renames include old and new paths. Platform labels add to the result.
 - `platform:cuda` cannot reduce shared-code validation to CUDA; `platform:all` adds all platforms.
 - Runtime merge-scope reduction labels are disabled, including `ci:scope*` and
@@ -110,7 +111,7 @@ Automatic `CI Complete` checks both upstream job status and the frozen plan's
 required reports/tasks. The manual/periodic entry checks the same contract, with
 `validation_scope` distinguishing baseline, selected level, supported capability
 and supplemental results. Summaries distinguish requested `test_level` from actual `validated_level`
-(L0 when an explicitly opted-in documentation diff requires no hardware), and
+(L0 when a documentation-only PR requires no hardware), and
 include `merge_acceptance`; a supplemental
 or periodic pass is never promoted to baseline merge acceptance. Functional-only
 reports leave `validated_level` empty; their executed task IDs describe the partial

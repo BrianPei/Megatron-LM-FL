@@ -40,7 +40,7 @@ class PlatformRoutingTests(unittest.TestCase):
         cls.platforms = sorted(cls.rules)
 
     def select(self, *paths, event="pull_request"):
-        return matrix.select_platforms(self.rules, list(paths), event, ['ci:diff'])[0]
+        return matrix.select_platforms(self.rules, list(paths), event)[0]
 
     def test_platform_discovery_excludes_metadata(self):
         self.assertTrue(self.platforms, "At least one platform configuration is required")
@@ -84,7 +84,7 @@ class PlatformRoutingTests(unittest.TestCase):
             self.assertEqual(set(rules), {"existing", "new-accelerator"})
             self.assertEqual(
                 matrix.select_platforms(
-                    rules, ["megatron/plugin/new-accelerator/test.py"], "pull_request", ["ci:diff"]
+                    rules, ["megatron/plugin/new-accelerator/test.py"], "pull_request"
                 )[0],
                 ["new-accelerator"],
             )
@@ -292,10 +292,15 @@ RULES = {"ascend": ["ascend/"], "cuda": ["cuda/"]}
 
 
 class LabelTests(unittest.TestCase):
-    def test_default_full_diff_opt_in_and_additive_labels(self):
+    def test_default_diff_routing_and_additive_labels(self):
         cases = [
-            (["ascend/ops.py"], [], ["ascend", "cuda"]),
-            (["README.md"], ["platform:ascend"], ["ascend", "cuda"]),
+            (["README.md"], [], []),
+            (["common.py"], [], ["ascend", "cuda"]),
+            (["ascend/ops.py", "common.py"], [], ["ascend", "cuda"]),
+            ([], [], ["ascend", "cuda"]),
+            (["ascend/ops.py"], ["platform:cuda"], ["ascend", "cuda"]),
+            (["ascend/ops.py"], [], ["ascend"]),
+            (["README.md"], ["platform:ascend"], ["ascend"]),
             (["ascend/ops.py"], ["ci:diff"], ["ascend"]),
             (["ascend/ops.py"], ["ci:diff", "platform:cuda"], ["ascend", "cuda"]),
             (["common.py"], ["ci:diff", "platform:ascend"], ["ascend", "cuda"]),

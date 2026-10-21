@@ -16,8 +16,8 @@
 #
 # Pipeline: lint → generate-matrix → platform-pipeline (matrix) → ci-complete
 #
-# The registered baseline runs in full by default. ci:diff explicitly opts PRs
-# into platform routing; platform labels only add coverage. Plans freeze every
+# PRs route platforms by diff by default and run each selected baseline in full.
+# Shared/unknown paths fall back to all platforms; labels only add coverage. Plans freeze every
 # required group/case and all final results are checked against that plan.
 
 name: CI
