@@ -6,7 +6,7 @@ import enum
 class ModelType(enum.Enum):
     """Model type."""
 
-    encoder_or_decoder = 1
+    encoder_or_decoder=1
 
 
 class Fp8Recipe(str, enum.Enum):
