@@ -1,0 +1,80 @@
+# Copyright 2026 FlagOS Contributors
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Validation-only workflow: the fixture deliberately has uncovered lines.
+name: Codecov patch validation
+
+on:
+  workflow_call:
+
+jobs:
+  codecov-patch-validation:
+    name: Upload real coverage for patch 80% validation
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout PR source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install coverage
+        run: python -m pip install coverage==7.6.1
+
+      - name: Exercise one path and generate real coverage
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > "$RUNNER_TEMP/check-codecov-probe.py" <<'PYTHON'
+          import runpy
+
+          probe = runpy.run_path(".github/scripts/ci/codecov_patch_probe.py")
+          assert probe["classify_sample"](0) == "zero"
+          PYTHON
+          python -m coverage run --rcfile=/dev/null --data-file="$RUNNER_TEMP/codecov-probe.coverage" \
+            --include='.github/scripts/ci/codecov_patch_probe.py' \
+            "$RUNNER_TEMP/check-codecov-probe.py"
+          python -m coverage report --rcfile=/dev/null --data-file="$RUNNER_TEMP/codecov-probe.coverage" -m
+          python -m coverage xml --rcfile=/dev/null --data-file="$RUNNER_TEMP/codecov-probe.coverage" \
+            -o coverage-codecov-probe.xml
+          echo "This report covers only the validation fixture, not Megatron training."
+          echo "Upload success is not proof of a passing or failing codecov/patch check."
+
+      - name: Save original coverage report
+        uses: actions/upload-artifact@v4
+        with:
+          name: codecov-patch-validation-report
+          path: coverage-codecov-probe.xml
+          if-no-files-found: error
+
+      # Public fork PRs use Codecov's tokenless upload support.
+      # The Codecov GitHub App must be enabled on the upstream repository.
+      - name: Upload report to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          files: coverage-codecov-probe.xml
+          disable_search: true
+          fail_ci_if_error: true
+          flags: patch-gate-validation
+          name: patch-gate-negative-case
+          verbose: true

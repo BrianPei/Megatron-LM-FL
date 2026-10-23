@@ -76,6 +76,13 @@ jobs:
     permissions:
       contents: read
 
+  codecov-patch-validation:
+    name: Codecov patch validation
+    if: github.event_name == 'pull_request' && github.repository == 'flagos-ai/Megatron-LM-FL'
+    uses: ./.github/workflows/_codecov_patch_validation.yml
+    permissions:
+      contents: read
+
   generate-matrix:
     name: Generate platform matrix
     needs: [lint, copyright-check]
