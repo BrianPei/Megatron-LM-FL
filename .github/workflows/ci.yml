@@ -69,9 +69,20 @@ jobs:
           pre-commit run --show-diff-on-failure \
             --from-ref "$(git merge-base "origin/$BASE_REF" HEAD)" --to-ref HEAD
 
+  copyright-check:
+    name: Copyright check
+    if: github.event_name == 'pull_request' && github.repository == 'flagos-ai/Megatron-LM-FL'
+    uses: ./.github/workflows/_copyright_check_flagos.yml
+    permissions:
+      contents: read
+
   generate-matrix:
     name: Generate platform matrix
-    needs: lint
+    needs: [lint, copyright-check]
+    if: >-
+      always() && !cancelled() &&
+      needs.lint.result == 'success' &&
+      (needs.copyright-check.result == 'success' || needs.copyright-check.result == 'skipped')
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
