@@ -55,6 +55,52 @@ jobs:
           cat .github/fixtures/approximate-test/actual-within-tolerance.json
           cat .github/fixtures/approximate-test/actual-outside-tolerance.json
 
+      - name: np.isclose - per-step actual versus golden
+        run: |
+          python - <<'PY'
+          import csv
+          import json
+          from pathlib import Path
+
+          import numpy as np
+
+          from tests.functional_tests.python_test_utils.common import ApproximateTest
+          from tests.functional_tests.python_test_utils.test_pretraining_regular_pipeline import CHECK_THRESHOLDS
+
+          check = next(c for c in CHECK_THRESHOLDS['lm loss'] if isinstance(c, ApproximateTest))
+          golden_path = Path('tests/functional_tests/test_cases/gpt/qwen3_0p6b_mcore_te_tp1_pp1_no_mmap_bin_files/golden_values_dev_dgx_a100.json')
+          golden = json.loads(golden_path.read_text())['lm loss']['values']
+          steps = sorted(golden, key=int)
+          reference = np.array([golden[s] for s in steps], dtype=float)
+          print(f'NumPy {np.__version__}; existing lm loss tolerance: rtol={check.rtol}, atol={check.atol}')
+          print('Constructed inputs, not new training measurements.')
+          print('np.isclose(actual, golden): abs(actual-golden) <= atol + rtol*abs(golden)')
+          rows = []
+          for label, filename, expected in (
+              ('1 percent deviation', 'actual-within-tolerance.json', True),
+              ('50 percent deviation', 'actual-outside-tolerance.json', False),
+          ):
+              values = json.loads((Path('.github/fixtures/approximate-test') / filename).read_text())['lm loss']['values']
+              assert set(values) == set(golden), 'Actual and golden steps must match'
+              actual = np.array([values[s] for s in steps], dtype=float)
+              close = np.isclose(actual, reference, rtol=check.rtol, atol=check.atol)
+              errors = np.abs(actual - reference)
+              bounds = check.atol + check.rtol * np.abs(reference)
+              print(f'\n{label}')
+              print('step | actual | golden | abs_error | allowed_error | np.isclose')
+              for step, a, g, error, bound, result in zip(steps, actual, reference, errors, bounds, close):
+                  print(f'{step:>4} | {a:.8f} | {g:.8f} | {error:.8f} | {bound:.8f} | {bool(result)}')
+                  rows.append([label, step, a, g, error, bound, bool(result)])
+              print(f'isclose mask: {close.tolist()}')
+              print(f'Within tolerance: {int(close.sum())}/{len(close)}')
+              assert bool(np.all(close == expected)), f'Unexpected np.isclose results: {label}'
+          with Path('np-isclose-per-step.csv').open('w', newline='') as stream:
+              writer = csv.writer(stream)
+              writer.writerow(['case', 'step', 'actual', 'golden', 'abs_error', 'allowed_error', 'isclose'])
+              writer.writerows(rows)
+          print('\nBoth np.isclose controls matched expectations; the original pipeline checks run next.')
+          PY
+
       - name: Positive control - 1 percent deviation passes
         run: |
           python -m pytest tests/functional_tests/python_test_utils/test_pretraining_regular_pipeline.py::test_regular_pipeline \
@@ -83,4 +129,5 @@ jobs:
             tests/functional_tests/test_cases/gpt/qwen3_0p6b_mcore_te_tp1_pp1_no_mmap_bin_files/golden_values_dev_dgx_a100.json
             approximate-positive.xml
             approximate-negative.xml
+            np-isclose-per-step.csv
           include-hidden-files: true
