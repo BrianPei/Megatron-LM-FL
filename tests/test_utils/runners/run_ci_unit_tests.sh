@@ -131,14 +131,14 @@ printf ' %q' "${TEST_PATHS[@]}"
 printf '\n'
 
 COVERAGE_DIR="${CI_COVERAGE_DIRECTORY:-$GITHUB_WORKSPACE/coverage-report}"
-COVERAGE_TRAINING_SOURCE="$GITHUB_WORKSPACE/megatron/training"
 COVERAGE_PLUGIN_SOURCE="$GITHUB_WORKSPACE/megatron/plugin"
-COVERAGE_INCLUDE="megatron/training/*,megatron/plugin/*"
+COVERAGE_CORE_SOURCE="$GITHUB_WORKSPACE/megatron/core"
+COVERAGE_INCLUDE="megatron/plugin/*,megatron/core/*"
 COVERAGE_JSON="$COVERAGE_DIR/coverage-$CI_PLATFORM-$CI_DEVICE-$CI_TEST_GROUP.json"
 mkdir -p "$COVERAGE_DIR"
 printf '[run]\nparallel = true\ndynamic_context = test_function\nsource =\n    %s\n    %s\ndata_file = %s/.coverage\n' \
-  "$COVERAGE_TRAINING_SOURCE" \
   "$COVERAGE_PLUGIN_SOURCE" \
+  "$COVERAGE_CORE_SOURCE" \
   "$COVERAGE_DIR" \
   > "$COVERAGE_DIR/.coveragerc"
 

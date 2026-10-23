@@ -243,7 +243,7 @@ class UnitGroupTests(unittest.TestCase):
         )
 
     def test_rerun_coverage_keeps_successes_and_replaces_failed_data(self):
-        source = self.root / "megatron/training/example.py"
+        source = self.root / "megatron/core/example.py"
         source.parent.mkdir(parents=True)
         source.write_text(
             "import sys\nif sys.argv[1] == 'passed':\n    value = 1\n"
@@ -414,7 +414,7 @@ class UnitGroupTests(unittest.TestCase):
             RUNNER.combine_coverage([self.root], self.root / "all.json", {})
 
     def test_real_coverage_combines_completed_and_interrupted_groups(self):
-        source = self.root / "megatron/training/example.py"
+        source = self.root / "megatron/core/example.py"
         source.parent.mkdir(parents=True)
         source.write_text(
             "import sys\nif sys.argv[1] == 'first':\n    value = 1\nelse:\n    value = 2\n"
