@@ -76,6 +76,31 @@ jobs:
             --configs-dir .github/configs \
             >> "$GITHUB_OUTPUT"
 
+      # Shadow mode: the proposed unit-group plan is reported and archived,
+      # but platform pipelines still execute their full configured group set.
+      - name: Generate proposed unit test plan
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref || 'main' }}
+          PLATFORMS: ${{ steps.matrix.outputs.platforms }}
+        run: |
+          python .github/scripts/ci/generate_test_plan.py \
+            --event-name "$EVENT_NAME" \
+            --base-ref "$BASE_REF" \
+            --platforms "$PLATFORMS" \
+            --output unit-test-plan.json \
+            --summary "$GITHUB_STEP_SUMMARY" \
+            --shadow
+
+      - name: Upload proposed unit test plan
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-test-plan
+          path: unit-test-plan.json
+          overwrite: true
+          if-no-files-found: error
+          retention-days: 7
+
   platform-pipeline:
     name: Platform pipeline (${{ matrix.platform }})
     needs: generate-matrix

@@ -31,7 +31,7 @@ import sys
 
 import yaml
 
-_NON_PLATFORM_STEMS = frozenset(("template", "image_sources", "platforms"))
+_NON_PLATFORM_STEMS = frozenset(("template", "image_sources", "platforms", "unit_group_routes"))
 
 
 def _changed_files(base_ref: str) -> list[str]:
@@ -43,6 +43,14 @@ def _changed_files(base_ref: str) -> list[str]:
         check=True,
     )
     return [path for path in result.stdout.split("\0") if path]
+
+
+def event_labels() -> list[str]:
+    """Read PR labels without making routing depend on the event payload shape."""
+    if not os.environ.get("GITHUB_EVENT_PATH"):
+        return []
+    event = json.loads(pathlib.Path(os.environ["GITHUB_EVENT_PATH"]).read_text())
+    return [label["name"] for label in event.get("pull_request", {}).get("labels", [])]
 
 
 def _matches(path: str, watch: str) -> bool:
@@ -150,10 +158,7 @@ def main() -> None:
                         f"::warning::Cannot read diff; running all platforms: {exc}",
                         file=sys.stderr,
                     )
-        labels = []
-        if args.event_name == "pull_request" and os.environ.get("GITHUB_EVENT_PATH"):
-            event = json.loads(pathlib.Path(os.environ["GITHUB_EVENT_PATH"]).read_text())
-            labels = [label["name"] for label in event.get("pull_request", {}).get("labels", [])]
+        labels = event_labels() if args.event_name == "pull_request" else []
         platforms, reasons = select_platforms(rules, changed, args.event_name, labels)
     except (OSError, ValueError, yaml.YAMLError) as exc:
         print(f"::error::{exc}", file=sys.stderr)

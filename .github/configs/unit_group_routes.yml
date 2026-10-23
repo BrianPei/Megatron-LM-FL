@@ -1,0 +1,285 @@
+# Logical unit-test groups for changed-file routing.
+#
+# This file is the logical routing layer only. A platform executes a group only
+# when its .github/configs/<platform>.yml declares a unit group with the same
+# name. A logical group without a platform execution group is reported as
+# "not_configured" instead of being silently skipped.
+#
+# Keep this catalog conservative. Any path that is not listed here, or that is
+# listed as shared, expands the plan to every group. A narrower plan must never
+# be produced by an unrecognized path.
+
+schema_version: 1
+
+global:
+  default_timeout_minutes: 60
+  documentation_paths:
+    - docs/
+  documentation_suffixes:
+    - .md
+    - .rst
+  # Shared runtime, packaging, and CI inputs invalidate every unit group.
+  shared_paths:
+    - .github/
+    - docker/
+    - uv.lock
+    - pyproject.toml
+    - setup.py
+    - setup.cfg
+    - MANIFEST.in
+    - codecov.yml
+
+levels:
+  L0:
+    description: Lowest-risk baseline; always required.
+    required_groups:
+      - core
+  L1:
+    description: Default pull-request baseline.
+    required_groups:
+      - core
+  L2:
+    description: Broader baseline for shared or high-risk changes.
+    required_groups:
+      - core
+      - models
+
+groups:
+  core:
+    description: Model-parallel configuration, process groups, and root unit tests.
+    paths:
+      - tests/unit_tests/test_*.py
+      - megatron/plugin/tests/
+      - megatron/core/__init__.py
+      - megatron/core/_rank_utils.py
+      - megatron/core/_slurm_utils.py
+      - megatron/core/activations.py
+      - megatron/core/config.py
+      - megatron/core/config_logger.py
+      - megatron/core/energy_monitor.py
+      - megatron/core/enums.py
+      - megatron/core/fault_injector.py
+      - megatron/core/fp4_utils.py
+      - megatron/core/fp8_utils.py
+      - megatron/core/full_cuda_graph.py
+      - megatron/core/hyper_comm_grid.py
+      - megatron/core/inference_params.py
+      - megatron/core/jit.py
+      - megatron/core/model_parallel_config.py
+      - megatron/core/msc_utils.py
+      - megatron/core/nccl_allocator.py
+      - megatron/core/num_microbatches_calculator.py
+      - megatron/core/optimizer_param_scheduler.py
+      - megatron/core/package_info.py
+      - megatron/core/packed_seq_params.py
+      - megatron/core/parallel_state.py
+      - megatron/core/process_groups_config.py
+      - megatron/core/quantization/
+      - megatron/core/recompute.py
+      - megatron/core/rerun_state_machine.py
+      - megatron/core/safe_globals.py
+      - megatron/core/timers.py
+      - megatron/core/typed_torch.py
+      - megatron/core/utils.py
+    depends_on: []
+    resource_class: single_device
+
+  models:
+    description: Model construction, configuration, and forward paths.
+    paths:
+      - megatron/core/models/
+      - tests/unit_tests/models/
+    depends_on:
+      - core
+    resource_class: multi_gpu_exclusive
+
+  transformer:
+    description: Transformer blocks, attention, and layer specifications.
+    paths:
+      - megatron/core/transformer/
+      - tests/unit_tests/transformer/
+    depends_on:
+      - models
+    resource_class: multi_gpu_exclusive
+
+  distributed:
+    description: Distributed data parallel, gradient sync, and communication state.
+    paths:
+      - megatron/core/distributed/
+      - tests/unit_tests/distributed/
+    depends_on:
+      - pipeline_parallel
+      - tensor_parallel
+    resource_class: communication_exclusive
+
+  tensor_parallel:
+    description: Tensor-parallel mappings and parameter sharding.
+    paths:
+      - megatron/core/tensor_parallel/
+      - tests/unit_tests/tensor_parallel/
+    depends_on:
+      - models
+    resource_class: communication_exclusive
+
+  pipeline_parallel:
+    description: Pipeline schedules, rank layout, and microbatch flow.
+    paths:
+      - megatron/core/pipeline_parallel/
+      - tests/unit_tests/pipeline_parallel/
+    depends_on:
+      - models
+    resource_class: communication_exclusive
+
+  dist_checkpointing:
+    description: Distributed checkpoint serialization and loading.
+    paths:
+      - megatron/core/dist_checkpointing/
+      - tests/unit_tests/dist_checkpointing/
+    depends_on: []
+    resource_class: checkpoint_exclusive
+
+  data:
+    description: Dataset construction and data loading.
+    paths:
+      - megatron/core/datasets/
+      - megatron/training/datasets/
+      - tests/unit_tests/data/
+    depends_on:
+      - core
+    resource_class: single_device
+
+  fusions:
+    description: Fused operators and fused layer paths.
+    paths:
+      - megatron/core/fusions/
+      - tests/unit_tests/fusions/
+    depends_on:
+      - transformer
+      - models
+    resource_class: multi_gpu_exclusive
+
+  others:
+    description: Post-training, tokenizer, and utility tests grouped by the platform configs.
+    paths:
+      - megatron/core/post_training/
+      - megatron/core/tokenizers/
+      - megatron/post_training/
+      - megatron/training/tokenizer/
+      - megatron/training/utils/
+      - tests/unit_tests/post_training/
+      - tests/unit_tests/tokenizers/
+      - tests/unit_tests/utils/
+    depends_on:
+      - core
+    resource_class: single_device
+
+  optimizer:
+    description: Optimizer implementations and parameter schedulers.
+    paths:
+      - megatron/core/optimizer/
+      - tests/unit_tests/optimizer/
+    depends_on:
+      - core
+    resource_class: single_device
+
+  inference:
+    description: Inference engine, inference parameters, and serving entry points.
+    paths:
+      - megatron/core/inference/
+      - megatron/inference/
+      - tests/unit_tests/inference/
+    depends_on:
+      - models
+    resource_class: single_device
+
+  rl:
+    description: Reinforcement-learning agents, rollout, and serving paths.
+    paths:
+      - megatron/rl/
+      - tests/unit_tests/rl/
+    depends_on:
+      - core
+    resource_class: multi_gpu_exclusive
+
+  training:
+    description: Training loop, checkpointing, initialization, and argument parsing.
+    paths:
+      - megatron/training/
+      - tests/unit_tests/training/
+    depends_on:
+      - core
+      - models
+    resource_class: multi_gpu_exclusive
+
+  ssm:
+    description: State-space model layers.
+    paths:
+      - megatron/core/ssm/
+      - tests/unit_tests/ssm/
+    depends_on:
+      - models
+      - transformer
+    resource_class: multi_gpu_exclusive
+
+  resharding:
+    description: Checkpoint resharding between parallel layouts.
+    paths:
+      - megatron/core/resharding/
+      - tests/unit_tests/resharding/
+    depends_on:
+      - dist_checkpointing
+      - distributed
+    resource_class: checkpoint_exclusive
+
+  export:
+    description: Model export paths.
+    paths:
+      - megatron/core/export/
+      - tests/unit_tests/export/
+    depends_on:
+      - models
+    resource_class: single_device
+
+  extensions:
+    description: Transformer Engine and third-party extension interfaces.
+    paths:
+      - megatron/core/extensions/
+      - tests/unit_tests/extension/
+    depends_on:
+      - core
+      - models
+    resource_class: single_device
+
+  a2a_overlap:
+    description: All-to-all overlap tests.
+    paths:
+      - tests/unit_tests/a2a_overlap/
+    depends_on:
+      - distributed
+    resource_class: communication_exclusive
+
+  elastification:
+    description: Elastic training orchestration.
+    paths:
+      - megatron/elastification/
+      - tests/unit_tests/elastification/
+    depends_on:
+      - core
+    resource_class: multi_gpu_exclusive
+
+  plugin:
+    description: Plugin framework and vendor plugin code.
+    paths:
+      - megatron/plugin/
+      - tests/unit_tests/plugin/
+    depends_on:
+      - core
+    resource_class: single_device
+
+  tools:
+    description: Repository tooling tests.
+    paths:
+      - tests/unit_tests/tools/
+    depends_on:
+      - core
+    resource_class: cpu_only

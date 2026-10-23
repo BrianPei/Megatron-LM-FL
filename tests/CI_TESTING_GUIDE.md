@@ -77,7 +77,8 @@ Environment setup still runs normally on every attempt. Dependencies may change
 between attempts: this is result reuse, not a frozen environment or container
 snapshot. No automatic test retries are added.
 
-Coverage data is isolated per group. The coverage artifact retains each completed
+Coverage data is isolated per group. Coverage measures `megatron/plugin/*` and
+`megatron/core/*`. The coverage artifact retains each completed
 group's JSON and `unit-results.json`; a combined `coverage-<platform>-<device>-all.json`
 is sent to FlagCICD. Available reports are uploaded even after test failures.
 Each completed group prints `PASS`, `FAIL` or `TIMEOUT` outside its collapsible log
@@ -190,14 +191,20 @@ No workflow edit is needed in that case. The common directory mapping is:
 | `tests/unit_tests/pipeline_parallel/` | `pipeline_parallel` |
 | `tests/unit_tests/data/` | `data` |
 | `tests/unit_tests/fusions/` | `fusions` |
-| `export/`, `post_training/`, `tokenizers/`, `utils/` | `others` |
+| `tests/unit_tests/transformer/` | `transformer` (CUDA only today) |
+| `post_training/`, `tokenizers/`, `utils/` | `others` |
+
+Other directories under `tests/unit_tests/` have logical groups in the routing
+catalog but are not executed by any platform yet. They are reported as
+`not_configured` by the shadow plan until a platform config adds them.
 
 The platform config remains authoritative. A platform may omit a complete
 group when its runtime cannot execute that boundary. A root glob such as
 `tests/unit_tests/test_*.py` also does not include tests in subdirectories.
 
-If a new top-level directory is not covered, add a unique group to every
-platform config that should run it:
+If a new top-level directory is not covered, add it to
+`.github/configs/unit_group_routes.yml` and then register an execution group in
+every platform config that should run it:
 
 ```yaml
 test_matrix:
@@ -222,6 +229,44 @@ Before submitting a new test:
 
 Running only `pytest <node>` proves the test can execute, but does not prove CI
 selects it. The group run is the final collection check.
+
+### Logical groups and shadow routing
+
+`.github/configs/unit_group_routes.yml` is the logical routing catalog. It maps
+source and test paths to logical groups, declares dependencies between groups,
+and lists the groups required by each level. Platform configs remain
+authoritative for execution: a logical group runs only when the platform config
+declares a unit group with the same name. Otherwise the plan reports it as
+`not_configured` instead of silently dropping it.
+
+`.github/scripts/ci/generate_test_plan.py` runs in the `generate-matrix` job. It
+combines the catalog, the platform router, and the selected platform configs,
+then publishes `unit-test-plan.json` and an Actions summary. CI currently runs
+in shadow mode: the proposed plan is reported, but every configured unit group
+still executes.
+
+Routing rules:
+
+- Unknown and shared paths expand to every logical group. Shared inputs include
+  `.github/`, `docker/`, `uv.lock`, `pyproject.toml`, `setup.py`, and test
+  infrastructure such as `tests/unit_tests/conftest.py`.
+- Documentation-only changes propose no hardware tests. A mixed documentation
+  and code change is routed by its code paths.
+- Renames include both the old and new paths.
+- A missing required group blocks a non-shadow plan. A missing optional group is
+  reported as `not_configured`.
+- The `plan_hash` is stable for identical source/base SHAs, configs, and
+  changed files.
+
+Validate the catalog after changing a test directory or a platform unit group:
+
+```bash
+python .github/scripts/ci/validate_unit_group_catalog.py
+```
+
+The validator checks path existence, dependency acyclicity, platform group
+names, required-group availability, and that every `tests/unit_tests/`
+directory has a logical group.
 
 ### Distributed test requirements
 

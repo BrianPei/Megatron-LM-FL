@@ -17,6 +17,11 @@ SPEC = importlib.util.spec_from_file_location(
 )
 RUNNER = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(RUNNER)
+MATRIX_SPEC = importlib.util.spec_from_file_location(
+    "generate_matrix", ROOT / ".github/scripts/ci/generate_matrix.py"
+)
+MATRIX = importlib.util.module_from_spec(MATRIX_SPEC)
+MATRIX_SPEC.loader.exec_module(MATRIX)
 
 
 class UnitGroupTests(unittest.TestCase):
@@ -477,7 +482,7 @@ class UnitWorkflowTests(unittest.TestCase):
         self.assertEqual(list(unit["strategy"]["matrix"]), ["device"])
         platforms = []
         for path in sorted((ROOT / ".github/configs").glob("*.yml")):
-            if path.stem == "template":
+            if path.stem in MATRIX._NON_PLATFORM_STEMS:
                 continue
             with self.subTest(platform=path.stem):
                 platforms.append(path.stem)

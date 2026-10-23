@@ -20,6 +20,26 @@ the platform pipeline; platform workflows contain no duplicate lint job. The sha
   platform labels restores automatic routing. Narrow shared-code changes after review.
 - A functional case shared by several platforms must appear in all their watch lists.
 
+## Unit group routing (shadow)
+
+`.github/configs/unit_group_routes.yml` defines logical groups, their source and
+test paths, dependencies, resource classes, and the groups required by each
+level. `generate_test_plan.py` combines that catalog with the platform router and
+each platform's configured unit groups, then writes `unit-test-plan.json` and an
+Actions summary.
+
+CI runs the planner in shadow mode: the proposed plan is published and archived,
+but platform pipelines still execute every configured unit group. Routing rules:
+
+- Unknown and shared paths expand to every logical group; they never narrow it.
+- A logical group without a matching platform group is reported as
+  `not_configured`; a missing required group fails a non-shadow plan.
+- Documentation-only changes propose no hardware tests.
+- Identical source/base SHAs, configs, and changed files produce the same
+  `plan_hash`.
+- `validate_unit_group_catalog.py` checks path existence, dependency acyclicity,
+  platform group names, and coverage of every `tests/unit_tests/` directory.
+
 ## Prepared wheels
 
 Preparation uploads a platform/attempt-specific wheel artifact, even on a cache
@@ -82,7 +102,7 @@ Do not make `CI Requested Tests` a required merge check.
 
 ## Coverage reports
 
-Unit coverage (`megatron/training/*`, `megatron/plugin/*`) is combined into
+Unit coverage (`megatron/plugin/*`, `megatron/core/*`) is combined into
 `coverage-report/coverage-<platform>-<device>-all.json` and uploaded as a GitHub
 artifact and to FlagCICD via `flagos-ai/FlagOps/actions/post-pytest-report@v2`.
 
@@ -102,6 +122,7 @@ and backend parsing in a repository CI run with the token configured.
 
 ```sh
 python -m pip install PyYAML==6.0.3 coverage==7.6.1 pytest==8.3.5 requests==2.32.5 click==8.1.8
+python .github/scripts/ci/validate_unit_group_catalog.py
 python -m unittest discover -s .github/scripts/ci -p 'test_*.py'
 python -m unittest discover -s .github/scripts/tests -p 'test_*.py'
 ```
