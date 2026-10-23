@@ -1,0 +1,86 @@
+# Copyright 2026 FlagOS Contributors
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Validation-only negative case: a comparison failure is expected.
+name: Approximate test validation
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/approximate_test_validation.yml'
+      - '.github/fixtures/approximate-test/**'
+
+permissions:
+  contents: read
+
+jobs:
+  approximate-comparison:
+    name: ApproximateTest tolerance validation
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout PR source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install comparison dependencies
+        run: >-
+          python -m pip install pytest==8.3.5 numpy==2.2.6
+          pydantic==2.11.7 tensorboard==2.19.0 PyYAML==6.0.2
+
+      - name: Show constructed input and unchanged tolerance
+        run: |
+          echo "Constructed samples from the existing Qwen3 golden loss; no training is performed."
+          echo "Existing ApproximateTest: atol=0, rtol=0.05; 10 steps, one outlier allowed."
+          echo "Positive case: 1% deviation on all steps. Negative case: 50% on all steps."
+          cat .github/fixtures/approximate-test/actual-within-tolerance.json
+          cat .github/fixtures/approximate-test/actual-outside-tolerance.json
+
+      - name: Positive control - 1 percent deviation passes
+        run: |
+          python -m pytest tests/functional_tests/python_test_utils/test_pretraining_regular_pipeline.py::test_regular_pipeline \
+            --allow-nondeterministic-algo \
+            --golden-values-path tests/functional_tests/test_cases/gpt/qwen3_0p6b_mcore_te_tp1_pp1_no_mmap_bin_files/golden_values_dev_dgx_a100.json \
+            --model-config-path .github/fixtures/approximate-test/model_config.yaml \
+            --actual-values-path .github/fixtures/approximate-test/actual-within-tolerance.json \
+            --junitxml=approximate-positive.xml -vv --log-cli-level=INFO
+
+      - name: Negative case - 50 percent deviation must fail
+        run: |
+          python -m pytest tests/functional_tests/python_test_utils/test_pretraining_regular_pipeline.py::test_regular_pipeline \
+            --allow-nondeterministic-algo \
+            --golden-values-path tests/functional_tests/test_cases/gpt/qwen3_0p6b_mcore_te_tp1_pp1_no_mmap_bin_files/golden_values_dev_dgx_a100.json \
+            --model-config-path .github/fixtures/approximate-test/model_config.yaml \
+            --actual-values-path .github/fixtures/approximate-test/actual-outside-tolerance.json \
+            --junitxml=approximate-negative.xml -vv --log-cli-level=INFO
+
+      - name: Save original comparison inputs and pytest results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: approximate-comparison-evidence
+          path: |
+            .github/fixtures/approximate-test/
+            tests/functional_tests/test_cases/gpt/qwen3_0p6b_mcore_te_tp1_pp1_no_mmap_bin_files/golden_values_dev_dgx_a100.json
+            approximate-positive.xml
+            approximate-negative.xml
+          include-hidden-files: true
