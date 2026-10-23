@@ -1,0 +1,115 @@
+# Copyright 2026 FlagOS Contributors
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Validation-only workflow: the missing-lockfile case intentionally fails.
+name: uv.lock validation
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/uv_lock_validation.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  locked-sync:
+    name: uv.lock required-file validation
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    container: python:3.12-bookworm
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout PR source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+
+      - name: Install repository CI uv version
+        uses: astral-sh/setup-uv@v1
+        with:
+          version: 0.7.2
+          enable-cache: false
+
+      - name: Record original lockfile and locked tool versions
+        run: |
+          set -euo pipefail
+          mkdir -p uv-lock-evidence
+          cp uv.lock uv-lock-evidence/original-uv.lock
+          cp pyproject.toml uv-lock-evidence/pyproject.toml
+          sha256sum uv.lock | tee uv-lock-evidence/original.sha256
+          uv --version
+          python --version
+          python - <<'PYTHON'
+          import pathlib
+          import tomllib
+
+          lock = tomllib.loads(pathlib.Path("uv.lock").read_text())
+          for package in lock["package"]:
+              if package["name"] in {"black", "isort", "flake8", "pylint", "ruff"}:
+                  print(f"Locked: {package['name']}=={package['version']}")
+          PYTHON
+
+      - name: Positive control - sync with committed lockfile
+        run: |
+          set -euo pipefail
+          uv sync --locked --only-group linting 2>&1 | tee uv-lock-evidence/positive.log
+          sha256sum --check uv-lock-evidence/original.sha256
+          .venv/bin/python - <<'PYTHON' | tee uv-lock-evidence/installed-versions.txt
+          import importlib.metadata
+          import pathlib
+          import tomllib
+
+          lock = tomllib.loads(pathlib.Path("uv.lock").read_text())
+          for package in lock["package"]:
+              if package["name"] in {"black", "isort", "flake8", "pylint", "ruff"}:
+                  actual = importlib.metadata.version(package["name"])
+                  print(f"{package['name']}: locked={package['version']}, installed={actual}")
+                  assert actual == package["version"]
+          PYTHON
+
+      - name: Negative case - same locked sync without uv.lock must fail
+        run: |
+          set -euo pipefail
+          # Move only the runner's working copy; the committed lockfile is unchanged.
+          mv uv.lock uv-lock-evidence/removed-uv.lock
+          echo "uv.lock removed from this temporary CI workspace."
+          echo "Repeating the same uv sync --locked --only-group linting command."
+          uv sync --locked --only-group linting 2>&1 | tee uv-lock-evidence/negative.log
+
+      - name: Record whether locked sync recreated the missing file
+        if: always()
+        run: |
+          if [[ -f uv-lock-evidence/removed-uv.lock ]]; then
+            if [[ -e uv.lock ]]; then
+              echo "Unexpected: uv.lock exists after the negative case." | tee uv-lock-evidence/file-state.txt
+              exit 1
+            fi
+            echo "uv.lock remains absent: locked sync did not recreate it." | tee uv-lock-evidence/file-state.txt
+            cmp uv-lock-evidence/original-uv.lock uv-lock-evidence/removed-uv.lock
+          else
+            echo "The negative case was not reached." | tee uv-lock-evidence/file-state.txt
+          fi
+
+      - name: Save original lockfile and raw validation output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: uv-lock-validation-evidence
+          path: uv-lock-evidence/
+          if-no-files-found: warn
