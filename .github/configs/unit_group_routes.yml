@@ -164,7 +164,6 @@ groups:
       - megatron/core/post_training/
       - megatron/core/tokenizers/
       - megatron/post_training/
-      - megatron/training/tokenizer/
       - megatron/training/utils/
       - tests/unit_tests/post_training/
       - tests/unit_tests/tokenizers/

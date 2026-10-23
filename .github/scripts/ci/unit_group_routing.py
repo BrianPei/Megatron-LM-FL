@@ -10,9 +10,11 @@ declares an execution group with the same name.
 from __future__ import annotations
 
 import fnmatch
+import functools
 import hashlib
 import pathlib
 import re
+import subprocess
 from dataclasses import dataclass
 from typing import Any, Iterable
 
@@ -182,7 +184,31 @@ def _matches(path: str, pattern: str) -> bool:
     return path == pattern
 
 
+@functools.lru_cache(maxsize=8)
+def _tracked_paths(root: pathlib.Path) -> tuple[str, ...] | None:
+    """Return repository-relative paths tracked by git, or None outside git."""
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(root), "ls-files", "-z"],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+    except (OSError, subprocess.CalledProcessError):
+        return None
+    return tuple(path for path in result.stdout.split("\0") if path)
+
+
 def path_exists(root: pathlib.Path, pattern: str) -> bool:
+    # CI validates a clean checkout. Checking the git index here keeps local
+    # validation honest when ignored or generated directories are present.
+    tracked = _tracked_paths(root)
+    if tracked is not None:
+        if pattern.endswith("/"):
+            return any(path.startswith(pattern) for path in tracked)
+        if any(character in pattern for character in "*?["):
+            return any(_matches(path, pattern) for path in tracked)
+        return pattern in tracked
     if any(character in pattern for character in "*?["):
         return any(root.glob(pattern))
     target = root / pattern

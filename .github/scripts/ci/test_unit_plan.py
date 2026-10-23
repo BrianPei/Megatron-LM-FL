@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import pathlib
+import shutil
+import subprocess
+import tempfile
 import unittest
 
 import generate_matrix
@@ -307,6 +310,27 @@ class MaterializationTests(unittest.TestCase):
             self.assertEqual(names, sorted(names))
             not_configured = [group["name"] for group in platform["not_configured"]]
             self.assertEqual(not_configured, sorted(not_configured))
+
+
+class PathExistenceTests(unittest.TestCase):
+    @unittest.skipUnless(shutil.which("git"), "git is required")
+    def test_untracked_paths_do_not_count_as_repository_paths(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            subprocess.run(["git", "-C", str(root), "init", "-q"], check=True)
+            (root / "tracked.txt").write_text("tracked\n")
+            (root / "untracked.txt").write_text("untracked\n")
+            (root / "tests").mkdir()
+            (root / "tests/test_plan.py").write_text("pass\n")
+            subprocess.run(
+                ["git", "-C", str(root), "add", "tracked.txt", "tests/test_plan.py"],
+                check=True,
+            )
+
+            self.assertTrue(routing.path_exists(root, "tracked.txt"))
+            self.assertTrue(routing.path_exists(root, "tests/test_*.py"))
+            self.assertFalse(routing.path_exists(root, "untracked.txt"))
+            self.assertFalse(routing.path_exists(root, "missing/"))
 
 
 class PlatformSelectionTests(unittest.TestCase):
