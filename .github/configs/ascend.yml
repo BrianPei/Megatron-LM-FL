@@ -87,6 +87,8 @@ test_matrix:
         description: post-training, tokenizer, and utility tests
     # Ignored test files/cases for unit tests.
     # These are skipped when running pytest on Ascend NPU.
+    unsupported_groups:
+      transformer: "Transformer unit tests currently run only on CUDA."
     ignored_tests:
       # LayerWise optimizer suites require the optional Emerging Optimizers package.
       - tests/unit_tests/test_layer_wise_optimizer.py

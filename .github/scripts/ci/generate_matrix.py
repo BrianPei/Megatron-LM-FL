@@ -118,7 +118,11 @@ def select_platforms(
     event_name: str,
     labels: list[str] | None = None,
 ) -> tuple[list[str], list[str]]:
-    """Let explicit PR platform labels override automatic path selection."""
+    """Let explicit PR platform labels override automatic path selection.
+
+    Documentation-only PRs never start hardware jobs, even when a platform label
+    is present. Labels only affect PRs that contain at least one code change.
+    """
     if event_name != "pull_request":
         return _select_paths(rules, changed, event_name)
     extra = set()
@@ -132,6 +136,8 @@ def select_platforms(
             extra.add(platform)
         else:
             raise ValueError(f"Unknown platform label: {label}")
+    if changed and not any(not _is_documentation(path) for path in changed):
+        return [], ["Documentation only: no hardware tests required"]
     if extra:
         return sorted(extra), ["Explicit platform labels override changed-file routing"]
     return _select_paths(rules, changed, event_name)

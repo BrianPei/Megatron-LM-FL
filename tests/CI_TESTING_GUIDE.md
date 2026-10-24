@@ -78,9 +78,13 @@ between attempts: this is result reuse, not a frozen environment or container
 snapshot. No automatic test retries are added.
 
 Coverage data is isolated per group. Coverage measures `megatron/plugin/*` and
-`megatron/core/*`. The coverage artifact retains each completed
-group's JSON and `unit-results.json`; a combined `coverage-<platform>-<device>-all.json`
-is sent to FlagCICD. Available reports are uploaded even after test failures.
+`megatron/core/*`; it is core/plugin coverage, not full unit-group coverage. The
+coverage artifact retains each completed group's JSON and `unit-results.json`.
+That attestation records `plan_hash`, `expected_groups`, `executed_groups`,
+`missing_groups`, `unexpected_groups`, `status`, and per-group results; the
+platform workflow and final CI gate verify it. A combined
+`coverage-<platform>-<device>-all.json` is sent to FlagCICD. Available reports
+are uploaded even after test failures.
 Each completed group prints `PASS`, `FAIL` or `TIMEOUT` outside its collapsible log
 section, so its result remains visible without expanding test output. The Actions
 summary lists the same status and exit code. Interrupted groups are marked
@@ -195,8 +199,11 @@ No workflow edit is needed in that case. The common directory mapping is:
 | `post_training/`, `tokenizers/`, `utils/` | `others` |
 
 Other directories under `tests/unit_tests/` have logical groups in the routing
-catalog but are not executed by any platform yet. They are reported as
-`not_configured` by the shadow plan until a platform config adds them.
+catalog but are not executed by any platform yet. They are marked
+`status: planned`; a change that directly matches one of them blocks the plan
+until a platform config adds the execution group. When a planned group is
+reached only through a shared-path fallback, the platform expands to every
+active group it can execute and records the rest under `fallback_excluded`.
 
 The platform config remains authoritative. A platform may omit a complete
 group when its runtime cannot execute that boundary. A root glob such as
@@ -230,33 +237,72 @@ Before submitting a new test:
 Running only `pytest <node>` proves the test can execute, but does not prove CI
 selects it. The group run is the final collection check.
 
-### Logical groups and shadow routing
+### Logical groups and affected-only routing
 
-`.github/configs/unit_group_routes.yml` is the logical routing catalog. It maps
-source and test paths to logical groups, declares dependencies between groups,
-and lists the groups required by each level. Platform configs remain
-authoritative for execution: a logical group runs only when the platform config
-declares a unit group with the same name. Otherwise the plan reports it as
-`not_configured` instead of silently dropping it.
+`.github/configs/unit_group_routes.yml` is the logical routing catalog. Each
+group declares `status: active|planned|unsupported`, and may declare an
+`execution_group` alias (for example, `plugin` executes as `core`). An alias
+must target an existing active group, and required levels are checked through
+that effective execution group. Platform
+configs remain authoritative for execution: a platform runs a group only when
+it declares a matching unit group. For every other active group it must declare
+`unsupported_groups` with a reason; the validator rejects an active group that
+has no platform owner. A platform may also declare a group unsupported when the
+execution group exists but does not collect every test path of that group; the
+declaration is rejected only when all test paths are already covered.
 
 `.github/scripts/ci/generate_test_plan.py` runs in the `generate-matrix` job. It
 combines the catalog, the platform router, and the selected platform configs,
-then publishes `unit-test-plan.json` and an Actions summary. CI currently runs
-in shadow mode: the proposed plan is reported, but every configured unit group
-still executes.
+then publishes `unit-test-plan.json` and an Actions summary. Its execution
+matrix is passed to `ci.yml`, so only the selected execution groups run.
 
 Routing rules:
 
 - Unknown and shared paths expand to every logical group. Shared inputs include
   `.github/`, `docker/`, `uv.lock`, `pyproject.toml`, `setup.py`, and test
   infrastructure such as `tests/unit_tests/conftest.py`.
-- Documentation-only changes propose no hardware tests. A mixed documentation
-  and code change is routed by its code paths.
+- Unknown paths produce a diagnostic full fallback plan, but the plan is
+  `blocked` and the fallback is not executed until catalog onboarding is
+  completed. A changed path that matches more than one logical group is a route
+  conflict and also blocks the plan. Catalog paths must be disjoint; the
+  validator rejects any tracked path owned by multiple logical groups.
+- A blocked plan's platform table is labeled diagnostic only. Its rows describe
+  how the fallback would materialize and are not executed.
+- Required groups are resolved through `execution_group` aliases. For example, a
+  level requiring `plugin` is satisfied when the platform provides `core`, and
+  fails when the alias target is missing or the group is declared unsupported.
+- The plan records `plan_status=ready|partial|blocked`. `ready` means every
+  selected direct group executes. `partial` means the run relied on a
+  shared/fallback selection, `selection=all`, or a planned/unsupported group.
+  `blocked` emits no unit matrix and fails `generate-matrix`.
+- Documentation-only changes produce no platform jobs, even when a
+  `platform:<name>` label is present. Labels override routing only for PRs that
+  contain at least one code change; a mixed documentation and code change is
+  routed by its code paths.
 - Renames include both the old and new paths.
-- A missing required group blocks a non-shadow plan. A missing optional group is
-  reported as `not_configured`.
-- The `plan_hash` is stable for identical source/base SHAs, configs, and
-  changed files.
+- An active group selected on a platform executes, is explicitly declared
+  unsupported there, or fails the plan. It is never silently skipped.
+- A directly affected group that is `planned` or declared unsupported on every
+  selected platform blocks the plan. Planned fallback is allowed only when the
+  planned group is not a direct match.
+- A selected planned group does not execute. The platform runs every active
+  group it can execute, so a known gap cannot narrow coverage; excluded groups
+  are reported in `fallback_excluded`.
+- A missing required group blocks the plan. Unresolved or blocked groups, and
+  platforms with no executable groups, fail the job.
+- `plan_hash` and `expected_unit_groups` are propagated through the platform
+  workflows. The runner attests them in `coverage-report/unit-results.json`, and
+  the final CI gate verifies one hash across all platforms plus exact
+  expected/executed group equality. The `plan_hash` is stable for identical
+  source/base SHAs, configs, and changed files.
+- `resource_class`, `timeout_minutes`, and `parallel_safe` are advisory catalog
+  metadata. They do not currently change scheduling: each platform/device runs
+  one unit job, groups run sequentially, the timeout is fixed by the runner, and
+  there is no exclusive lock or group-level parallelism.
+
+Unit coverage is scoped to `megatron/plugin/` and `megatron/core/` in the
+catalog and the runner. It is core/plugin-line coverage, not full unit-group
+coverage.
 
 Validate the catalog after changing a test directory or a platform unit group:
 
@@ -264,9 +310,10 @@ Validate the catalog after changing a test directory or a platform unit group:
 python .github/scripts/ci/validate_unit_group_catalog.py
 ```
 
-The validator checks path existence, dependency acyclicity, platform group
-names, required-group availability, and that every `tests/unit_tests/`
-directory has a logical group.
+The validator checks path existence against the git index, dependency
+acyclicity, platform group names, owner and unsupported declarations,
+required-group execution through aliases, tracked-path overlaps between logical
+groups, and that every `tests/unit_tests/` directory has a logical group.
 
 ### Distributed test requirements
 

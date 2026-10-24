@@ -1,16 +1,21 @@
-"""Hardware-independent tests for logical unit-group routing and shadow plans."""
+"""Hardware-independent tests for logical unit-group routing and plans."""
 
 from __future__ import annotations
 
+import dataclasses
+import json
+import os
 import pathlib
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 
 import generate_matrix
 import generate_test_plan as planner
 import unit_group_routing as routing
+import validate_unit_group_catalog as validator
 
 ROOT = pathlib.Path(__file__).resolve().parents[3]
 CONFIGS = ROOT / ".github/configs"
@@ -61,6 +66,14 @@ def selected_names(plan: dict, name: str) -> list[str]:
     return [group["name"] for group in platform_plan(plan, name)["selected_groups"]]
 
 
+def execution_names(plan: dict, name: str) -> set[str]:
+    return {
+        group["execution_group"]
+        for group in platform_plan(plan, name)["selected_groups"]
+        if group["execution_group"]
+    }
+
+
 class CatalogTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -90,13 +103,162 @@ class CatalogTests(unittest.TestCase):
 
     def test_required_groups_are_executable_everywhere(self):
         for group_name in self.catalog.required_groups("L1"):
+            effective = self.catalog.groups[group_name].execution_group or group_name
             for name, platform in self.platforms.items():
                 with self.subTest(platform=name, group=group_name):
-                    self.assertIn(group_name, platform.groups)
+                    self.assertIn(effective, platform.groups)
 
     def test_dependency_graph_is_acyclic(self):
         errors = [error for error in self.catalog.validate(ROOT) if "cycle" in error]
         self.assertEqual(errors, [])
+
+    def test_catalog_defines_the_coverage_boundary(self):
+        self.assertEqual(self.catalog.coverage_sources, ("megatron/plugin/", "megatron/core/"))
+
+    def test_active_groups_have_a_platform_owner(self):
+        for name, group in self.catalog.groups.items():
+            if group.status != "active":
+                continue
+            effective = group.execution_group or name
+            with self.subTest(group=name):
+                self.assertTrue(
+                    any(effective in platform.groups for platform in self.platforms.values())
+                )
+
+    def test_planned_groups_are_not_executable(self):
+        for name, group in self.catalog.groups.items():
+            if group.status != "planned":
+                continue
+            effective = group.execution_group or name
+            with self.subTest(group=name):
+                self.assertTrue(group.reason)
+                self.assertFalse(
+                    any(effective in platform.groups for platform in self.platforms.values())
+                )
+
+    def test_every_active_group_is_mapped_or_declared_unsupported(self):
+        for name, group in self.catalog.groups.items():
+            if group.status != "active":
+                continue
+            effective = group.execution_group or name
+            for platform_name, platform in self.platforms.items():
+                with self.subTest(group=name, platform=platform_name):
+                    self.assertTrue(
+                        effective in platform.groups or name in platform.unsupported_groups
+                    )
+
+    def test_platform_unsupported_groups_are_valid(self):
+        for platform_name, platform in self.platforms.items():
+            for name, reason in platform.unsupported_groups.items():
+                group = self.catalog.groups[name]
+                effective = group.execution_group or name
+                with self.subTest(platform=platform_name, group=name):
+                    self.assertTrue(reason)
+                    self.assertEqual(group.status, "active")
+                    if effective in platform.groups:
+                        executed = platform.groups[effective]["path"]
+                        test_paths = [
+                            path
+                            for path in group.paths
+                            if path.startswith("tests/") or "/tests/" in path
+                        ]
+                        self.assertTrue(test_paths)
+                        self.assertFalse(
+                            all(routing.execution_covers(executed, path) for path in test_paths),
+                            "an unsupported declaration must cover at least one "
+                            "unexecuted test path",
+                        )
+
+    def test_validator_accepts_the_catalog_and_platforms(self):
+        self.assertEqual(
+            validator.collect_errors(ROOT, CONFIGS, self.catalog, self.platforms, "L1"), []
+        )
+
+    def test_validator_rejects_fully_covered_unsupported_declaration(self):
+        platform = dataclasses.replace(
+            self.platforms["cuda"], unsupported_groups={"models": "temporarily disabled"}
+        )
+        errors = validator.collect_errors(
+            ROOT, CONFIGS, self.catalog, {**self.platforms, "cuda": platform}, "L1"
+        )
+        self.assertTrue(
+            any(
+                "unsupported group 'models'" in error and "already covers every test path" in error
+                for error in errors
+            ),
+            errors,
+        )
+
+    def test_validator_rejects_required_unsupported_declaration(self):
+        platform = dataclasses.replace(
+            self.platforms["cuda"], unsupported_groups={"core": "temporarily disabled"}
+        )
+        errors = validator.collect_errors(
+            ROOT, CONFIGS, self.catalog, {**self.platforms, "cuda": platform}, "L1"
+        )
+        self.assertTrue(
+            any("declares required group 'core' as unsupported" in error for error in errors),
+            errors,
+        )
+
+    def test_validator_rejects_execution_group_narrowed_to_one_file(self):
+        platform = self.platforms["cuda"]
+        groups = dict(platform.groups)
+        groups["models"] = {**groups["models"], "path": "tests/unit_tests/models/test_gpt_model.py"}
+        narrowed = dataclasses.replace(platform, groups=groups)
+        errors = validator.collect_errors(
+            ROOT, CONFIGS, self.catalog, {**self.platforms, "cuda": narrowed}, "L1"
+        )
+        self.assertTrue(
+            any(
+                "Active group 'models' test path 'tests/unit_tests/models/' "
+                "is not executed by platform cuda" in error
+                for error in errors
+            ),
+            errors,
+        )
+
+    def test_validator_rejects_overlapping_catalog_paths(self):
+        groups = dict(self.catalog.groups)
+        groups["overlap"] = dataclasses.replace(groups["core"], name="overlap")
+        catalog = dataclasses.replace(self.catalog, groups=groups)
+        errors = validator.collect_errors(ROOT, CONFIGS, catalog, {}, "L1")
+        self.assertTrue(
+            any(
+                "Tracked path matches multiple logical groups (core, overlap)" in error
+                for error in errors
+            ),
+            errors,
+        )
+
+    def test_validator_resolves_required_group_alias(self):
+        levels = dict(self.catalog.levels)
+        levels["alias"] = routing.Level(
+            name="alias", description="alias test", required_groups=("plugin",)
+        )
+        catalog = dataclasses.replace(self.catalog, levels=levels)
+        platforms = {name: platform for name, platform in self.platforms.items() if name != "musa"}
+        self.assertEqual(validator.collect_errors(ROOT, CONFIGS, catalog, platforms, "alias"), [])
+
+    def test_validator_rejects_required_alias_without_execution_group(self):
+        platform = self.platforms["cuda"]
+        groups = dict(platform.groups)
+        groups.pop("core", None)
+        missing = dataclasses.replace(platform, groups=groups)
+        levels = dict(self.catalog.levels)
+        levels["alias"] = routing.Level(
+            name="alias", description="alias test", required_groups=("plugin",)
+        )
+        catalog = dataclasses.replace(self.catalog, levels=levels)
+        errors = validator.collect_errors(ROOT, CONFIGS, catalog, {"cuda": missing}, "alias")
+        self.assertTrue(
+            any(
+                "Required group 'plugin' (execution group 'core') "
+                "is not executable on: cuda" in error
+                for error in errors
+            ),
+            errors,
+        )
 
     def test_glob_rules_do_not_cross_directories(self):
         self.assertEqual(self.catalog.matches("tests/unit_tests/test_basic.py"), "core")
@@ -104,6 +266,130 @@ class CatalogTests(unittest.TestCase):
             self.catalog.matches("tests/unit_tests/models/test_gpt_model.py"), "models"
         )
         self.assertIsNone(self.catalog.matches("tests/unit_tests/test_data/fixture.py"))
+
+    def test_matches_all_reports_every_matching_group(self):
+        self.assertEqual(self.catalog.matches_all("megatron/core/config.py"), ["core"])
+        self.assertEqual(self.catalog.matches_all("megatron/training/utils/foo.py"), ["others"])
+        self.assertEqual(self.catalog.matches_all("megatron/training/datasets/foo.py"), ["data"])
+        with tempfile.TemporaryDirectory() as directory:
+            path = pathlib.Path(directory) / "unit_group_routes.yml"
+            path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "coverage": {"sources": ["megatron/core/"]},
+                        "levels": {"L0": {"required_groups": []}},
+                        "groups": {"first": {"paths": ["pkg/"]}, "second": {"paths": ["pkg/"]}},
+                    }
+                )
+            )
+            catalog = routing.load_catalog(path)
+        self.assertEqual(catalog.matches_all("pkg/file.py"), ["first", "second"])
+
+    def test_catalog_has_no_tracked_path_conflicts(self):
+        conflicts = {}
+        for path in routing.tracked_paths(ROOT) or ():
+            groups = self.catalog.matches_all(path)
+            if len(groups) > 1:
+                conflicts[path] = groups
+        self.assertEqual(conflicts, {})
+
+    def test_catalog_rejects_alias_to_unknown_group(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = pathlib.Path(directory) / "unit_group_routes.yml"
+            path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "coverage": {"sources": ["megatron/core/"]},
+                        "levels": {"L0": {"required_groups": []}},
+                        "groups": {
+                            "core": {"paths": ["megatron/core/"]},
+                            "plugin": {"paths": ["megatron/plugin/"], "execution_group": "missing"},
+                        },
+                    }
+                )
+            )
+            with self.assertRaises(routing.CatalogError) as raised:
+                routing.load_catalog(path)
+        self.assertIn("execution_group targets unknown group", str(raised.exception))
+
+    def test_catalog_rejects_alias_to_non_active_group(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = pathlib.Path(directory) / "unit_group_routes.yml"
+            path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "coverage": {"sources": ["megatron/core/"]},
+                        "levels": {"L0": {"required_groups": []}},
+                        "groups": {
+                            "core": {
+                                "status": "planned",
+                                "reason": "not wired yet",
+                                "paths": ["megatron/core/"],
+                            },
+                            "plugin": {"paths": ["megatron/plugin/"], "execution_group": "core"},
+                        },
+                    }
+                )
+            )
+            with self.assertRaises(routing.CatalogError) as raised:
+                routing.load_catalog(path)
+        self.assertIn("execution_group targets planned group", str(raised.exception))
+
+    def test_execution_coverage_matches_directories_and_globs(self):
+        # A directory covers files, subdirectories, and globs beneath it.
+        self.assertTrue(
+            routing.execution_covers("tests/unit_tests/models/", "tests/unit_tests/models/")
+        )
+        self.assertTrue(
+            routing.execution_covers(
+                "tests/unit_tests/models/", "tests/unit_tests/models/test_gpt.py"
+            )
+        )
+        self.assertTrue(
+            routing.execution_covers(
+                "tests/unit_tests/models/", "tests/unit_tests/models/sub/test_gpt.py"
+            )
+        )
+        self.assertTrue(
+            routing.execution_covers(
+                "tests/unit_tests/models/", "tests/unit_tests/models/test_*.py"
+            )
+        )
+        # A glob covers files it matches in the same directory, but not a directory.
+        self.assertTrue(
+            routing.execution_covers(
+                "tests/unit_tests/models/test_*.py", "tests/unit_tests/models/test_gpt.py"
+            )
+        )
+        self.assertTrue(
+            routing.execution_covers("tests/unit_tests/test_*.py", "tests/unit_tests/test_*.py")
+        )
+        self.assertFalse(
+            routing.execution_covers(
+                "tests/unit_tests/models/test_*.py", "tests/unit_tests/models/"
+            )
+        )
+        # A single file does not cover its parent directory or a sibling glob.
+        self.assertFalse(
+            routing.execution_covers(
+                "tests/unit_tests/models/test_gpt.py", "tests/unit_tests/models/"
+            )
+        )
+        self.assertFalse(
+            routing.execution_covers(
+                "tests/unit_tests/models/test_gpt.py", "tests/unit_tests/models/test_*.py"
+            )
+        )
+        # A subdirectory does not cover its parent.
+        self.assertFalse(
+            routing.execution_covers("tests/unit_tests/models/sub/", "tests/unit_tests/models/")
+        )
+        self.assertFalse(
+            routing.execution_covers("tests/unit_tests/test_*.py", "tests/unit_tests/plugin/")
+        )
 
 
 class SelectionTests(unittest.TestCase):
@@ -157,16 +443,29 @@ class SelectionTests(unittest.TestCase):
                     self.catalog.matches(f"tests/unit_tests/{directory}/test_x.py"), "others"
                 )
 
-    def test_plugin_tests_execute_in_core(self):
+    def test_plugin_tests_select_plugin_executed_by_core(self):
         plan = build_plan(["megatron/plugin/tests/test_override.py"], platforms=["cuda"])
-        self.assertEqual(selected_names(plan, "cuda"), ["core"])
+        self.assertEqual(selected_names(plan, "cuda"), ["core", "plugin"])
+        self.assertEqual(execution_names(plan, "cuda"), {"core"})
+
+    def test_dsa_kernel_tests_are_explicitly_planned(self):
+        self.assertEqual(
+            self.catalog.matches("tests/unit_tests/plugin/dsa_kernel/test_fused_dsa.py"),
+            "dsa_kernel",
+        )
+        plan = build_plan(
+            ["tests/unit_tests/plugin/dsa_kernel/test_fused_dsa.py"], platforms=["cuda"]
+        )
+        platform = platform_plan(plan, "cuda")
+        self.assertEqual([group["name"] for group in platform["planned"]], ["dsa_kernel"])
+        self.assertEqual(execution_names(plan, "cuda"), set(platform["configured_groups"]))
 
     def test_shared_path_falls_back_to_every_group(self):
         plan = build_plan([".github/workflows/ci.yml"], platforms=["cuda"])
         self.assertTrue(plan["global_groups"]["fallback"])
         self.assertEqual(set(plan["global_groups"]["selected"]), set(self.catalog.groups))
         self.assertEqual(
-            selected_names(plan, "cuda"), platform_plan(plan, "cuda")["configured_groups"]
+            execution_names(plan, "cuda"), set(platform_plan(plan, "cuda")["configured_groups"])
         )
 
     def test_build_inputs_fall_back_to_every_group(self):
@@ -181,6 +480,121 @@ class SelectionTests(unittest.TestCase):
         self.assertEqual(
             plan["global_groups"]["unmapped_paths"], ["megatron/core/new_shared_module.py"]
         )
+        self.assertEqual(plan["plan_status"], "blocked")
+        self.assertEqual(plan["direct_groups"], [])
+        # The full fallback plan is diagnostic only; it is still materialized.
+        self.assertTrue(plan["platforms"])
+        self.assertTrue(plan["expected_unit_groups"]["cuda"])
+
+    def test_route_conflict_blocks_the_plan(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = pathlib.Path(directory) / "unit_group_routes.yml"
+            path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "coverage": {"sources": ["megatron/core/"]},
+                        "levels": {"L0": {"required_groups": []}},
+                        "groups": {
+                            "first": {"paths": ["megatron/core/"]},
+                            "second": {"paths": ["megatron/core/"]},
+                        },
+                    }
+                )
+            )
+            catalog = routing.load_catalog(path)
+        unit = routing.PlatformUnit(
+            name="temp",
+            path=pathlib.Path("temp.yml"),
+            data={},
+            device_types=("dev",),
+            nproc_per_node=1,
+            groups={
+                "first": {"name": "first", "path": "megatron/core/"},
+                "second": {"name": "second", "path": "megatron/core/"},
+            },
+        )
+        path = "megatron/core/config.py"
+        plan = build_plan(
+            [path], platforms=["temp"], level="L0", catalog=catalog, units={"temp": unit}
+        )
+        self.assertEqual(plan["plan_status"], "blocked")
+        self.assertEqual(
+            plan["global_groups"]["route_conflicts"],
+            [{"path": path, "groups": ["first", "second"]}],
+        )
+        self.assertTrue(plan["global_groups"]["fallback"])
+        self.assertEqual(plan["direct_groups"], [])
+
+    def test_direct_planned_group_blocks_the_plan(self):
+        plan = build_plan(
+            ["tests/unit_tests/plugin/dsa_kernel/test_fused_dsa.py"], platforms=["cuda"]
+        )
+        self.assertEqual(plan["plan_status"], "blocked")
+        self.assertEqual(plan["direct_groups"], ["dsa_kernel"])
+        self.assertEqual(plan["global_groups"]["direct_groups"], ["dsa_kernel"])
+        gap = plan["direct_gaps"][0]
+        self.assertEqual(gap["group"], "dsa_kernel")
+        self.assertEqual(gap["status"], "planned")
+        self.assertEqual(gap["platforms"][0]["status"], "planned")
+        self.assertEqual(
+            [group["name"] for group in platform_plan(plan, "cuda")["planned"]], ["dsa_kernel"]
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            summary = pathlib.Path(directory) / "summary.md"
+            planner.write_summary(summary, plan)
+            text = summary.read_text()
+        self.assertIn("The directly affected group is planned and was not executed.", text)
+        self.assertIn("**Plan blocked: no unit matrix was emitted", text)
+        self.assertIn("**Diagnostic fallback materialization (not executed):**", text)
+        self.assertIn("| Platform | Configured | Executable (diagnostic) |", text)
+        self.assertIn("Diagnostic fallback reasons (not executed):", text)
+
+    def test_direct_unsupported_group_blocks_the_plan(self):
+        plan = build_plan(["megatron/plugin/Ascend/ascend_plugin.py"], platforms=["musa"])
+        self.assertEqual(plan["plan_status"], "blocked")
+        self.assertEqual(plan["direct_groups"], ["plugin"])
+        gap = plan["direct_gaps"][0]
+        self.assertEqual(gap["group"], "plugin")
+        self.assertEqual(gap["status"], "active")
+        self.assertEqual(gap["platforms"][0]["status"], "unsupported")
+        self.assertIn("MUSA smoke", gap["platforms"][0]["reason"])
+
+    def test_shared_fallback_is_partial(self):
+        plan = build_plan([".github/workflows/ci.yml"], platforms=["cuda"])
+        self.assertEqual(plan["plan_status"], "partial")
+        self.assertEqual(plan["direct_groups"], [])
+
+    def test_summary_headings_follow_plan_status(self):
+        plans = {
+            "ready": build_plan(["megatron/core/config.py"], platforms=["cuda"]),
+            "partial": build_plan([".github/workflows/ci.yml"], platforms=["cuda"]),
+            "blocked": build_plan(
+                ["tests/unit_tests/plugin/dsa_kernel/test_fused_dsa.py"], platforms=["cuda"]
+            ),
+        }
+        for status, plan in plans.items():
+            with self.subTest(status=status), tempfile.TemporaryDirectory() as directory:
+                summary = pathlib.Path(directory) / "summary.md"
+                planner.write_summary(summary, plan)
+                text = summary.read_text()
+                self.assertEqual(plan["plan_status"], status)
+                self.assertEqual(
+                    "Diagnostic fallback reasons (not executed):" in text, status == "blocked"
+                )
+                self.assertEqual("Selected executable group reasons:" in text, status != "blocked")
+
+    def test_selection_all_is_partial(self):
+        plan = build_plan([], selection="all", event="schedule", platforms=["cuda"])
+        self.assertEqual(plan["selection"], "all")
+        self.assertEqual(plan["plan_status"], "partial")
+
+    def test_documentation_only_plan_is_ready_and_has_no_platforms(self):
+        plan = build_plan(["docs/guide.md", "README.md"], platforms=["cuda"])
+        self.assertTrue(plan["global_groups"]["documentation_only"])
+        self.assertEqual(plan["platforms"], [])
+        self.assertEqual(plan["expected_unit_groups"], {})
+        self.assertEqual(plan["plan_status"], "ready")
 
     def test_mixed_pr_takes_the_union(self):
         plan = build_plan(
@@ -213,7 +627,11 @@ class SelectionTests(unittest.TestCase):
         plan = build_plan([], selection="all", event="schedule", platforms=["cuda"])
         self.assertEqual(set(plan["global_groups"]["selected"]), set(self.catalog.groups))
         self.assertEqual(
-            selected_names(plan, "cuda"), platform_plan(plan, "cuda")["configured_groups"]
+            execution_names(plan, "cuda"), set(platform_plan(plan, "cuda")["configured_groups"])
+        )
+        self.assertEqual(
+            set(plan["global_groups"]["planned"]),
+            {name for name, group in self.catalog.groups.items() if group.status == "planned"},
         )
 
     def test_rename_considers_old_and_new_paths(self):
@@ -226,10 +644,12 @@ class SelectionTests(unittest.TestCase):
 
     def test_vendor_plugin_maps_to_plugin_and_core(self):
         plan = build_plan(["megatron/plugin/Ascend/ascend_plugin.py"], platforms=["ascend"])
-        self.assertEqual(selected_names(plan, "ascend"), ["core"])
-        self.assertEqual(
-            [group["name"] for group in platform_plan(plan, "ascend")["not_configured"]], ["plugin"]
-        )
+        self.assertEqual(selected_names(plan, "ascend"), ["core", "plugin"])
+        groups = {
+            group["name"]: group for group in platform_plan(plan, "ascend")["selected_groups"]
+        }
+        self.assertEqual(groups["plugin"]["execution_group"], "core")
+        self.assertEqual(platform_plan(plan, "ascend")["unsupported"], [])
 
     def test_level_two_adds_models(self):
         plan = build_plan(["megatron/core/config.py"], platforms=["cuda"], level="L2")
@@ -242,11 +662,11 @@ class MaterializationTests(unittest.TestCase):
         cls.catalog = load_catalog()
         cls.platforms = load_platforms()
 
-    def test_platform_without_transformer_reports_not_configured(self):
+    def test_platform_without_transformer_reports_unsupported(self):
         plan = build_plan(["megatron/core/transformer/attention.py"], platforms=["ascend"])
         self.assertEqual(selected_names(plan, "ascend"), ["core", "models"])
         self.assertEqual(
-            [group["name"] for group in platform_plan(plan, "ascend")["not_configured"]],
+            [group["name"] for group in platform_plan(plan, "ascend")["unsupported"]],
             ["transformer"],
         )
 
@@ -255,7 +675,7 @@ class MaterializationTests(unittest.TestCase):
             ["megatron/core/distributed/param_and_grad_buffer.py"], platforms=["hygon"]
         )
         self.assertEqual(
-            [group["name"] for group in platform_plan(plan, "hygon")["not_configured"]],
+            [group["name"] for group in platform_plan(plan, "hygon")["unsupported"]],
             ["distributed"],
         )
         self.assertIn("pipeline_parallel", selected_names(plan, "hygon"))
@@ -276,6 +696,124 @@ class MaterializationTests(unittest.TestCase):
         self.assertEqual(blocked, ["core"])
         self.assertEqual(selected_names(plan, "temp"), ["models"])
 
+    def test_required_group_declared_unsupported_is_blocked(self):
+        unit = routing.PlatformUnit(
+            name="temp",
+            path=pathlib.Path("temp.yml"),
+            data={},
+            device_types=("dev",),
+            nproc_per_node=8,
+            groups={"models": {"name": "models", "path": "tests/unit_tests/models/"}},
+            unsupported_groups={"core": "core is unavailable on this test platform"},
+        )
+        plan = build_plan(
+            ["megatron/core/models/gpt/gpt_model.py"], platforms=["temp"], units={"temp": unit}
+        )
+        platform = platform_plan(plan, "temp")
+        self.assertEqual([group["name"] for group in platform["blocked"]], ["core"])
+        self.assertEqual([group["name"] for group in platform["unsupported"]], [])
+        self.assertEqual(selected_names(plan, "temp"), ["models"])
+
+    def test_platform_partial_unsupported_keeps_alias_execution(self):
+        unit = routing.PlatformUnit(
+            name="temp",
+            path=pathlib.Path("temp.yml"),
+            data={},
+            device_types=("dev",),
+            nproc_per_node=8,
+            groups={"core": {"name": "core", "path": "tests/unit_tests/test_*.py"}},
+            unsupported_groups={"plugin": "plugin tests are not run on this platform"},
+        )
+        plan = build_plan(
+            ["megatron/plugin/Ascend/ascend_plugin.py"], platforms=["temp"], units={"temp": unit}
+        )
+        platform = platform_plan(plan, "temp")
+        self.assertEqual([group["name"] for group in platform["unsupported"]], ["plugin"])
+        self.assertEqual(selected_names(plan, "temp"), ["core"])
+        self.assertEqual(platform["blocked"], [])
+
+    def test_planned_fallback_skips_platform_unsupported_groups(self):
+        unit = routing.PlatformUnit(
+            name="temp",
+            path=pathlib.Path("temp.yml"),
+            data={},
+            device_types=("dev",),
+            nproc_per_node=8,
+            groups={
+                "core": {"name": "core", "path": "tests/unit_tests/test_*.py"},
+                "models": {"name": "models", "path": "tests/unit_tests/models/"},
+            },
+            unsupported_groups={"plugin": "plugin tests are not run on this platform"},
+        )
+        plan = build_plan(
+            ["megatron/core/inference/engine.py"], platforms=["temp"], units={"temp": unit}
+        )
+        self.assertEqual(execution_names(plan, "temp"), {"core", "models"})
+        self.assertNotIn(
+            "plugin", [group["name"] for group in platform_plan(plan, "temp")["selected_groups"]]
+        )
+
+    def test_planned_fallback_records_excluded_groups(self):
+        plan = build_plan(["megatron/core/inference/engine.py"], platforms=["musa"])
+        platform = platform_plan(plan, "musa")
+        excluded = {group["name"]: group for group in platform["fallback_excluded"]}
+        self.assertEqual(sorted(excluded), ["plugin", "transformer"])
+        self.assertEqual(excluded["plugin"]["status"], "unsupported")
+        self.assertEqual(excluded["plugin"]["platform"], "musa")
+        self.assertIn("MUSA smoke", excluded["plugin"]["reason"])
+        self.assertIn("CUDA", excluded["transformer"]["reason"])
+        self.assertEqual(plan["plan_status"], "blocked")
+        with tempfile.TemporaryDirectory() as directory:
+            summary = pathlib.Path(directory) / "summary.md"
+            planner.write_summary(summary, plan)
+            text = summary.read_text()
+        self.assertIn("**Fallback excluded groups:**", text)
+        self.assertIn("`musa/plugin`: status `unsupported`", text)
+        self.assertIn("`musa/transformer`: status `unsupported`", text)
+
+    def test_planned_group_expands_to_every_executable_group(self):
+        plan = build_plan(["megatron/core/inference/engine.py"], platforms=["cuda"])
+        platform = platform_plan(plan, "cuda")
+        self.assertEqual([group["name"] for group in platform["planned"]], ["inference"])
+        self.assertEqual(execution_names(plan, "cuda"), set(platform["configured_groups"]))
+        self.assertTrue(
+            all(group["reasons"][0]["type"] == "fallback" for group in platform["selected_groups"])
+        )
+
+    def test_active_group_missing_without_declaration_is_unresolved(self):
+        unit = routing.PlatformUnit(
+            name="temp",
+            path=pathlib.Path("temp.yml"),
+            data={},
+            device_types=("dev",),
+            nproc_per_node=8,
+            groups={
+                "core": {"name": "core", "path": "tests/unit_tests/test_*.py"},
+                "models": {"name": "models", "path": "tests/unit_tests/models/"},
+            },
+        )
+        plan = build_plan(
+            ["megatron/core/datasets/foo.py"], platforms=["temp"], units={"temp": unit}
+        )
+        platform = platform_plan(plan, "temp")
+        self.assertEqual([group["name"] for group in platform["unresolved"]], ["data"])
+        self.assertEqual(selected_names(plan, "temp"), ["core"])
+
+    def test_execution_matrix_deduplicates_aliases(self):
+        plan = build_plan(["megatron/plugin/Ascend/ascend_plugin.py"], platforms=["cuda"])
+        self.assertEqual(planner.execution_matrix(plan), [{"platform": "cuda", "groups": ["core"]}])
+
+    def test_summary_reduction_counts_unique_execution_groups(self):
+        plan = build_plan(["megatron/plugin/Ascend/ascend_plugin.py"], platforms=["cuda"])
+        platform = platform_plan(plan, "cuda")
+        expected = len(platform["configured_groups"]) - len(execution_names(plan, "cuda"))
+        with tempfile.TemporaryDirectory() as directory:
+            summary = pathlib.Path(directory) / "summary.md"
+            planner.write_summary(summary, plan)
+            text = summary.read_text()
+        self.assertIn("plugin (executes core)", text)
+        self.assertIn(f"| {expected} groups |", text)
+
     def test_plan_contains_identity_and_hash_fields(self):
         plan = build_plan(["megatron/core/models/gpt/gpt_model.py"], platforms=["cuda"])
         for field in (
@@ -285,9 +823,18 @@ class MaterializationTests(unittest.TestCase):
             "catalog_hash",
             "config_hash",
             "plan_hash",
+            "plan_status",
+            "direct_groups",
+            "direct_gaps",
+            "expected_unit_groups",
         ):
             self.assertIn(field, plan)
         self.assertTrue(plan["plan_hash"].startswith("sha256:"))
+        self.assertEqual(plan["direct_groups"], ["models"])
+        self.assertEqual(
+            plan["expected_unit_groups"]["cuda"],
+            [entry["groups"] for entry in planner.execution_matrix(plan)][0],
+        )
 
     def test_plan_hash_is_stable_and_order_independent(self):
         changed = [
@@ -300,16 +847,15 @@ class MaterializationTests(unittest.TestCase):
         third = build_plan(changed + ["megatron/core/config.py"], platforms=["cuda"])
         self.assertNotEqual(first["plan_hash"], third["plan_hash"])
 
-    def test_selected_and_not_configured_are_sorted(self):
+    def test_selected_and_gap_buckets_are_sorted(self):
         plan = build_plan(
             ["megatron/core/models/gpt/gpt_model.py", "megatron/core/transformer/attention.py"],
             platforms=["cuda"],
         )
         for platform in plan["platforms"]:
-            names = [group["name"] for group in platform["selected_groups"]]
-            self.assertEqual(names, sorted(names))
-            not_configured = [group["name"] for group in platform["not_configured"]]
-            self.assertEqual(not_configured, sorted(not_configured))
+            for bucket in ("selected_groups", "planned", "unsupported", "unresolved", "blocked"):
+                names = [group["name"] for group in platform[bucket]]
+                self.assertEqual(names, sorted(names))
 
 
 class PathExistenceTests(unittest.TestCase):
@@ -323,8 +869,7 @@ class PathExistenceTests(unittest.TestCase):
             (root / "tests").mkdir()
             (root / "tests/test_plan.py").write_text("pass\n")
             subprocess.run(
-                ["git", "-C", str(root), "add", "tracked.txt", "tests/test_plan.py"],
-                check=True,
+                ["git", "-C", str(root), "add", "tracked.txt", "tests/test_plan.py"], check=True
             )
 
             self.assertTrue(routing.path_exists(root, "tracked.txt"))
@@ -341,6 +886,148 @@ class PlatformSelectionTests(unittest.TestCase):
     def test_platform_json_must_be_a_string_array(self):
         with self.assertRaises(ValueError):
             planner._parse_platforms('["cuda", 1]', {"cuda"})
+
+
+class PlatformLabelTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.rules = generate_matrix._load_watch_rules(CONFIGS)
+
+    def test_documentation_only_ignores_platform_labels(self):
+        platforms, reasons = generate_matrix.select_platforms(
+            self.rules, ["docs/guide.md"], "pull_request", ["platform:cuda"]
+        )
+        self.assertEqual(platforms, [])
+        self.assertEqual(reasons, ["Documentation only: no hardware tests required"])
+
+    def test_documentation_with_code_honors_platform_labels(self):
+        platforms, reasons = generate_matrix.select_platforms(
+            self.rules,
+            ["docs/guide.md", "megatron/plugin/Ascend/ascend_plugin.py"],
+            "pull_request",
+            ["platform:cuda"],
+        )
+        self.assertEqual(platforms, ["cuda"])
+        self.assertEqual(reasons, ["Explicit platform labels override changed-file routing"])
+
+    def test_code_only_uses_changed_file_routing(self):
+        platforms, reasons = generate_matrix.select_platforms(
+            self.rules, ["megatron/plugin/Ascend/ascend_plugin.py"], "pull_request", []
+        )
+        self.assertEqual(platforms, ["ascend"])
+        self.assertIn("megatron/plugin/Ascend/ascend_plugin.py", reasons[0])
+
+
+class PlannerCliTests(unittest.TestCase):
+    def run_planner(self, directory, changed, *, platforms='["cuda"]', labels=None):
+        output = pathlib.Path(directory) / "unit-test-plan.json"
+        summary = pathlib.Path(directory) / "summary.md"
+        github_output = pathlib.Path(directory) / "github-output"
+        environment = dict(os.environ)
+        if labels is not None:
+            event = pathlib.Path(directory) / "event.json"
+            event.write_text(
+                json.dumps({"pull_request": {"labels": [{"name": label} for label in labels]}})
+            )
+            environment["GITHUB_EVENT_PATH"] = str(event)
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(ROOT / ".github/scripts/ci/generate_test_plan.py"),
+                "--event-name",
+                "pull_request",
+                "--base-ref",
+                "main",
+                "--changed-files",
+                "\n".join(changed),
+                *(["--platforms", platforms] if platforms is not None else []),
+                "--output",
+                str(output),
+                "--summary",
+                str(summary),
+                "--github-output",
+                str(github_output),
+                "--source-sha",
+                "source",
+                "--base-sha",
+                "base",
+            ],
+            cwd=ROOT,
+            env=environment,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        return result, output, summary, github_output
+
+    def test_unknown_path_writes_a_blocked_diagnostic_plan(self):
+        with tempfile.TemporaryDirectory() as directory:
+            result, output, summary, github_output = self.run_planner(
+                directory, ["megatron/core/new_shared_module.py"]
+            )
+            self.assertEqual(result.returncode, 1, result.stderr)
+            plan = json.loads(output.read_text())
+            self.assertEqual(plan["plan_status"], "blocked")
+            self.assertEqual(
+                plan["global_groups"]["unmapped_paths"], ["megatron/core/new_shared_module.py"]
+            )
+            # The diagnostic fallback is materialized for debugging but not run.
+            self.assertTrue(plan["platforms"])
+            text = summary.read_text()
+            self.assertIn("**Plan blocked: no unit matrix was emitted", text)
+            self.assertIn("fallback plan was not executed", text)
+            self.assertIn("**Diagnostic fallback materialization (not executed):**", text)
+            self.assertIn("Diagnostic fallback reasons (not executed):", text)
+            self.assertIn("core/plugin coverage only", text)
+            self.assertIn("not full Megatron unit-group coverage", text)
+            captured = github_output.read_text()
+            self.assertIn("plan_status=blocked", captured)
+            self.assertNotIn("unit_matrix=", captured)
+            self.assertNotIn("plan_hash=", captured)
+
+    def test_partial_plan_emits_identity_and_matrix(self):
+        with tempfile.TemporaryDirectory() as directory:
+            result, output, summary, github_output = self.run_planner(
+                directory, [".github/workflows/ci.yml"]
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            plan = json.loads(output.read_text())
+            self.assertEqual(plan["plan_status"], "partial")
+            captured = github_output.read_text()
+            self.assertIn("plan_status=partial", captured)
+            self.assertIn("unit_matrix=", captured)
+            self.assertIn(f"plan_hash={plan['plan_hash']}", captured)
+            self.assertIn("expected_unit_groups=", captured)
+            self.assertIn("not proof of a complete logical-group regression", summary.read_text())
+
+    def test_documentation_only_with_label_skips_hardware_jobs(self):
+        with tempfile.TemporaryDirectory() as directory:
+            result, output, summary, github_output = self.run_planner(
+                directory, ["docs/guide.md"], platforms=None, labels=["platform:cuda"]
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            plan = json.loads(output.read_text())
+            self.assertTrue(plan["global_groups"]["documentation_only"])
+            self.assertEqual(plan["platforms"], [])
+            self.assertEqual(plan["plan_status"], "ready")
+            self.assertIn(
+                "Documentation-only change: no hardware tests proposed.", summary.read_text()
+            )
+            self.assertIn("unit_matrix=[]", github_output.read_text())
+
+    def test_documentation_with_code_and_label_runs_the_labeled_platform(self):
+        with tempfile.TemporaryDirectory() as directory:
+            result, output, _, _ = self.run_planner(
+                directory,
+                ["docs/guide.md", "megatron/plugin/Ascend/ascend_plugin.py"],
+                platforms=None,
+                labels=["platform:cuda"],
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            plan = json.loads(output.read_text())
+            self.assertFalse(plan["global_groups"]["documentation_only"])
+            self.assertEqual([item["name"] for item in plan["platforms"]], ["cuda"])
+            self.assertEqual(plan["plan_status"], "ready")
 
 
 if __name__ == "__main__":

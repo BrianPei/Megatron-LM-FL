@@ -7,8 +7,11 @@ The planner combines three inputs:
 * the platform router (generate_matrix.py), and
 * each platform's configured unit groups.
 
-Shadow mode renders the proposed plan without changing what CI executes. The
-plan is stable for identical source/base SHAs, configs, and changed files.
+The plan is the affected-only gate. Selected groups are materialized against
+each platform: active groups execute, planned groups expand the platform to
+every active group it can execute, and explicitly unsupported groups are
+reported. Unresolved or blocked groups fail the job. The plan is stable for
+identical source/base SHAs, configs, and changed files.
 """
 
 from __future__ import annotations
@@ -71,6 +74,98 @@ def _parse_platforms(value: str, known: set[str]) -> list[str]:
     return sorted(set(platforms))
 
 
+def _execution_groups(platform: dict[str, Any]) -> list[str]:
+    return sorted(
+        {
+            group["execution_group"]
+            for group in platform["selected_groups"]
+            if group["execution_group"]
+        }
+    )
+
+
+def _group_detail(platform: dict[str, Any], name: str) -> dict[str, str]:
+    for bucket in ("selected_groups", "planned", "unsupported", "unresolved", "blocked"):
+        for group in platform[bucket]:
+            if group["name"] != name:
+                continue
+            return {
+                "platform": platform["name"],
+                "status": "executable" if bucket == "selected_groups" else bucket,
+                "reason": group["reason"] or "no reason recorded",
+            }
+    return {
+        "platform": platform["name"],
+        "status": "not-selected",
+        "reason": "group is absent from every materialization bucket",
+    }
+
+
+def _direct_gaps(
+    catalog: unit_group_routing.Catalog,
+    direct_groups: list[str],
+    platform_plans: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Return direct groups that no selected platform actually executes."""
+    coverage: dict[str, list[str]] = {}
+    for platform in platform_plans:
+        for group in platform["selected_groups"]:
+            coverage.setdefault(group["name"], []).append(platform["name"])
+
+    gaps = []
+    for name in direct_groups:
+        if coverage.get(name):
+            continue
+        group = catalog.groups[name]
+        details = [_group_detail(platform, name) for platform in platform_plans]
+        gaps.append(
+            {
+                "group": name,
+                "status": group.status,
+                "reason": group.reason or "no catalog reason",
+                "platforms": details,
+            }
+        )
+    return gaps
+
+
+def _plan_status(
+    *,
+    selection: str,
+    group_selection: dict[str, Any],
+    platform_plans: list[dict[str, Any]],
+    direct_gaps: list[dict[str, Any]],
+) -> str:
+    blocking = bool(
+        direct_gaps or group_selection["route_conflicts"] or group_selection["unmapped_paths"]
+    )
+    if not group_selection["documentation_only"]:
+        if not platform_plans:
+            blocking = True
+        for platform in platform_plans:
+            if not platform["selected_groups"] or platform["blocked"] or platform["unresolved"]:
+                blocking = True
+    if blocking:
+        return "blocked"
+
+    selected_statuses = {
+        platform_group["status"]
+        for platform in platform_plans
+        for platform_group in platform["selected_groups"]
+    }
+    partial = bool(
+        selection == "all"
+        or group_selection["fallback"]
+        or "planned" in selected_statuses
+        or "unsupported" in selected_statuses
+        or any(
+            platform["planned"] or platform["unsupported"] or platform["fallback_excluded"]
+            for platform in platform_plans
+        )
+    )
+    return "partial" if partial else "ready"
+
+
 def build_plan(
     *,
     event_name: str,
@@ -92,20 +187,33 @@ def build_plan(
     required = group_selection["required"]
 
     platform_plans = []
-    for name in platforms:
-        platform = platform_units[name]
-        materialized = unit_group_routing.materialize_groups(
-            catalog, platform, group_selection["selected"], group_selection["reasons"], required
-        )
-        platform_plans.append(
-            {
-                "name": name,
-                "devices": list(platform.device_types),
-                "nproc_per_node": platform.nproc_per_node,
-                "configured_groups": sorted(platform.groups),
-                **materialized,
-            }
-        )
+    if not group_selection["documentation_only"]:
+        for name in platforms:
+            platform = platform_units[name]
+            materialized = unit_group_routing.materialize_groups(
+                catalog, platform, group_selection["selected"], group_selection["reasons"], required
+            )
+            platform_plans.append(
+                {
+                    "name": name,
+                    "devices": list(platform.device_types),
+                    "nproc_per_node": platform.nproc_per_node,
+                    "configured_groups": sorted(platform.groups),
+                    **materialized,
+                }
+            )
+
+    direct_groups = sorted(group_selection["direct_groups"])
+    direct_gaps = _direct_gaps(catalog, direct_groups, platform_plans)
+    plan_status = _plan_status(
+        selection=selection,
+        group_selection=group_selection,
+        platform_plans=platform_plans,
+        direct_gaps=direct_gaps,
+    )
+    expected_unit_groups = {
+        platform["name"]: _execution_groups(platform) for platform in platform_plans
+    }
 
     config_hash = _sha256(
         {
@@ -119,17 +227,34 @@ def build_plan(
         "stage": stage,
         "selection": selection,
         "level": level,
+        "plan_status": plan_status,
         "source_sha": source_sha,
         "base_sha": base_sha,
         "changed_files": sorted(set(changed)),
         "catalog_hash": f"sha256:{catalog.digest}",
         "config_hash": config_hash,
+        "coverage_sources": list(catalog.coverage_sources),
+        "direct_groups": direct_groups,
+        "direct_gaps": direct_gaps,
+        "expected_unit_groups": expected_unit_groups,
         "global_groups": {
             "selected": sorted(group_selection["selected"]),
             "required": sorted(required),
+            "direct_groups": direct_groups,
+            "planned": sorted(
+                name
+                for name in group_selection["selected"]
+                if catalog.groups[name].status == "planned"
+            ),
+            "unsupported": sorted(
+                name
+                for name in group_selection["selected"]
+                if catalog.groups[name].status == "unsupported"
+            ),
             "fallback": group_selection["fallback"],
             "fallback_reason": group_selection["fallback_reason"],
             "unmapped_paths": group_selection["unmapped_paths"],
+            "route_conflicts": group_selection["route_conflicts"],
             "documentation_only": group_selection["documentation_only"],
         },
         "platforms": platform_plans,
@@ -138,20 +263,33 @@ def build_plan(
     return plan
 
 
+def execution_matrix(plan: dict[str, Any]) -> list[dict[str, Any]]:
+    """Return one workflow-matrix entry per platform with executable group names."""
+    return [
+        {"platform": platform["name"], "groups": _execution_groups(platform)}
+        for platform in plan["platforms"]
+    ]
+
+
 def _escape(value: str) -> str:
     return value.replace("<", "&lt;").replace(">", "&gt;").replace("|", "\\|")
 
 
 def write_summary(path: pathlib.Path, plan: dict[str, Any]) -> None:
-    """Append a human-readable shadow plan to the Actions summary."""
+    """Append a human-readable plan to the Actions summary."""
     global_groups = plan["global_groups"]
+    plan_blocked = plan["plan_status"] == "blocked"
     lines = [
-        "### Unit test plan (shadow)",
+        "### Unit test plan",
         "",
         f"- Stage: `{plan['stage']}`",
         f"- Selection: `{plan['selection']}`",
         f"- Level: `{plan['level']}`",
+        f"- Plan status: `{plan['plan_status']}`",
         f"- Changed files: {len(plan['changed_files'])}",
+        f"- Coverage scope: core/plugin coverage only "
+        f"(`{', '.join(plan['coverage_sources'])}`); "
+        "not full Megatron unit-group coverage",
         f"- Fallback: {'yes' if global_groups['fallback'] else 'no'}"
         + (
             f" ({_escape(global_groups['fallback_reason'])})"
@@ -161,8 +299,53 @@ def write_summary(path: pathlib.Path, plan: dict[str, Any]) -> None:
         f"- Plan hash: `{plan['plan_hash']}`",
         "",
     ]
+    if plan_blocked:
+        lines.extend(
+            ["**Plan blocked: no unit matrix was emitted and no hardware unit jobs will run.**", ""]
+        )
+    elif plan["plan_status"] == "partial":
+        lines.extend(
+            [
+                "**Plan status `partial`: this plan is not proof of a complete "
+                "logical-group regression.**",
+                "",
+            ]
+        )
     if global_groups["documentation_only"]:
         lines.extend(["Documentation-only change: no hardware tests proposed.", ""])
+    if plan["selection"] == "all":
+        lines.extend(
+            [
+                "Selection `all` describes the full configured matrix; it is not proof "
+                "of a complete logical-group regression.",
+                "",
+            ]
+        )
+    if plan["direct_gaps"]:
+        lines.extend(["**Direct group coverage gaps:**", ""])
+        for gap in plan["direct_gaps"]:
+            lines.append(
+                f"- `{gap['group']}` (catalog status `{gap['status']}`): "
+                f"{_escape(gap['reason'])}"
+            )
+            if not gap["platforms"]:
+                lines.append("  - No selected platform was available to execute it.")
+            for detail in gap["platforms"]:
+                lines.append(
+                    f"  - `{detail['platform']}`: status `{detail['status']}`, "
+                    f"{_escape(detail['reason'])}"
+                )
+        if any(gap["status"] == "planned" for gap in plan["direct_gaps"]):
+            lines.extend(["", "The directly affected group is planned and was not executed.", ""])
+        lines.append("")
+    if global_groups["route_conflicts"]:
+        lines.extend(["**Route conflicts (blocked):**", ""])
+        for conflict in global_groups["route_conflicts"]:
+            lines.append(
+                f"- `{_escape(conflict['path'])}`: "
+                + ", ".join(f"`{name}`" for name in conflict["groups"])
+            )
+        lines.append("")
     if global_groups["unmapped_paths"]:
         lines.extend(
             [
@@ -170,38 +353,118 @@ def write_summary(path: pathlib.Path, plan: dict[str, Any]) -> None:
                 "",
                 *[f"- `{_escape(path)}`" for path in global_groups["unmapped_paths"]],
                 "",
+                "Unknown paths produced this diagnostic fallback plan, but the "
+                "fallback plan was not executed.",
+                "",
             ]
         )
     if plan["platforms"]:
+        if plan_blocked:
+            lines.extend(
+                [
+                    "**Diagnostic fallback materialization (not executed):** the table "
+                    "below only shows how the fallback would materialize if the blocking "
+                    "issue were resolved.",
+                    "",
+                ]
+            )
+        executable_header = "Executable (diagnostic)" if plan_blocked else "Executable"
         lines.extend(
             [
-                "| Platform | Selected | Configured | Not configured | Blocked | Potential reduction |",
-                "| --- | --- | --- | --- | --- | --- |",
+                f"| Platform | Configured | {executable_header} | Planned | Unsupported | "
+                "Unresolved | Blocked | Potential reduction |",
+                "| --- | --- | --- | --- | --- | --- | --- | --- |",
             ]
         )
         for platform in plan["platforms"]:
-            selected = (
+            executable = (
                 ", ".join(
-                    group["name"] + (" (required)" if group["required"] else "")
+                    group["name"]
+                    + (
+                        f" (executes {group['execution_group']})"
+                        if group["execution_group"] != group["name"]
+                        else ""
+                    )
+                    + (" (required)" if group["required"] else "")
                     for group in platform["selected_groups"]
                 )
                 or "none"
             )
-            not_configured = (
-                ", ".join(group["name"] for group in platform["not_configured"]) or "none"
+            planned = ", ".join(group["name"] for group in platform["planned"]) or "none"
+            unsupported = ", ".join(group["name"] for group in platform["unsupported"]) or "none"
+            unresolved = ", ".join(group["name"] for group in platform["unresolved"]) or "none"
+            blocked_groups = ", ".join(group["name"] for group in platform["blocked"]) or "none"
+            has_gap = bool(
+                not platform["selected_groups"]
+                or platform["planned"]
+                or platform["unsupported"]
+                or platform["unresolved"]
+                or platform["blocked"]
+                or platform["fallback_excluded"]
             )
-            blocked = ", ".join(group["name"] for group in platform["blocked"]) or "none"
-            reduction = len(platform["configured_groups"]) - len(platform["selected_groups"])
+            executed_groups = {
+                group["execution_group"]
+                for group in platform["selected_groups"]
+                if group["execution_group"]
+            }
+            reduction = (
+                "unavailable; planned/unsupported/unresolved/blocked groups exist"
+                if has_gap
+                else f"{len(platform['configured_groups']) - len(executed_groups)} groups"
+            )
             lines.append(
-                f"| {platform['name']} | {_escape(selected)} | "
-                f"{len(platform['configured_groups'])} | {_escape(not_configured)} | "
-                f"{_escape(blocked)} | {reduction} groups |"
+                f"| {platform['name']} | {len(platform['configured_groups'])} | "
+                f"{_escape(executable)} | {_escape(planned)} | {_escape(unsupported)} | "
+                f"{_escape(unresolved)} | {_escape(blocked_groups)} | {reduction} |"
             )
-        lines.extend(["", "Selected group reasons:", ""])
+        reasons_heading = (
+            "Diagnostic fallback reasons (not executed):"
+            if plan_blocked
+            else "Selected executable group reasons:"
+        )
+        lines.extend(
+            [
+                "",
+                "Planned groups are not executed. Selecting one expands the platform "
+                "to every active group it can execute.",
+                "",
+                reasons_heading,
+                "",
+            ]
+        )
         for platform in plan["platforms"]:
             for group in platform["selected_groups"]:
                 reasons = "; ".join(_reason_text(reason) for reason in group["reasons"])
                 lines.append(f"- `{platform['name']}/{group['name']}`: {reasons}")
+        for bucket, title in (
+            ("planned", "Planned groups"),
+            ("unsupported", "Unsupported groups"),
+            ("unresolved", "Unresolved groups"),
+            ("blocked", "Blocked required groups"),
+        ):
+            entries = [
+                (platform["name"], group)
+                for platform in plan["platforms"]
+                for group in platform[bucket]
+            ]
+            if not entries:
+                continue
+            lines.extend(["", f"**{title}:**", ""])
+            for platform_name, group in entries:
+                reason = _escape(group["reason"]) if group["reason"] else "no reason recorded"
+                lines.append(f"- `{platform_name}/{group['name']}`: {reason}")
+        excluded = [
+            (platform["name"], group)
+            for platform in plan["platforms"]
+            for group in platform["fallback_excluded"]
+        ]
+        if excluded:
+            lines.extend(["", "**Fallback excluded groups:**", ""])
+            for platform_name, group in excluded:
+                lines.append(
+                    f"- `{platform_name}/{group['name']}`: status `{group['status']}`, "
+                    f"{_escape(group['reason'])}"
+                )
         lines.append("")
     with path.open("a") as stream:
         stream.write("\n".join(lines) + "\n")
@@ -258,7 +521,7 @@ def main() -> int:
     parser.add_argument("--level", default="L1")
     parser.add_argument("--output", default="unit-test-plan.json")
     parser.add_argument("--summary", default=None)
-    parser.add_argument("--shadow", action="store_true")
+    parser.add_argument("--github-output", default=None)
     parser.add_argument("--source-sha", default=None)
     parser.add_argument("--base-sha", default=None)
     args = parser.parse_args()
@@ -311,19 +574,65 @@ def main() -> int:
         for platform in plan["platforms"]
         for group in platform["blocked"]
     ]
+    unresolved = [
+        (platform["name"], group["name"])
+        for platform in plan["platforms"]
+        for group in platform["unresolved"]
+    ]
+    empty = [platform["name"] for platform in plan["platforms"] if not platform["selected_groups"]]
     unmapped = plan["global_groups"]["unmapped_paths"]
-    if blocked:
-        message = ", ".join(f"{platform}/{group}" for platform, group in blocked)
-        if args.shadow:
-            print(f"::warning::Required groups lack execution mapping: {message}")
-        else:
-            print(f"::error::Required groups lack execution mapping: {message}", file=sys.stderr)
-            return 1
-    if unmapped and not args.shadow:
-        print("::error::Unresolved routes: " + ", ".join(unmapped), file=sys.stderr)
+    conflicts = plan["global_groups"]["route_conflicts"]
+    direct = []
+    for gap in plan["direct_gaps"]:
+        if not gap["platforms"]:
+            direct.append(
+                f"direct group {gap['group']} (status={gap['status']}): "
+                "no selected platform was available"
+            )
+        for detail in gap["platforms"]:
+            direct.append(
+                f"direct group {gap['group']} on {detail['platform']}: "
+                f"status={detail['status']}, reason={detail['reason']}"
+            )
+    errors = (
+        direct
+        + [f"route conflict {item['path']}: {', '.join(item['groups'])}" for item in conflicts]
+        + [f"{platform}/{group}: blocked" for platform, group in blocked]
+        + [f"{platform}/{group}: unresolved" for platform, group in unresolved]
+        + [f"{platform}: no executable groups" for platform in empty]
+    )
+    if unmapped:
+        errors.append(
+            "unmapped path(s) need catalog onboarding: "
+            + ", ".join(unmapped)
+            + "; the fallback plan was not executed"
+        )
+    if plan["plan_status"] == "blocked":
+        message = "; ".join(errors) or "no executable unit-group plan"
+        print(f"::error::Unit plan blocked: {message}", file=sys.stderr)
+        if args.github_output:
+            with open(args.github_output, "a") as stream:
+                stream.write("plan_status=blocked\n")
+        print("plan_status=blocked")
+        return 1
+    if errors:
+        print(f"::error::Unit plan has unexpected gaps: {'; '.join(errors)}", file=sys.stderr)
         return 1
 
+    if args.github_output:
+        matrix = execution_matrix(plan)
+        with open(args.github_output, "a") as stream:
+            stream.write(f"unit_matrix={json.dumps(matrix, separators=(',', ':'))}\n")
+            stream.write(f"plan_hash={plan['plan_hash']}\n")
+            stream.write(f"plan_status={plan['plan_status']}\n")
+            stream.write(
+                "expected_unit_groups="
+                + json.dumps(plan["expected_unit_groups"], separators=(",", ":"))
+                + "\n"
+            )
+
     print(f"plan_hash={plan['plan_hash']}")
+    print(f"plan_status={plan['plan_status']}")
     print(
         "platforms="
         + json.dumps(

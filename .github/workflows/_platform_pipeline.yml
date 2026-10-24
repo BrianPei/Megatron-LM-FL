@@ -31,6 +31,16 @@ on:
       run_unit_tests: {required: false, type: boolean, default: true}
       run_functional_tests: {required: false, type: boolean, default: true}
       image_override: {required: false, type: string, default: ''}
+      expected_unit_groups:
+        required: false
+        type: string
+        default: '[]'
+        description: JSON array of execution groups expected by the routing plan
+      plan_hash:
+        required: false
+        type: string
+        default: ''
+        description: Stable routing-plan hash shared by every selected platform
       source_ref:
         required: false
         type: string
@@ -62,4 +72,6 @@ jobs:
       run_unit_tests: ${{ inputs.run_unit_tests }}
       run_functional_tests: ${{ inputs.run_functional_tests }}
       image_override: ${{ inputs.image_override }}
+      expected_unit_groups: ${{ inputs.expected_unit_groups }}
+      plan_hash: ${{ inputs.plan_hash }}
       te_fl_artifact: ${{ needs.te_fl_prepare.outputs.wheel_artifact }}

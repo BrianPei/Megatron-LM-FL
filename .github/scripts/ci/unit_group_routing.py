@@ -15,13 +15,14 @@ import hashlib
 import pathlib
 import re
 import subprocess
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Iterable
 
 import yaml
 
 SCHEMA_VERSION = 1
 GROUP_NAME = re.compile(r"[A-Za-z0-9_-]+")
+_STATUSES = ("active", "planned", "unsupported")
 
 
 class CatalogError(ValueError):
@@ -34,6 +35,9 @@ class Group:
 
     name: str
     description: str
+    status: str
+    reason: str
+    execution_group: str | None
     paths: tuple[str, ...]
     depends_on: tuple[str, ...]
     resource_class: str
@@ -61,8 +65,20 @@ class Catalog:
     documentation_paths: tuple[str, ...]
     documentation_suffixes: tuple[str, ...]
     shared_paths: tuple[str, ...]
+    coverage_sources: tuple[str, ...]
     default_timeout_minutes: int
     digest: str
+
+    def matches_all(self, path: str) -> list[str]:
+        """Return every logical group whose path patterns match the repository path."""
+        return sorted(
+            {
+                group.name
+                for group in self.groups.values()
+                for pattern in group.paths
+                if _matches(path, pattern)
+            }
+        )
 
     def matches(self, path: str) -> str | None:
         """Return the most specific logical group for a repository path."""
@@ -107,9 +123,34 @@ class Catalog:
         errors: list[str] = []
         if not self.groups:
             errors.append("Catalog declares no groups")
+        if not self.coverage_sources:
+            errors.append("Catalog declares no coverage sources")
+        if root is not None:
+            for source in self.coverage_sources:
+                if not path_exists(root, source):
+                    errors.append(f"Coverage source does not exist: {source}")
         for name, group in self.groups.items():
             if not GROUP_NAME.fullmatch(name):
                 errors.append(f"Invalid group name: {name!r}")
+            if group.status not in _STATUSES:
+                errors.append(f"Group {name} has an invalid status: {group.status!r}")
+            if group.status != "active" and not group.reason:
+                errors.append(f"Group {name} needs a reason for status {group.status}")
+            if group.execution_group is not None:
+                if not GROUP_NAME.fullmatch(group.execution_group):
+                    errors.append(f"Group {name} has an invalid execution_group")
+                else:
+                    target = self.groups.get(group.execution_group)
+                    if target is None:
+                        errors.append(
+                            f"Group {name} execution_group targets unknown group: "
+                            f"{group.execution_group}"
+                        )
+                    elif target.status != "active":
+                        errors.append(
+                            f"Group {name} execution_group targets {target.status} group: "
+                            f"{group.execution_group}"
+                        )
             if not group.paths:
                 errors.append(f"Group {name} declares no paths")
             for pattern in group.paths:
@@ -127,6 +168,10 @@ class Catalog:
             for name in level.required_groups:
                 if name not in self.groups:
                     errors.append(f"Level {level.name} requires unknown group: {name}")
+                elif self.groups[name].status != "active":
+                    errors.append(
+                        f"Level {level.name} requires {self.groups[name].status} group: {name}"
+                    )
         if root is not None:
             unit_tests = root / "tests/unit_tests"
             if unit_tests.is_dir():
@@ -172,6 +217,7 @@ class PlatformUnit:
     device_types: tuple[str, ...]
     nproc_per_node: int
     groups: dict[str, dict[str, Any]]
+    unsupported_groups: dict[str, str] = field(default_factory=dict)
 
 
 def _matches(path: str, pattern: str) -> bool:
@@ -184,15 +230,22 @@ def _matches(path: str, pattern: str) -> bool:
     return path == pattern
 
 
+def execution_covers(executed: str, test_path: str) -> bool:
+    """Return whether an execution group's paths collect a catalog test path.
+
+    A directory covers everything beneath it; a file or glob only covers the
+    path it actually matches.  In particular, a single file must not be treated
+    as covering the directory that contains it.
+    """
+    return any(_matches(test_path, token) for token in executed.split())
+
+
 @functools.lru_cache(maxsize=8)
-def _tracked_paths(root: pathlib.Path) -> tuple[str, ...] | None:
+def tracked_paths(root: pathlib.Path) -> tuple[str, ...] | None:
     """Return repository-relative paths tracked by git, or None outside git."""
     try:
         result = subprocess.run(
-            ["git", "-C", str(root), "ls-files", "-z"],
-            capture_output=True,
-            text=True,
-            check=True,
+            ["git", "-C", str(root), "ls-files", "-z"], capture_output=True, text=True, check=True
         )
     except (OSError, subprocess.CalledProcessError):
         return None
@@ -202,7 +255,7 @@ def _tracked_paths(root: pathlib.Path) -> tuple[str, ...] | None:
 def path_exists(root: pathlib.Path, pattern: str) -> bool:
     # CI validates a clean checkout. Checking the git index here keeps local
     # validation honest when ignored or generated directories are present.
-    tracked = _tracked_paths(root)
+    tracked = tracked_paths(root)
     if tracked is not None:
         if pattern.endswith("/"):
             return any(path.startswith(pattern) for path in tracked)
@@ -233,6 +286,10 @@ def load_catalog(path: pathlib.Path) -> Catalog:
     documentation_paths = _string_tuple(global_config, "documentation_paths")
     documentation_suffixes = _string_tuple(global_config, "documentation_suffixes")
     shared_paths = _string_tuple(global_config, "shared_paths")
+    coverage = data.get("coverage") or {}
+    if not isinstance(coverage, dict):
+        raise CatalogError("coverage must be a mapping")
+    coverage_sources = _string_tuple(coverage, "sources", required=True)
     default_timeout = global_config.get("default_timeout_minutes", 60)
     if (
         not isinstance(default_timeout, int)
@@ -249,6 +306,19 @@ def load_catalog(path: pathlib.Path) -> Catalog:
             raise CatalogError(f"Group {name} must be a mapping")
         paths = _string_tuple(entry, "paths", required=True)
         depends_on = _string_tuple(entry, "depends_on")
+        status = entry.get("status", "active")
+        if status not in _STATUSES:
+            raise CatalogError(f"Group {name} has an invalid status: {status!r}")
+        reason = entry.get("reason", "")
+        if not isinstance(reason, str):
+            raise CatalogError(f"Group {name} has an invalid reason")
+        if status != "active" and not reason.strip():
+            raise CatalogError(f"Group {name} needs a reason for status {status}")
+        execution_group = entry.get("execution_group")
+        if execution_group is not None and (
+            not isinstance(execution_group, str) or not GROUP_NAME.fullmatch(execution_group)
+        ):
+            raise CatalogError(f"Group {name} has an invalid execution_group")
         resource_class = entry.get("resource_class", "single_device")
         if not isinstance(resource_class, str) or not resource_class:
             raise CatalogError(f"Group {name} has an invalid resource_class")
@@ -261,6 +331,9 @@ def load_catalog(path: pathlib.Path) -> Catalog:
         groups[name] = Group(
             name=name,
             description=str(entry.get("description", "")),
+            status=status,
+            reason=reason,
+            execution_group=execution_group,
             paths=paths,
             depends_on=depends_on,
             resource_class=resource_class,
@@ -288,6 +361,7 @@ def load_catalog(path: pathlib.Path) -> Catalog:
         documentation_paths=documentation_paths,
         documentation_suffixes=documentation_suffixes,
         shared_paths=shared_paths,
+        coverage_sources=coverage_sources,
         default_timeout_minutes=default_timeout,
         digest=hashlib.sha256(raw).hexdigest(),
     )
@@ -331,6 +405,17 @@ def load_platform(config_path: pathlib.Path) -> PlatformUnit:
             raise CatalogError(f"Unit group {name} has no test path: {config_path}")
         groups[name] = entry
 
+    unsupported_raw = unit.get("unsupported_groups") or {}
+    if not isinstance(unsupported_raw, dict):
+        raise CatalogError(f"unsupported_groups must be a mapping: {config_path}")
+    unsupported_groups: dict[str, str] = {}
+    for name, reason in unsupported_raw.items():
+        if not isinstance(name, str) or not GROUP_NAME.fullmatch(name):
+            raise CatalogError(f"Invalid unsupported group name {name!r}: {config_path}")
+        if not isinstance(reason, str) or not reason.strip():
+            raise CatalogError(f"Unsupported group {name} needs a reason: {config_path}")
+        unsupported_groups[name] = reason
+
     device_types = data.get("device_types") or []
     if not isinstance(device_types, list) or any(
         not isinstance(item, str) for item in device_types
@@ -344,6 +429,7 @@ def load_platform(config_path: pathlib.Path) -> PlatformUnit:
         device_types=tuple(device_types),
         nproc_per_node=nproc,
         groups=groups,
+        unsupported_groups=unsupported_groups,
     )
 
 
@@ -352,33 +438,59 @@ def select_groups(
 ) -> dict[str, Any]:
     """Select logical groups and explain every selection.
 
-    Returns selected names, per-group reasons, fallback metadata, and the paths
-    that forced a fallback. The caller materializes the result per platform.
+    Returns selected names, per-group reasons, fallback metadata, direct matches,
+    and the paths/conflicts that forced a fallback. The caller materializes the
+    result per platform.
     """
     all_groups = set(catalog.groups)
     required = set(catalog.required_groups(level))
 
-    def everything(reason: str, *, fallback: bool, unmapped: list[str] | None = None):
+    def result(
+        selected: Iterable[str],
+        reasons: dict[str, list[dict[str, str]]],
+        *,
+        fallback: bool,
+        fallback_reason: str | None,
+        unmapped: list[str] | None = None,
+        documentation_only: bool = False,
+        direct: Iterable[str] = (),
+        conflicts: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
         return {
-            "selected": all_groups,
-            "reasons": {name: [{"type": "fallback", "reason": reason}] for name in all_groups},
+            "selected": set(selected),
+            "reasons": reasons,
             "required": required,
             "fallback": fallback,
-            "fallback_reason": reason if fallback else None,
+            "fallback_reason": fallback_reason,
             "unmapped_paths": unmapped or [],
-            "documentation_only": False,
+            "documentation_only": documentation_only,
+            "direct_groups": sorted(set(direct)),
+            "route_conflicts": conflicts or [],
         }
 
+    def everything(
+        reason: str,
+        *,
+        fallback: bool,
+        unmapped: list[str] | None = None,
+        conflicts: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
+        return result(
+            all_groups,
+            {name: [{"type": "fallback", "reason": reason}] for name in all_groups},
+            fallback=fallback,
+            fallback_reason=reason if fallback else None,
+            unmapped=unmapped,
+            conflicts=conflicts,
+        )
+
     if selection == "all":
-        return {
-            "selected": all_groups,
-            "reasons": {name: [{"type": "all", "reason": selection}] for name in all_groups},
-            "required": required,
-            "fallback": False,
-            "fallback_reason": None,
-            "unmapped_paths": [],
-            "documentation_only": False,
-        }
+        return result(
+            all_groups,
+            {name: [{"type": "all", "reason": selection}] for name in all_groups},
+            fallback=False,
+            fallback_reason=None,
+        )
     if selection != "affected":
         raise CatalogError(f"Unknown selection: {selection}")
     if unknown_diff:
@@ -388,24 +500,23 @@ def select_groups(
 
     code_paths = [path for path in changed if not catalog.is_documentation(path)]
     if not code_paths:
-        return {
-            "selected": set(),
-            "reasons": {},
-            "required": set(),
-            "fallback": False,
-            "fallback_reason": None,
-            "unmapped_paths": [],
-            "documentation_only": True,
-        }
+        return result(set(), {}, fallback=False, fallback_reason=None, documentation_only=True)
 
     direct: dict[str, list[str]] = {}
     for path in code_paths:
         if catalog.is_shared(path):
             return everything(f"Shared path: {path}", fallback=True)
-        name = catalog.matches(path)
-        if name is None:
+        matches = catalog.matches_all(path)
+        if not matches:
             return everything(f"Unmapped path: {path}", fallback=True, unmapped=[path])
-        direct.setdefault(name, []).append(path)
+        if len(matches) > 1:
+            conflict = {"path": path, "groups": matches}
+            return everything(
+                f"Route conflict: {path} matches {', '.join(matches)}",
+                fallback=True,
+                conflicts=[conflict],
+            )
+        direct.setdefault(matches[0], []).append(path)
 
     selected = catalog.closure(direct) | required
     reasons: dict[str, list[dict[str, str]]] = {}
@@ -427,15 +538,13 @@ def select_groups(
         if not any(reason["type"] == "required" for reason in reasons.setdefault(name, [])):
             reasons[name].append({"type": "required", "level": level})
 
-    return {
-        "selected": selected,
-        "reasons": {name: _dedupe(reasons[name]) for name in selected},
-        "required": required,
-        "fallback": False,
-        "fallback_reason": None,
-        "unmapped_paths": [],
-        "documentation_only": False,
-    }
+    return result(
+        selected,
+        {name: _dedupe(reasons[name]) for name in selected},
+        fallback=False,
+        fallback_reason=None,
+        direct=direct,
+    )
 
 
 def materialize_groups(
@@ -445,28 +554,98 @@ def materialize_groups(
     reasons: dict[str, list[dict[str, str]]],
     required: set[str],
 ) -> dict[str, list[dict[str, Any]]]:
-    """Split logical groups into executable, not-configured, and blocked groups."""
+    """Split logical groups into executable, planned, unsupported, unresolved, and blocked.
+
+    A selected planned group means its tests are not wired into any platform yet.
+    In that case the platform conservatively executes every active group it can
+    run, so the plan never narrows coverage around a known gap.
+    """
     executable: list[dict[str, Any]] = []
-    not_configured: list[dict[str, Any]] = []
+    planned: list[dict[str, Any]] = []
+    unsupported: list[dict[str, Any]] = []
+    unresolved: list[dict[str, Any]] = []
     blocked: list[dict[str, Any]] = []
-    for name in sorted(selected):
-        group = catalog.groups[name]
-        entry = {
+    fallback_excluded: list[dict[str, Any]] = []
+
+    def entry_for(
+        name: str, group: Group, execution_group: str | None = None, reason: str | None = None
+    ) -> dict[str, Any]:
+        return {
             "name": name,
-            "execution_group": name if name in platform.groups else None,
+            "execution_group": execution_group,
+            "status": group.status,
+            "reason": group.reason if reason is None else reason,
             "resource_class": group.resource_class,
             "required": name in required,
             "timeout_minutes": group.timeout_minutes,
             "parallel_safe": group.parallel_safe,
-            "reasons": reasons[name],
+            "reasons": reasons.get(name, []),
         }
-        if name in platform.groups:
-            executable.append(entry)
+
+    def exclusion(name: str, status: str, reason: str) -> dict[str, Any]:
+        return {"name": name, "platform": platform.name, "status": status, "reason": reason}
+
+    for name in sorted(selected):
+        group = catalog.groups[name]
+        effective = group.execution_group or name
+        if group.status == "planned":
+            planned.append(entry_for(name, group))
+        elif group.status == "unsupported":
+            unsupported.append(entry_for(name, group))
+        elif name in platform.unsupported_groups:
+            if name in required:
+                blocked.append(entry_for(name, group))
+            else:
+                unsupported.append(entry_for(name, group, reason=platform.unsupported_groups[name]))
+        elif effective in platform.groups:
+            executable.append(entry_for(name, group, effective))
         elif name in required:
-            blocked.append(entry)
+            blocked.append(entry_for(name, group))
         else:
-            not_configured.append(entry)
-    return {"selected_groups": executable, "not_configured": not_configured, "blocked": blocked}
+            unresolved.append(entry_for(name, group))
+
+    if planned:
+        reason = "planned group selected: " + ", ".join(sorted(entry["name"] for entry in planned))
+        executable = []
+        for name, group in sorted(catalog.groups.items()):
+            if group.status != "active":
+                continue
+            effective = group.execution_group or name
+            if name in platform.unsupported_groups:
+                detail = platform.unsupported_groups[name]
+                if name in required:
+                    fallback_excluded.append(
+                        exclusion(
+                            name, "blocked", f"required group is declared unsupported: {detail}"
+                        )
+                    )
+                else:
+                    fallback_excluded.append(exclusion(name, "unsupported", detail))
+                continue
+            if effective not in platform.groups:
+                if name in required:
+                    fallback_excluded.append(
+                        exclusion(
+                            name, "blocked", f"required group has no execution group: {effective}"
+                        )
+                    )
+                else:
+                    fallback_excluded.append(
+                        exclusion(name, "unresolved", f"no execution group mapping: {effective}")
+                    )
+                continue
+            executable.append(entry_for(name, group, effective))
+        for entry in executable:
+            entry["reasons"] = [{"type": "fallback", "reason": reason}]
+
+    return {
+        "selected_groups": executable,
+        "planned": planned,
+        "unsupported": unsupported,
+        "unresolved": unresolved,
+        "blocked": blocked,
+        "fallback_excluded": fallback_excluded,
+    }
 
 
 def _dedupe(reasons: list[dict[str, str]]) -> list[dict[str, str]]:

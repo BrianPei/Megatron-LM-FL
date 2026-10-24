@@ -74,6 +74,8 @@ test_matrix:
     # Re-enable after the matching dependency fix passes the affected tests.
     # Unknown timeouts and missing test assets must remain visible failures.
     # Node IDs (including parameter prefixes) become --deselect in the common runner.
+    unsupported_groups:
+      transformer: "Transformer unit tests currently run only on CUDA."
     ignored_tests:
       # Core: TE-FL FusedSGD passes 11 arguments to an 8-argument implementation.
       # Both functions use FusedSGD as their reference even at 100% CPU offload.

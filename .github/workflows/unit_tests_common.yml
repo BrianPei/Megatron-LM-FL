@@ -44,6 +44,16 @@ on:
         required: true
         type: string
         description: JSON array of unit test groups
+      expected_unit_groups:
+        required: false
+        type: string
+        default: '[]'
+        description: JSON array of execution groups expected by the routing plan
+      plan_hash:
+        required: false
+        type: string
+        default: ''
+        description: Stable routing-plan hash shared by every selected platform
       nproc_per_node:
         required: true
         type: string
@@ -191,12 +201,47 @@ jobs:
           CI_PLATFORM: ${{ inputs.platform }}
           CI_DEVICE: ${{ inputs.device }}
           CI_TEST_GROUPS: ${{ inputs.test_groups }}
+          CI_EXPECTED_UNIT_GROUPS: ${{ inputs.expected_unit_groups }}
+          CI_PLAN_HASH: ${{ inputs.plan_hash }}
           CI_SETUP_SCRIPT: ${{ inputs.setup_script }}
           CI_NPROC_PER_NODE: ${{ inputs.nproc_per_node }}
           CI_IGNORED_TESTS: ${{ inputs.ignored_tests }}
           CI_PYTEST_EXTRA_ARGS: ${{ inputs.pytest_extra_args }}
           CI_EXPERIMENTAL_PYTEST_EXTRA_ARGS: ${{ inputs.experimental_pytest_extra_args }}
         run: python3 .github/scripts/run_unit_groups.py
+
+      - name: Verify unit plan attestation
+        if: >-
+          always() &&
+          steps.unit_test.outcome != 'skipped' &&
+          inputs.plan_hash != '' &&
+          inputs.expected_unit_groups != '[]'
+        env:
+          PLAN_HASH: ${{ inputs.plan_hash }}
+          EXPECTED_UNIT_GROUPS: ${{ inputs.expected_unit_groups }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import pathlib
+
+          path = pathlib.Path('coverage-report/unit-results.json')
+          if not path.is_file():
+              raise SystemExit('Unit plan attestation is missing')
+          data = json.loads(path.read_text())
+          expected = sorted(json.loads(os.environ['EXPECTED_UNIT_GROUPS']))
+          if data.get('plan_hash') != os.environ['PLAN_HASH']:
+              raise SystemExit('Unit plan hash mismatch')
+          if data.get('expected_groups') != expected:
+              raise SystemExit('Attested expected groups do not match the plan')
+          if data.get('executed_groups') != expected:
+              raise SystemExit('Executed groups do not match the plan')
+          if data.get('missing_groups') or data.get('unexpected_groups'):
+              raise SystemExit('Unit group execution was incomplete or over-selected')
+          if data.get('status') != 'passed':
+              raise SystemExit(f"Unit execution did not pass: {data.get('status')}")
+          print(f'Unit plan attestation verified for {data["platform"]}/{data["device"]}')
+          PY
 
       - name: Save unit results for reruns
         if: ${{ always() && steps.unit_test.outcome != 'skipped' }}

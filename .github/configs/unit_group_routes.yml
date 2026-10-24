@@ -2,12 +2,27 @@
 #
 # This file is the logical routing layer only. A platform executes a group only
 # when its .github/configs/<platform>.yml declares a unit group with the same
-# name. A logical group without a platform execution group is reported as
-# "not_configured" instead of being silently skipped.
+# name or the group declares an execution_group alias.
+#
+# status: active      - executable on at least one platform; every platform
+#                       must execute all of its test paths or declare it in
+#                       unsupported_groups with the uncovered path's reason
+# status: planned     - not wired into any platform yet. A direct match blocks
+#                       the plan; a planned group reached only through a
+#                       shared-path fallback expands the platform to every
+#                       active group it can execute
+# status: unsupported - intentionally not executable
+#
+# resource_class, timeout_minutes, and parallel_safe are advisory metadata for
+# now: the runner still executes one sequential unit job per platform/device.
 #
 # Keep this catalog conservative. Any path that is not listed here, or that is
-# listed as shared, expands the plan to every group. A narrower plan must never
-# be produced by an unrecognized path.
+# listed as shared, expands the plan to every group. An unknown path still
+# produces that diagnostic fallback plan, but the plan is blocked and the
+# fallback is not executed until the path is onboarded. A path that matches
+# more than one group is a route conflict and also blocks the plan. Catalog
+# paths must be disjoint; the validator rejects tracked paths owned by more
+# than one logical group.
 
 schema_version: 1
 
@@ -29,6 +44,13 @@ global:
     - MANIFEST.in
     - codecov.yml
 
+coverage:
+  # Unit coverage is intentionally limited to the code exercised by unit groups.
+  # It is not a full unit-group coverage report.
+  sources:
+    - megatron/plugin/
+    - megatron/core/
+
 levels:
   L0:
     description: Lowest-risk baseline; always required.
@@ -47,9 +69,9 @@ levels:
 groups:
   core:
     description: Model-parallel configuration, process groups, and root unit tests.
+    status: active
     paths:
       - tests/unit_tests/test_*.py
-      - megatron/plugin/tests/
       - megatron/core/__init__.py
       - megatron/core/_rank_utils.py
       - megatron/core/_slurm_utils.py
@@ -86,6 +108,7 @@ groups:
 
   models:
     description: Model construction, configuration, and forward paths.
+    status: active
     paths:
       - megatron/core/models/
       - tests/unit_tests/models/
@@ -95,6 +118,7 @@ groups:
 
   transformer:
     description: Transformer blocks, attention, and layer specifications.
+    status: active
     paths:
       - megatron/core/transformer/
       - tests/unit_tests/transformer/
@@ -104,6 +128,7 @@ groups:
 
   distributed:
     description: Distributed data parallel, gradient sync, and communication state.
+    status: active
     paths:
       - megatron/core/distributed/
       - tests/unit_tests/distributed/
@@ -114,6 +139,7 @@ groups:
 
   tensor_parallel:
     description: Tensor-parallel mappings and parameter sharding.
+    status: active
     paths:
       - megatron/core/tensor_parallel/
       - tests/unit_tests/tensor_parallel/
@@ -123,6 +149,7 @@ groups:
 
   pipeline_parallel:
     description: Pipeline schedules, rank layout, and microbatch flow.
+    status: active
     paths:
       - megatron/core/pipeline_parallel/
       - tests/unit_tests/pipeline_parallel/
@@ -132,6 +159,7 @@ groups:
 
   dist_checkpointing:
     description: Distributed checkpoint serialization and loading.
+    status: active
     paths:
       - megatron/core/dist_checkpointing/
       - tests/unit_tests/dist_checkpointing/
@@ -140,6 +168,7 @@ groups:
 
   data:
     description: Dataset construction and data loading.
+    status: active
     paths:
       - megatron/core/datasets/
       - megatron/training/datasets/
@@ -150,6 +179,7 @@ groups:
 
   fusions:
     description: Fused operators and fused layer paths.
+    status: active
     paths:
       - megatron/core/fusions/
       - tests/unit_tests/fusions/
@@ -160,6 +190,7 @@ groups:
 
   others:
     description: Post-training, tokenizer, and utility tests grouped by the platform configs.
+    status: active
     paths:
       - megatron/core/post_training/
       - megatron/core/tokenizers/
@@ -174,6 +205,8 @@ groups:
 
   optimizer:
     description: Optimizer implementations and parameter schedulers.
+    status: planned
+    reason: "No platform declares an optimizer execution group yet."
     paths:
       - megatron/core/optimizer/
       - tests/unit_tests/optimizer/
@@ -183,6 +216,8 @@ groups:
 
   inference:
     description: Inference engine, inference parameters, and serving entry points.
+    status: planned
+    reason: "No platform declares an inference execution group yet."
     paths:
       - megatron/core/inference/
       - megatron/inference/
@@ -193,6 +228,8 @@ groups:
 
   rl:
     description: Reinforcement-learning agents, rollout, and serving paths.
+    status: planned
+    reason: "No platform declares an RL execution group yet."
     paths:
       - megatron/rl/
       - tests/unit_tests/rl/
@@ -202,8 +239,14 @@ groups:
 
   training:
     description: Training loop, checkpointing, initialization, and argument parsing.
+    status: planned
+    reason: "No platform declares a training-loop execution group yet."
+    # Keep datasets/ and utils/ out of this broad group: data and others own
+    # them, and overlapping catalog paths are rejected as route conflicts.
     paths:
-      - megatron/training/
+      - megatron/training/*.py
+      - megatron/training/config/
+      - megatron/training/models/
       - tests/unit_tests/training/
     depends_on:
       - core
@@ -212,6 +255,8 @@ groups:
 
   ssm:
     description: State-space model layers.
+    status: planned
+    reason: "No platform declares an SSM execution group yet."
     paths:
       - megatron/core/ssm/
       - tests/unit_tests/ssm/
@@ -222,6 +267,8 @@ groups:
 
   resharding:
     description: Checkpoint resharding between parallel layouts.
+    status: planned
+    reason: "No platform declares a resharding execution group yet."
     paths:
       - megatron/core/resharding/
       - tests/unit_tests/resharding/
@@ -232,6 +279,8 @@ groups:
 
   export:
     description: Model export paths.
+    status: planned
+    reason: "No platform declares a model-export execution group yet."
     paths:
       - megatron/core/export/
       - tests/unit_tests/export/
@@ -241,6 +290,8 @@ groups:
 
   extensions:
     description: Transformer Engine and third-party extension interfaces.
+    status: planned
+    reason: "No platform declares an extensions execution group yet."
     paths:
       - megatron/core/extensions/
       - tests/unit_tests/extension/
@@ -251,6 +302,8 @@ groups:
 
   a2a_overlap:
     description: All-to-all overlap tests.
+    status: planned
+    reason: "No platform declares an all-to-all overlap execution group yet."
     paths:
       - tests/unit_tests/a2a_overlap/
     depends_on:
@@ -259,6 +312,8 @@ groups:
 
   elastification:
     description: Elastic training orchestration.
+    status: planned
+    reason: "No platform declares an elastic-training execution group yet."
     paths:
       - megatron/elastification/
       - tests/unit_tests/elastification/
@@ -268,15 +323,30 @@ groups:
 
   plugin:
     description: Plugin framework and vendor plugin code.
+    status: active
+    execution_group: core
     paths:
       - megatron/plugin/
-      - tests/unit_tests/plugin/
+      - megatron/plugin/tests/
     depends_on:
       - core
     resource_class: single_device
 
+  dsa_kernel:
+    description: DSA fused-kernel accuracy and performance tests under the plugin test tree.
+    status: planned
+    reason: "CUDA/SM90-only DSA kernel tests need a dedicated execution group and runtime budget."
+    paths:
+      - tests/unit_tests/plugin/
+    depends_on:
+      - core
+      - transformer
+    resource_class: multi_gpu_exclusive
+
   tools:
     description: Repository tooling tests.
+    status: planned
+    reason: "No platform declares a CPU-only tools execution group yet."
     paths:
       - tests/unit_tests/tools/
     depends_on:

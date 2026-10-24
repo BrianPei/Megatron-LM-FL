@@ -60,10 +60,10 @@ class UnitGroupTests(unittest.TestCase):
             "GITHUB_RUN_ATTEMPT": "1",
         }
 
-    def run_groups(self, groups):
+    def run_groups(self, groups, **environment):
         return subprocess.run(
             [sys.executable, str(ROOT / ".github/scripts/run_unit_groups.py")],
-            env={**self.env, "CI_TEST_GROUPS": json.dumps(groups)},
+            env={**self.env, "CI_TEST_GROUPS": json.dumps(groups), **environment},
             capture_output=True,
             text=True,
             timeout=10,
@@ -84,9 +84,28 @@ class UnitGroupTests(unittest.TestCase):
                 json.loads((reports / f"coverage-fake-device-{name}.json").read_text()),
                 {"group": name},
             )
+        attestation = json.loads((reports / "unit-results.json").read_text())
         self.assertEqual(
-            json.loads((reports / "unit-results.json").read_text()),
-            [{"name": "failed", "exit_code": 7}, {"name": "passed", "exit_code": 0}],
+            {
+                "platform": attestation["platform"],
+                "device": attestation["device"],
+                "expected_groups": attestation["expected_groups"],
+                "executed_groups": attestation["executed_groups"],
+                "missing_groups": attestation["missing_groups"],
+                "unexpected_groups": attestation["unexpected_groups"],
+                "status": attestation["status"],
+                "groups": attestation["groups"],
+            },
+            {
+                "platform": "fake",
+                "device": "device",
+                "expected_groups": ["failed", "passed"],
+                "executed_groups": ["failed", "passed"],
+                "missing_groups": [],
+                "unexpected_groups": [],
+                "status": "failed",
+                "groups": [{"name": "failed", "exit_code": 7}, {"name": "passed", "exit_code": 0}],
+            },
         )
         self.assertIn("| failed | FAIL | 7 | Executed |", (self.root / "summary").read_text())
         self.assertIn("::error::FAIL: Unit group failed", result.stdout)
@@ -99,6 +118,59 @@ class UnitGroupTests(unittest.TestCase):
         result = self.run_groups([{"name": "passed", "path": "tests/a"}])
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("PASS: Unit tests: passed (Executed)", result.stdout)
+
+    def test_plan_attestation_records_identity_and_success(self):
+        result = self.run_groups(
+            [{"name": "passed", "path": "tests/a"}],
+            CI_EXPECTED_UNIT_GROUPS='["passed"]',
+            CI_PLAN_HASH="sha256:abc",
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        attestation = json.loads((self.root / "coverage-report/unit-results.json").read_text())
+        self.assertEqual(
+            {
+                key: attestation[key]
+                for key in (
+                    "plan_hash",
+                    "platform",
+                    "device",
+                    "expected_groups",
+                    "executed_groups",
+                    "missing_groups",
+                    "unexpected_groups",
+                    "status",
+                )
+            },
+            {
+                "plan_hash": "sha256:abc",
+                "platform": "fake",
+                "device": "device",
+                "expected_groups": ["passed"],
+                "executed_groups": ["passed"],
+                "missing_groups": [],
+                "unexpected_groups": [],
+                "status": "passed",
+            },
+        )
+        self.assertIn("Plan attestation: passed", (self.root / "summary").read_text())
+
+    def test_plan_attestation_requires_a_hash_for_expected_groups(self):
+        result = self.run_groups(
+            [{"name": "passed", "path": "tests/a"}], CI_EXPECTED_UNIT_GROUPS='["passed"]'
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("CI_PLAN_HASH is required", result.stderr)
+        self.assertFalse((self.root / "coverage-report/unit-results.json").exists())
+
+    def test_plan_attestation_rejects_expected_group_mismatch(self):
+        result = self.run_groups(
+            [{"name": "passed", "path": "tests/a"}],
+            CI_EXPECTED_UNIT_GROUPS='["other"]',
+            CI_PLAN_HASH="sha256:abc",
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Expected unit groups do not match", result.stderr)
+        self.assertFalse((self.root / "coverage-report/unit-results.json").exists())
 
     def test_pytest_worker_runs_coverage_in_process(self):
         environment = {
@@ -165,13 +237,17 @@ class UnitGroupTests(unittest.TestCase):
         reports = self.root / "coverage-report"
         self.assertFalse((reports / "coverage-fake-device-failed.json").exists())
         self.assertTrue((reports / "coverage-fake-device-passed.json").exists())
+        attestation = json.loads((reports / "unit-results.json").read_text())
         self.assertEqual(
-            json.loads((reports / "unit-results.json").read_text()),
+            attestation["groups"],
             [
                 {"name": "failed", "exit_code": 0},
                 {"name": "passed", "exit_code": 0, "reused": True},
             ],
         )
+        self.assertEqual(attestation["expected_groups"], ["failed", "passed"])
+        self.assertEqual(attestation["executed_groups"], ["failed", "passed"])
+        self.assertEqual(attestation["status"], "passed")
         self.env["GITHUB_RUN_ATTEMPT"] = "4"
         self.assertEqual(self.run_groups(groups).returncode, 0)
         self.assertEqual((self.root / "calls").read_text().splitlines()[-1], "failed")
@@ -357,7 +433,9 @@ class UnitGroupTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("FLAKY_PASS", (self.root / "summary").read_text())
         self.assertTrue(
-            json.loads((self.root / "coverage-report/unit-results.json").read_text())[0]["flaky"]
+            json.loads((self.root / "coverage-report/unit-results.json").read_text())["groups"][0][
+                "flaky"
+            ]
         )
         self.assertTrue(
             (self.root / ".retry-logs/unit-fake-device-flaky/attempt-1-outputs/partial").exists()
@@ -366,7 +444,9 @@ class UnitGroupTests(unittest.TestCase):
         self.env["GITHUB_RUN_ATTEMPT"] = "2"
         rerun = self.run_groups([{"name": "flaky", "path": "a"}])
         self.assertEqual(rerun.returncode, 0, rerun.stderr)
-        saved = json.loads((self.root / "coverage-report/unit-results.json").read_text())[0]
+        saved = json.loads((self.root / "coverage-report/unit-results.json").read_text())["groups"][
+            0
+        ]
         self.assertTrue(saved["flaky"])
         self.assertTrue(saved["reused"])
 
@@ -551,6 +631,64 @@ class UnitWorkflowTests(unittest.TestCase):
         self.assertEqual(restore["timeout-minutes"], 5)
         self.assertEqual(save["timeout-minutes"], 5)
         self.assertTrue(steps["Upload Coverage Report"]["with"]["overwrite"])
+
+    def test_plan_identity_is_forwarded_and_attested(self):
+        ci = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())
+        outputs = ci["jobs"]["generate-matrix"]["outputs"]
+        for field in ("plan_hash", "plan_status", "expected_unit_groups"):
+            with self.subTest(field=field):
+                self.assertIn(field, outputs)
+        matrix_steps = {
+            step["name"]: step for step in ci["jobs"]["generate-matrix"]["steps"] if "name" in step
+        }
+        self.assertEqual(matrix_steps["Upload unit test plan"]["if"], "always()")
+        platform_job = ci["jobs"]["platform-pipeline"]
+        self.assertEqual(
+            platform_job["with"]["expected_unit_groups"], "${{ toJson(matrix.groups) }}"
+        )
+        self.assertEqual(
+            platform_job["with"]["plan_hash"], "${{ needs.generate-matrix.outputs.plan_hash }}"
+        )
+
+        pipeline = yaml.safe_load((ROOT / ".github/workflows/_platform_pipeline.yml").read_text())
+        pipeline_inputs = pipeline[True]["workflow_call"]["inputs"]
+        self.assertIn("plan_hash", pipeline_inputs)
+        self.assertIn("expected_unit_groups", pipeline_inputs)
+        self.assertEqual(pipeline["jobs"]["test"]["with"]["plan_hash"], "${{ inputs.plan_hash }}")
+        self.assertEqual(
+            pipeline["jobs"]["test"]["with"]["expected_unit_groups"],
+            "${{ inputs.expected_unit_groups }}",
+        )
+
+        common = yaml.safe_load((ROOT / ".github/workflows/all_tests_common.yml").read_text())
+        self.assertIn("plan_hash", common[True]["workflow_call"]["inputs"])
+        self.assertIn("expected_unit_groups", common[True]["workflow_call"]["inputs"])
+        unit_with = common["jobs"]["unit_tests"]["with"]
+        self.assertEqual(unit_with["plan_hash"], "${{ inputs.plan_hash }}")
+        self.assertEqual(unit_with["expected_unit_groups"], "${{ inputs.expected_unit_groups }}")
+
+        unit = yaml.safe_load((ROOT / ".github/workflows/unit_tests_common.yml").read_text())
+        unit_inputs = unit[True]["workflow_call"]["inputs"]
+        self.assertEqual(unit_inputs["plan_hash"]["default"], "")
+        self.assertEqual(unit_inputs["expected_unit_groups"]["default"], "[]")
+        steps = {step["name"]: step for step in unit["jobs"]["unit_test"]["steps"]}
+        runner = steps["Run unit test groups sequentially"]
+        self.assertEqual(runner["env"]["CI_PLAN_HASH"], "${{ inputs.plan_hash }}")
+        self.assertEqual(
+            runner["env"]["CI_EXPECTED_UNIT_GROUPS"], "${{ inputs.expected_unit_groups }}"
+        )
+        attestation = steps["Verify unit plan attestation"]
+        self.assertIn("always()", attestation["if"])
+        self.assertEqual(attestation["env"]["PLAN_HASH"], "${{ inputs.plan_hash }}")
+        self.assertEqual(
+            attestation["env"]["EXPECTED_UNIT_GROUPS"], "${{ inputs.expected_unit_groups }}"
+        )
+
+        complete = {step["name"]: step for step in ci["jobs"]["ci-complete"]["steps"]}
+        self.assertEqual(
+            complete["Download unit execution attestations"]["with"]["pattern"], "coverage-*"
+        )
+        self.assertIn("Verify unit plan across platforms", complete)
 
     def test_all_platforms_have_install_free_group_hooks(self):
         for name in ("cuda", "musa", "ascend", "enflame", "hygon", "kunlunxin", "metax", "ppu"):

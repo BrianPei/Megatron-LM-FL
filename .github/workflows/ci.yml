@@ -55,6 +55,10 @@ jobs:
     timeout-minutes: 5
     outputs:
       platforms: ${{ steps.matrix.outputs.platforms }}
+      unit_matrix: ${{ steps.plan.outputs.unit_matrix }}
+      plan_hash: ${{ steps.plan.outputs.plan_hash }}
+      plan_status: ${{ steps.plan.outputs.plan_status }}
+      expected_unit_groups: ${{ steps.plan.outputs.expected_unit_groups }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -76,9 +80,12 @@ jobs:
             --configs-dir .github/configs \
             >> "$GITHUB_OUTPUT"
 
-      # Shadow mode: the proposed unit-group plan is reported and archived,
-      # but platform pipelines still execute their full configured group set.
-      - name: Generate proposed unit test plan
+      # The plan selects logical groups from the diff and materializes them
+      # against each platform's configured execution groups. A directly affected
+      # planned group or unknown path blocks execution; planned groups reached
+      # only through a shared-path fallback expand to every executable group.
+      - name: Generate unit test plan
+        id: plan
         env:
           EVENT_NAME: ${{ github.event_name }}
           BASE_REF: ${{ github.base_ref || 'main' }}
@@ -90,9 +97,10 @@ jobs:
             --platforms "$PLATFORMS" \
             --output unit-test-plan.json \
             --summary "$GITHUB_STEP_SUMMARY" \
-            --shadow
+            --github-output "$GITHUB_OUTPUT"
 
-      - name: Upload proposed unit test plan
+      - name: Upload unit test plan
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: unit-test-plan
@@ -108,19 +116,21 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        platform: ${{ fromJson(needs.generate-matrix.outputs.platforms) }}
+        include: ${{ fromJson(needs.generate-matrix.outputs.unit_matrix) }}
     uses: ./.github/workflows/_platform_pipeline.yml
     secrets:
       FLAGCICD_API_TOKEN: ${{ secrets.FLAGCICD_API_TOKEN }}
     with:
       platform: ${{ matrix.platform }}
+      expected_unit_groups: ${{ toJson(matrix.groups) }}
+      plan_hash: ${{ needs.generate-matrix.outputs.plan_hash }}
 
   ci-complete:
     name: CI Complete
     needs: [lint, generate-matrix, platform-pipeline]
     if: always()
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     steps:
       # Keep the gate independent of checkout and PR-controlled dependencies.
       - name: Verify required CI results
@@ -128,6 +138,8 @@ jobs:
           LINT_RESULT: ${{ needs.lint.result }}
           MATRIX_RESULT: ${{ needs.generate-matrix.result }}
           PLATFORMS: ${{ needs.generate-matrix.outputs.platforms }}
+          PLAN_STATUS: ${{ needs.generate-matrix.outputs.plan_status }}
+          PLAN_HASH: ${{ needs.generate-matrix.outputs.plan_hash }}
           PIPELINE_RESULT: ${{ needs.platform-pipeline.result }}
         run: |
           python3 - <<'PY'
@@ -143,8 +155,93 @@ jobs:
               not isinstance(platform, str) or not platform for platform in platforms
           ):
               raise SystemExit('Invalid platform matrix')
+          if platforms:
+              if os.environ['PLAN_STATUS'] not in ('ready', 'partial'):
+                  raise SystemExit(
+                      'Unit plan must be ready or partial before platform jobs run'
+                  )
+              if not os.environ['PLAN_HASH'].startswith('sha256:'):
+                  raise SystemExit('Unit plan hash is missing')
           expected = 'success' if platforms else 'skipped'
           if os.environ['PIPELINE_RESULT'] != expected:
               raise SystemExit(f'Platform pipeline must be {expected}')
           print('All required CI checks passed')
+          PY
+
+      - name: Download unit test plan
+        if: needs.generate-matrix.result == 'success' && needs.generate-matrix.outputs.platforms != '[]'
+        uses: actions/download-artifact@v4
+        with:
+          name: unit-test-plan
+          path: unit-test-plan
+
+      - name: Download unit execution attestations
+        if: needs.generate-matrix.result == 'success' && needs.generate-matrix.outputs.platforms != '[]'
+        uses: actions/download-artifact@v4
+        with:
+          pattern: coverage-*
+          path: unit-results
+
+      - name: Verify unit plan across platforms
+        if: needs.generate-matrix.result == 'success' && needs.generate-matrix.outputs.platforms != '[]'
+        env:
+          PLAN_HASH: ${{ needs.generate-matrix.outputs.plan_hash }}
+          EXPECTED_UNIT_GROUPS: ${{ needs.generate-matrix.outputs.expected_unit_groups }}
+          UNIT_MATRIX: ${{ needs.generate-matrix.outputs.unit_matrix }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import pathlib
+
+          plan = json.loads(
+              pathlib.Path('unit-test-plan/unit-test-plan.json').read_text()
+          )
+          expected = json.loads(os.environ['EXPECTED_UNIT_GROUPS'])
+          matrix = json.loads(os.environ['UNIT_MATRIX'])
+          if plan['plan_status'] not in ('ready', 'partial'):
+              raise SystemExit(f"Unit plan is not executable: {plan['plan_status']}")
+          if plan['plan_hash'] != os.environ['PLAN_HASH']:
+              raise SystemExit('Plan hash output does not match the uploaded plan')
+          if plan['expected_unit_groups'] != expected:
+              raise SystemExit('Expected groups output does not match the uploaded plan')
+          matrix_groups = {}
+          for entry in matrix:
+              name = entry.get('platform')
+              if name in matrix_groups:
+                  raise SystemExit(f'Duplicate platform in unit matrix: {name}')
+              matrix_groups[name] = entry.get('groups')
+          if matrix_groups != expected:
+              raise SystemExit('Unit matrix does not match expected groups')
+          devices = {
+              (platform['name'], device)
+              for platform in plan['platforms']
+              for device in platform['devices']
+          }
+          results = {}
+          for path in pathlib.Path('unit-results').rglob('unit-results.json'):
+              data = json.loads(path.read_text())
+              key = (data.get('platform'), data.get('device'))
+              if key in results:
+                  raise SystemExit(f'Duplicate unit result attestation: {key}')
+              results[key] = data
+          if set(results) != devices:
+              raise SystemExit(
+                  'Unit result attestations do not match planned platforms/devices: '
+                  f"missing={sorted(devices - set(results))}, "
+                  f"unexpected={sorted(set(results) - devices)}"
+              )
+          for key, data in sorted(results.items()):
+              groups = expected[key[0]]
+              if data.get('plan_hash') != plan['plan_hash']:
+                  raise SystemExit(f'Plan hash mismatch for {key}')
+              if data.get('expected_groups') != groups:
+                  raise SystemExit(f'Expected group mismatch for {key}')
+              if data.get('executed_groups') != groups:
+                  raise SystemExit(f'Executed group mismatch for {key}')
+              if data.get('missing_groups') or data.get('unexpected_groups'):
+                  raise SystemExit(f'Group execution mismatch for {key}')
+              if data.get('status') != 'passed':
+                  raise SystemExit(f"Unit execution did not pass for {key}: {data.get('status')}")
+          print(f'Unit plan verified across {len(results)} platform/device results')
           PY

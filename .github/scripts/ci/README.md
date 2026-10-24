@@ -10,35 +10,93 @@ the platform pipeline; platform workflows contain no duplicate lint job. The sha
 ## Platform selection
 
 - `paths_watch` accepts exact files and directory prefixes ending in `/`.
-- Vendor-only changes run the affected platforms; shared/unknown paths run all.
+- Vendor-only changes run the affected platforms; shared or unclassified paths
+  select all platforms, and the unit plan then blocks unknown paths until they
+  are onboarded.
 - Documentation (`docs/`, `.md`, `.rst`) skips hardware tests but still reports
-  the gate. Revisit this rule if builds/tests start using documentation as input.
+  the gate. Documentation-only PRs never start hardware jobs, even when a
+  `platform:<name>` label is present.
 - Missing diffs/watch rules select all platforms; invalid configs fail.
 - Renames include both old and new paths. Push/schedule/manual CI runs select all.
-- Labels `platform:<config-name>` override path routing, matching TE. Multiple
-  labels take their union; `platform:all` selects every platform. Removing all
-  platform labels restores automatic routing. Narrow shared-code changes after review.
+- Labels `platform:<config-name>` override path routing, matching TE, but only
+  for PRs that contain at least one code change. Multiple labels take their
+  union; `platform:all` selects every platform. Removing all platform labels
+  restores automatic routing. Narrow shared-code changes after review.
 - A functional case shared by several platforms must appear in all their watch lists.
 
-## Unit group routing (shadow)
+## Unit group routing
 
 `.github/configs/unit_group_routes.yml` defines logical groups, their source and
-test paths, dependencies, resource classes, and the groups required by each
-level. `generate_test_plan.py` combines that catalog with the platform router and
-each platform's configured unit groups, then writes `unit-test-plan.json` and an
-Actions summary.
+test paths, dependencies, resource classes, status (`active`, `planned`, or
+`unsupported`), and the groups required by each level. Platform configs remain
+authoritative: each declares the execution groups it runs and must declare every
+other active group in `unsupported_groups` with a reason. A platform may also
+declare an active group unsupported when its execution group exists but does not
+collect every test path of that group; the validator rejects a declaration only
+when the execution group already covers all of them. A group may set an
+`execution_group` alias (for example, `plugin` executes as `core`); the alias
+must target an existing active catalog group, and a required level is checked
+against that effective execution group. Catalog path ownership must be
+unambiguous: the validator fails when a tracked path matches more than one
+logical group.
+`generate_test_plan.py` combines the catalog with the platform router and each
+selected platform's config, writes `unit-test-plan.json` and an Actions summary,
+and emits the per-platform execution matrix consumed by `ci.yml`.
 
-CI runs the planner in shadow mode: the proposed plan is published and archived,
-but platform pipelines still execute every configured unit group. Routing rules:
+The plan is the affected-only gate for pull requests. It records
+`direct_groups` (logical groups matched directly by a changed path),
+`direct_gaps` (direct groups no selected platform actually executes),
+`fallback_excluded` (active groups a planned-group fallback could not run), and a
+`plan_status` of `ready`, `partial`, or `blocked`:
 
-- Unknown and shared paths expand to every logical group; they never narrow it.
-- A logical group without a matching platform group is reported as
-  `not_configured`; a missing required group fails a non-shadow plan.
-- Documentation-only changes propose no hardware tests.
-- Identical source/base SHAs, configs, and changed files produce the same
-  `plan_hash`.
-- `validate_unit_group_catalog.py` checks path existence, dependency acyclicity,
-  platform group names, and coverage of every `tests/unit_tests/` directory.
+- `ready`: every selected direct group executes and no planned/unsupported
+  fallback was involved. Documentation-only plans are `ready` with no platforms.
+- `partial`: the plan executes, but it relied on a shared/fallback selection,
+  `selection=all`, or a planned/unsupported/fallback-excluded group. A partial
+  plan is not proof of a complete logical-group regression.
+- `blocked`: no unit matrix is emitted and `generate-matrix` fails.
+
+Blocking conditions:
+
+- A directly affected group is `planned` or declared unsupported on every
+  selected platform. Planned fallback is allowed only when the planned group is
+  not the direct match.
+- A changed path is unknown or matches more than one logical group (route
+  conflict). Unknown paths still produce a diagnostic full fallback plan, but
+  the plan is `blocked` and the fallback is not executed until catalog
+  onboarding is completed.
+- A missing required group, an unresolved/blocked group, or a platform with no
+  executable groups.
+- A shared path falls back to every logical group and executes every active
+  group the platform can run. This is allowed but marked `partial`.
+
+A selected planned group is not executed. The platform instead runs every
+active group it can execute, so a known gap cannot narrow coverage; groups it
+cannot run are listed under `fallback_excluded`.
+
+Plan identity is carried end to end: `ci.yml` exports `plan_hash` and
+`expected_unit_groups`, `_platform_pipeline.yml` and `all_tests_common.yml`
+forward them, and `run_unit_groups.py` writes them to
+`coverage-report/unit-results.json` together with `executed_groups`,
+`missing_groups`, `unexpected_groups`, and `status`. The per-platform workflow
+verifies this attestation, and `ci-complete` re-verifies that every planned
+`(platform, device)` reports the same `plan_hash`, executes exactly its expected
+groups, and has `status=passed`.
+
+`resource_class`, `timeout_minutes`, and `parallel_safe` are currently advisory
+metadata only. A platform still runs one unit job per platform/device, groups
+execute sequentially, the group timeout is fixed by the runner, and there is no
+exclusive lock or group-level parallel scheduling.
+
+Coverage sources in the catalog (`megatron/plugin/`, `megatron/core/`) are the
+unit coverage boundary; this is core/plugin coverage, not full Megatron
+unit-group coverage. Artifact names such as `coverage-<platform>-<device>` are
+transport labels and make no claim about logical-group completeness.
+`validate_unit_group_catalog.py` checks path existence against the git index,
+dependency acyclicity, platform group names, alias targets, owner and
+unsupported declarations, required-group execution through aliases, tracked-path
+overlaps between logical groups, and coverage of every `tests/unit_tests/`
+directory.
 
 ## Prepared wheels
 

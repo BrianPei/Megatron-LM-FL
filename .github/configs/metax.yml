@@ -78,6 +78,8 @@ test_matrix:
         description: post-training, tokenizer, and utility tests
     # Ignored test files for unit tests
     # These files will be skipped when running pytest
+    unsupported_groups:
+      transformer: "Transformer unit tests currently run only on CUDA."
     ignored_tests:
       # LayerWise optimizer suites require the optional Emerging Optimizers package.
       - tests/unit_tests/test_layer_wise_optimizer.py

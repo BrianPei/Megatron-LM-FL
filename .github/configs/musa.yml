@@ -72,6 +72,9 @@ test_matrix:
         path: tests/unit_tests/post_training/ tests/unit_tests/tokenizers/ tests/unit_tests/utils/
         description: post-training, tokenizer, and utility tests
     # Start with a conservative MUSA smoke set while validating runtime and TE plugin coverage.
+    unsupported_groups:
+      plugin: "The MUSA smoke configuration does not include the plugin test directory yet."
+      transformer: "Transformer unit tests currently run only on CUDA."
     ignored_tests:
       # ── Core tests that genuinely require CUDA/NCCL/Apex/TE GPU paths ──────────
       - tests/unit_tests/test_fp8_param.py          # FP8 training with TE + CUDA graphs

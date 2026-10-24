@@ -31,6 +31,16 @@ on:
         type: string
         default: ''
         description: Optional image override for this run
+      expected_unit_groups:
+        required: false
+        type: string
+        default: '[]'
+        description: JSON array of execution group names expected by the routing plan
+      plan_hash:
+        required: false
+        type: string
+        default: ''
+        description: Stable routing-plan hash shared by every selected platform
 
 jobs:
   checkout_and_config:
@@ -81,6 +91,7 @@ jobs:
           RUN_UNIT_TESTS: ${{ inputs.run_unit_tests }}
           RUN_FUNCTIONAL_TESTS: ${{ inputs.run_functional_tests }}
           TE_FL_ARTIFACT: ${{ inputs.te_fl_artifact }}
+          EXPECTED_UNIT_GROUPS: ${{ inputs.expected_unit_groups }}
         run: |
           set -euo pipefail
 
@@ -118,6 +129,35 @@ jobs:
           setup_script=$(yq -r '.setup_script // ""' "$config_file")
           unit_nproc=$(yq -r '.test_matrix.unit.nproc_per_node // ""' "$config_file")
           unit_groups=$(yq -o=json -I=0 '.test_matrix.unit.groups // []' "$config_file")
+          if [ -n "$EXPECTED_UNIT_GROUPS" ] && [ "$EXPECTED_UNIT_GROUPS" != "[]" ]; then
+            unit_groups=$(EXPECTED_UNIT_GROUPS="$EXPECTED_UNIT_GROUPS" python3 - "$unit_groups" <<'PY'
+          import json
+          import os
+          import sys
+
+          groups = json.loads(sys.argv[1])
+          selected = json.loads(os.environ["EXPECTED_UNIT_GROUPS"])
+          if not isinstance(selected, list) or any(
+              not isinstance(name, str) or not name for name in selected
+          ):
+              raise SystemExit(
+                  "expected_unit_groups must be a JSON array of non-empty strings"
+              )
+          names = {group["name"] for group in groups}
+          selected_names = set(selected)
+          missing = sorted(selected_names - names)
+          if missing:
+              raise SystemExit(
+                  "Expected unit groups are absent from the platform config: "
+                  + ", ".join(missing)
+              )
+          filtered = [group for group in groups if group["name"] in selected_names]
+          if not filtered:
+              raise SystemExit("No configured unit group matches the routing plan")
+          print(json.dumps(filtered, separators=(",", ":")))
+          PY
+            )
+          fi
           unit_extra=$(yq -o=json -I=0 '.test_matrix.unit.pytest_extra_args // []' "$config_file")
           unit_experimental_extra=$(yq -o=json -I=0 '.test_matrix.unit.experimental_pytest_extra_args // []' "$config_file")
           ignored=$(yq -o=json -I=0 '.test_matrix.unit.ignored_tests // []' "$config_file")
@@ -197,6 +237,8 @@ jobs:
       container_options: ${{ needs.checkout_and_config.outputs.container_options }}
       setup_script: ${{ needs.checkout_and_config.outputs.setup_script }}
       test_groups: ${{ needs.checkout_and_config.outputs.unit_test_groups }}
+      expected_unit_groups: ${{ inputs.expected_unit_groups }}
+      plan_hash: ${{ inputs.plan_hash }}
       nproc_per_node: ${{ needs.checkout_and_config.outputs.unit_nproc_per_node }}
       pytest_extra_args: ${{ needs.checkout_and_config.outputs.unit_pytest_extra_args }}
       experimental_pytest_extra_args: ${{ needs.checkout_and_config.outputs.unit_experimental_pytest_extra_args }}

@@ -305,6 +305,42 @@ def save_results(path: Path, identity: dict, attempt: int, results: dict) -> Non
     temporary.replace(path)
 
 
+def plan_result(
+    *,
+    plan_hash: str,
+    platform: str,
+    device: str,
+    expected: list[str],
+    results: list[dict],
+    status: str | None = None,
+) -> dict:
+    """Build the plan-attestation document written next to the coverage reports."""
+    executed = sorted({result["name"] for result in results})
+    expected_names = sorted(set(expected))
+    expected_set = set(expected_names)
+    executed_set = set(executed)
+    missing = sorted(expected_set - executed_set)
+    unexpected = sorted(executed_set - expected_set)
+    failed = any(result["exit_code"] for result in results)
+    complete = len(results) == len(expected_names)
+    resolved = status or (
+        "failed"
+        if failed
+        else "passed" if complete and not missing and not unexpected else "running"
+    )
+    return {
+        "plan_hash": plan_hash,
+        "platform": platform,
+        "device": device,
+        "expected_groups": expected_names,
+        "executed_groups": executed,
+        "missing_groups": missing,
+        "unexpected_groups": unexpected,
+        "status": resolved,
+        "groups": results,
+    }
+
+
 def main() -> int:
     groups = json.loads(os.environ["CI_TEST_GROUPS"])
     if not isinstance(groups, list) or not groups:
@@ -318,10 +354,46 @@ def main() -> int:
             raise ValueError(f"Missing test path for unit group: {name}")
         names.add(name)
 
+    expected = json.loads(os.environ.get("CI_EXPECTED_UNIT_GROUPS", "[]"))
+    if not isinstance(expected, list) or any(
+        not isinstance(name, str) or not name for name in expected
+    ):
+        raise ValueError("CI_EXPECTED_UNIT_GROUPS must be a JSON array of non-empty strings")
+    if len(expected) != len(set(expected)):
+        raise ValueError("CI_EXPECTED_UNIT_GROUPS must not contain duplicates")
+    plan_hash = os.environ.get("CI_PLAN_HASH", "").strip()
+    if expected:
+        if not plan_hash:
+            raise ValueError("CI_PLAN_HASH is required when expected unit groups are provided")
+        if set(expected) != names:
+            raise ValueError(
+                "Expected unit groups do not match the configured execution groups: "
+                f"expected={sorted(set(expected))}, configured={sorted(names)}"
+            )
+    else:
+        expected = sorted(names)
+
     workspace = Path(os.environ["GITHUB_WORKSPACE"])
     reports = workspace / "coverage-report"
     reports.mkdir(exist_ok=True)
-    prefix = f"coverage-{os.environ['CI_PLATFORM']}-{os.environ['CI_DEVICE']}"
+    platform = os.environ["CI_PLATFORM"]
+    device = os.environ["CI_DEVICE"]
+    results_path = reports / "unit-results.json"
+    results_path.write_text(
+        json.dumps(
+            plan_result(
+                plan_hash=plan_hash,
+                platform=platform,
+                device=device,
+                expected=expected,
+                results=[],
+                status="running",
+            ),
+            indent=2,
+        )
+        + "\n"
+    )
+    prefix = f"coverage-{platform}-{device}"
     for name in [group["name"] for group in groups] + ["all"]:
         (reports / f"{prefix}-{name}.json").unlink(missing_ok=True)
     checkpoint = workspace / ".unit-checkpoint"
@@ -337,6 +409,8 @@ def main() -> int:
             "CI_PLATFORM",
             "CI_DEVICE",
             "CI_TEST_GROUPS",
+            "CI_EXPECTED_UNIT_GROUPS",
+            "CI_PLAN_HASH",
             "CI_SETUP_SCRIPT",
             "CI_NPROC_PER_NODE",
             "CI_IGNORED_TESTS",
@@ -403,6 +477,20 @@ def main() -> int:
             except BaseException:
                 print("::endgroup::", flush=True)
                 print(f"::warning::INCOMPLETE: Unit tests: {name}", flush=True)
+                results_path.write_text(
+                    json.dumps(
+                        plan_result(
+                            plan_hash=plan_hash,
+                            platform=platform,
+                            device=device,
+                            expected=expected,
+                            results=results,
+                            status="incomplete",
+                        ),
+                        indent=2,
+                    )
+                    + "\n"
+                )
                 if summary:
                     with open(summary, "a") as stream:
                         stream.write(f"| {name} | INCOMPLETE | - | Interrupted |\n")
@@ -437,7 +525,19 @@ def main() -> int:
         completed[name] = result
         save_results(state_path, identity, attempt, completed)
         results.append(result)
-        (reports / "unit-results.json").write_text(json.dumps(results, indent=2) + "\n")
+        results_path.write_text(
+            json.dumps(
+                plan_result(
+                    plan_hash=plan_hash,
+                    platform=platform,
+                    device=device,
+                    expected=expected,
+                    results=results,
+                ),
+                indent=2,
+            )
+            + "\n"
+        )
         report = directory / f"{prefix}-{name}.json"
         if report.exists():
             (reports / report.name).write_bytes(report.read_bytes())
@@ -445,6 +545,18 @@ def main() -> int:
             with open(summary, "a") as stream:
                 stream.write(f"| {name} | {status} | {code} | {execution} |\n")
     combine_coverage(directories, reports / f"{prefix}-all.json", dict(os.environ))
+    final = plan_result(
+        plan_hash=plan_hash, platform=platform, device=device, expected=expected, results=results
+    )
+    results_path.write_text(json.dumps(final, indent=2) + "\n")
+    if summary:
+        with open(summary, "a") as stream:
+            stream.write(
+                "\nPlan attestation: "
+                f"{final['status']} (plan_hash={final['plan_hash'] or 'none'}, "
+                f"expected={len(final['expected_groups'])}, "
+                f"executed={len(final['executed_groups'])})\n"
+            )
 
     return int(any(result["exit_code"] for result in results))
 

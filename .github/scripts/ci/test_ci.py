@@ -206,7 +206,40 @@ class WorkflowGateTests(unittest.TestCase):
                     MATRIX_RESULT=generated,
                     PIPELINE_RESULT=pipeline,
                     PLATFORMS=platforms,
+                    PLAN_STATUS="ready",
+                    PLAN_HASH="sha256:abc",
                 )
+
+    def test_top_level_gate_requires_an_executable_plan(self):
+        for status, plan_hash in (
+            ("blocked", "sha256:abc"),
+            ("ready", ""),
+            ("ready", "not-a-hash"),
+        ):
+            with self.subTest(status=status, plan_hash=plan_hash):
+                self.check_gate(
+                    "ci.yml",
+                    "ci-complete",
+                    False,
+                    LINT_RESULT="success",
+                    MATRIX_RESULT="success",
+                    PIPELINE_RESULT="success",
+                    PLATFORMS='["cuda"]',
+                    PLAN_STATUS=status,
+                    PLAN_HASH=plan_hash,
+                )
+        # Without platform jobs there is no plan to attest.
+        self.check_gate(
+            "ci.yml",
+            "ci-complete",
+            True,
+            LINT_RESULT="success",
+            MATRIX_RESULT="success",
+            PIPELINE_RESULT="skipped",
+            PLATFORMS="[]",
+            PLAN_STATUS="blocked",
+            PLAN_HASH="",
+        )
 
     def test_platform_gate_checks_enabled_tests_and_te_fl(self):
         self.assertEqual(
@@ -297,7 +330,7 @@ class LabelTests(unittest.TestCase):
             (["ascend/ops.py"], ["platform:cuda"], ["cuda"]),
             (["common.py"], ["platform:ascend"], ["ascend"]),
             (["common.py"], ["platform:cuda", "platform:ascend"], ["ascend", "cuda"]),
-            (["README.md"], ["platform:ascend"], ["ascend"]),
+            (["README.md"], ["platform:ascend"], []),
             (["ascend/ops.py"], ["platform:all"], ["ascend", "cuda"]),
             (["ascend/ops.py"], [], ["ascend"]),
             (["ascend/ops.py"], ["Run tests"], ["ascend"]),
