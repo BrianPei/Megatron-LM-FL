@@ -58,6 +58,11 @@ jobs:
       unit_matrix: ${{ steps.plan.outputs.unit_matrix }}
       plan_hash: ${{ steps.plan.outputs.plan_hash }}
       plan_status: ${{ steps.plan.outputs.plan_status }}
+      selection: ${{ steps.plan.outputs.selection }}
+      scope: ${{ steps.plan.outputs.scope }}
+      catalog_completeness: ${{ steps.plan.outputs.catalog_completeness }}
+      required_plan_status: ${{ steps.plan.outputs.required_plan_status }}
+      allow_catalog_partial: ${{ steps.plan.outputs.allow_catalog_partial }}
       expected_unit_groups: ${{ steps.plan.outputs.expected_unit_groups }}
     steps:
       - uses: actions/checkout@v4
@@ -80,10 +85,11 @@ jobs:
             --configs-dir .github/configs \
             >> "$GITHUB_OUTPUT"
 
-      # The plan selects logical groups from the diff and materializes them
-      # against each platform's configured execution groups. A directly affected
-      # planned group or unknown path blocks execution; planned groups reached
-      # only through a shared-path fallback expand to every executable group.
+      # PR runs use affected selection from the diff. Schedule runs use
+      # configured selection: every active logical group each enabled platform
+      # can execute, ignoring the diff. Planned catalog groups are reported
+      # separately and never enter the nightly matrix. A directly affected
+      # planned group or unknown path still blocks PR execution.
       - name: Generate unit test plan
         id: plan
         env:
@@ -132,13 +138,24 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      # Keep the gate independent of checkout and PR-controlled dependencies.
+      - name: Checkout CI gate scripts
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      # Keep the gate independent of test containers and platform dependencies.
       - name: Verify required CI results
         env:
           LINT_RESULT: ${{ needs.lint.result }}
           MATRIX_RESULT: ${{ needs.generate-matrix.result }}
           PLATFORMS: ${{ needs.generate-matrix.outputs.platforms }}
           PLAN_STATUS: ${{ needs.generate-matrix.outputs.plan_status }}
+          SCOPE: ${{ needs.generate-matrix.outputs.scope }}
+          REQUIRED_PLAN_STATUS: ${{ needs.generate-matrix.outputs.required_plan_status }}
+          ALLOW_CATALOG_PARTIAL: ${{ needs.generate-matrix.outputs.allow_catalog_partial }}
+          CATALOG_COMPLETENESS: ${{ needs.generate-matrix.outputs.catalog_completeness }}
           PLAN_HASH: ${{ needs.generate-matrix.outputs.plan_hash }}
           PIPELINE_RESULT: ${{ needs.platform-pipeline.result }}
         run: |
@@ -156,10 +173,17 @@ jobs:
           ):
               raise SystemExit('Invalid platform matrix')
           if platforms:
-              if os.environ['PLAN_STATUS'] not in ('ready', 'partial'):
+              allowed = json.loads(os.environ.get('REQUIRED_PLAN_STATUS') or '["ready"]')
+              if os.environ['PLAN_STATUS'] not in allowed:
                   raise SystemExit(
-                      'Unit plan must be ready or partial before platform jobs run'
+                      'Unit plan status is not allowed by the project gate policy: '
+                      f"{os.environ['PLAN_STATUS']} not in {allowed}"
                   )
+              if (
+                  os.environ.get('CATALOG_COMPLETENESS') == 'partial'
+                  and os.environ.get('ALLOW_CATALOG_PARTIAL', '').lower() != 'true'
+              ):
+                  raise SystemExit('Project gate policy does not allow a partial catalog')
               if not os.environ['PLAN_HASH'].startswith('sha256:'):
                   raise SystemExit('Unit plan hash is missing')
           expected = 'success' if platforms else 'skipped'
@@ -188,60 +212,19 @@ jobs:
           PLAN_HASH: ${{ needs.generate-matrix.outputs.plan_hash }}
           EXPECTED_UNIT_GROUPS: ${{ needs.generate-matrix.outputs.expected_unit_groups }}
           UNIT_MATRIX: ${{ needs.generate-matrix.outputs.unit_matrix }}
+          REQUIRED_PLAN_STATUS: ${{ needs.generate-matrix.outputs.required_plan_status }}
+          ALLOW_CATALOG_PARTIAL: ${{ needs.generate-matrix.outputs.allow_catalog_partial }}
         run: |
-          python3 - <<'PY'
-          import json
-          import os
-          import pathlib
-
-          plan = json.loads(
-              pathlib.Path('unit-test-plan/unit-test-plan.json').read_text()
-          )
-          expected = json.loads(os.environ['EXPECTED_UNIT_GROUPS'])
-          matrix = json.loads(os.environ['UNIT_MATRIX'])
-          if plan['plan_status'] not in ('ready', 'partial'):
-              raise SystemExit(f"Unit plan is not executable: {plan['plan_status']}")
-          if plan['plan_hash'] != os.environ['PLAN_HASH']:
-              raise SystemExit('Plan hash output does not match the uploaded plan')
-          if plan['expected_unit_groups'] != expected:
-              raise SystemExit('Expected groups output does not match the uploaded plan')
-          matrix_groups = {}
-          for entry in matrix:
-              name = entry.get('platform')
-              if name in matrix_groups:
-                  raise SystemExit(f'Duplicate platform in unit matrix: {name}')
-              matrix_groups[name] = entry.get('groups')
-          if matrix_groups != expected:
-              raise SystemExit('Unit matrix does not match expected groups')
-          devices = {
-              (platform['name'], device)
-              for platform in plan['platforms']
-              for device in platform['devices']
-          }
-          results = {}
-          for path in pathlib.Path('unit-results').rglob('unit-results.json'):
-              data = json.loads(path.read_text())
-              key = (data.get('platform'), data.get('device'))
-              if key in results:
-                  raise SystemExit(f'Duplicate unit result attestation: {key}')
-              results[key] = data
-          if set(results) != devices:
-              raise SystemExit(
-                  'Unit result attestations do not match planned platforms/devices: '
-                  f"missing={sorted(devices - set(results))}, "
-                  f"unexpected={sorted(set(results) - devices)}"
-              )
-          for key, data in sorted(results.items()):
-              groups = expected[key[0]]
-              if data.get('plan_hash') != plan['plan_hash']:
-                  raise SystemExit(f'Plan hash mismatch for {key}')
-              if data.get('expected_groups') != groups:
-                  raise SystemExit(f'Expected group mismatch for {key}')
-              if data.get('executed_groups') != groups:
-                  raise SystemExit(f'Executed group mismatch for {key}')
-              if data.get('missing_groups') or data.get('unexpected_groups'):
-                  raise SystemExit(f'Group execution mismatch for {key}')
-              if data.get('status') != 'passed':
-                  raise SystemExit(f"Unit execution did not pass for {key}: {data.get('status')}")
-          print(f'Unit plan verified across {len(results)} platform/device results')
-          PY
+          set -euo pipefail
+          catalog_flag=()
+          if [ "$ALLOW_CATALOG_PARTIAL" = true ]; then
+            catalog_flag+=(--allow-catalog-partial)
+          fi
+          python3 .github/scripts/ci/flagcicd_gate.py \
+            --plan unit-test-plan/unit-test-plan.json \
+            --attestation-root unit-results \
+            --expected-hash "$PLAN_HASH" \
+            --expected-groups "$EXPECTED_UNIT_GROUPS" \
+            --matrix "$UNIT_MATRIX" \
+            --required-status "$REQUIRED_PLAN_STATUS" \
+            "${catalog_flag[@]}"

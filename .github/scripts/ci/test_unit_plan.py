@@ -587,7 +587,69 @@ class SelectionTests(unittest.TestCase):
     def test_selection_all_is_partial(self):
         plan = build_plan([], selection="all", event="schedule", platforms=["cuda"])
         self.assertEqual(plan["selection"], "all")
+        self.assertEqual(plan["scope"], "all_catalog")
         self.assertEqual(plan["plan_status"], "partial")
+
+    def test_nightly_uses_configured_selection(self):
+        plan = build_plan([], selection="configured", event="schedule", platforms=["cuda"])
+        self.assertEqual(plan["stage"], "nightly")
+        self.assertEqual(plan["selection"], "configured")
+        self.assertEqual(plan["scope"], "configured_matrix")
+        self.assertEqual(plan["plan_status"], "ready")
+        self.assertEqual(plan["catalog_completeness"], "partial")
+        self.assertEqual(len(plan["selected_logical_groups"]), 11)
+        self.assertEqual(len(plan["expected_unit_groups"]["cuda"]), 10)
+
+    def test_configured_selection_excludes_planned_groups(self):
+        plan = build_plan([], selection="configured", event="schedule", platforms=["cuda"])
+        planned = {name for name, group in self.catalog.groups.items() if group.status == "planned"}
+        self.assertTrue(planned)
+        self.assertEqual(set(plan["selected_logical_groups"]) & planned, set())
+        self.assertEqual(platform_plan(plan, "cuda")["planned"], [])
+
+    def test_configured_selection_ignores_changed_files(self):
+        plan = build_plan(
+            ["megatron/core/inference/engine.py"],
+            selection="configured",
+            event="schedule",
+            platforms=["cuda"],
+        )
+        self.assertEqual(plan["direct_groups"], [])
+        self.assertNotIn("inference", plan["selected_logical_groups"])
+        self.assertEqual(plan["plan_status"], "ready")
+
+    def test_nightly_reports_unwired_planned_groups(self):
+        plan = build_plan([], selection="configured", event="schedule", platforms=["cuda"])
+        expected = sorted(
+            name for name, group in self.catalog.groups.items() if group.status == "planned"
+        )
+        self.assertEqual(plan["unwired_planned_groups"], expected)
+        self.assertEqual(len(plan["unwired_planned_groups"]), 12)
+
+    def test_nightly_plan_status_ready_with_partial_catalog(self):
+        plan = build_plan([], selection="configured", event="schedule", platforms=["cuda"])
+        self.assertEqual(plan["plan_status"], "ready")
+        self.assertEqual(plan["catalog_completeness"], "partial")
+        self.assertTrue(plan["unwired_planned_groups"])
+
+    def test_nightly_selected_groups_include_all_configured_groups(self):
+        plan = build_plan(
+            [], selection="configured", event="schedule", platforms=sorted(self.platforms)
+        )
+        for name in sorted(self.platforms):
+            platform = platform_plan(plan, name)
+            self.assertEqual(execution_names(plan, name), set(platform["configured_groups"]))
+        self.assertEqual(plan["plan_status"], "ready")
+
+    def test_level_required_groups_are_subset_of_nightly_groups(self):
+        plan = build_plan(
+            [], selection="configured", event="schedule", level="L2", platforms=["cuda"]
+        )
+        required = set(plan["global_groups"]["required"])
+        selected = set(plan["selected_logical_groups"])
+        self.assertTrue(required)
+        self.assertLessEqual(required, selected)
+        self.assertGreater(len(selected), len(required))
 
     def test_documentation_only_plan_is_ready_and_has_no_platforms(self):
         plan = build_plan(["docs/guide.md", "README.md"], platforms=["cuda"])
@@ -595,6 +657,12 @@ class SelectionTests(unittest.TestCase):
         self.assertEqual(plan["platforms"], [])
         self.assertEqual(plan["expected_unit_groups"], {})
         self.assertEqual(plan["plan_status"], "ready")
+
+    def test_project_contract_change_uses_shared_fallback(self):
+        plan = build_plan([".flagcicd/project.yaml"], platforms=["cuda"])
+        self.assertTrue(plan["global_groups"]["fallback"])
+        self.assertEqual(plan["plan_status"], "partial")
+        self.assertEqual(plan["direct_groups"], [])
 
     def test_mixed_pr_takes_the_union(self):
         plan = build_plan(
@@ -623,7 +691,7 @@ class SelectionTests(unittest.TestCase):
         self.assertFalse(plan["global_groups"]["documentation_only"])
         self.assertEqual(selected_names(plan, "cuda"), ["core", "models"])
 
-    def test_nightly_selects_all_logical_groups(self):
+    def test_all_selection_selects_all_logical_groups(self):
         plan = build_plan([], selection="all", event="schedule", platforms=["cuda"])
         self.assertEqual(set(plan["global_groups"]["selected"]), set(self.catalog.groups))
         self.assertEqual(
@@ -820,10 +888,12 @@ class MaterializationTests(unittest.TestCase):
             "schema_version",
             "source_sha",
             "base_sha",
+            "project_hash",
             "catalog_hash",
             "config_hash",
             "plan_hash",
             "plan_status",
+            "gate_policy",
             "direct_groups",
             "direct_gaps",
             "expected_unit_groups",
@@ -919,27 +989,37 @@ class PlatformLabelTests(unittest.TestCase):
 
 
 class PlannerCliTests(unittest.TestCase):
-    def run_planner(self, directory, changed, *, platforms='["cuda"]', labels=None):
+    def run_planner(
+        self,
+        directory,
+        changed,
+        *,
+        platforms='["cuda"]',
+        labels=None,
+        event="pull_request",
+        selection=None,
+    ):
         output = pathlib.Path(directory) / "unit-test-plan.json"
         summary = pathlib.Path(directory) / "summary.md"
         github_output = pathlib.Path(directory) / "github-output"
         environment = dict(os.environ)
         if labels is not None:
-            event = pathlib.Path(directory) / "event.json"
-            event.write_text(
+            event_path = pathlib.Path(directory) / "event.json"
+            event_path.write_text(
                 json.dumps({"pull_request": {"labels": [{"name": label} for label in labels]}})
             )
-            environment["GITHUB_EVENT_PATH"] = str(event)
+            environment["GITHUB_EVENT_PATH"] = str(event_path)
         result = subprocess.run(
             [
                 sys.executable,
                 str(ROOT / ".github/scripts/ci/generate_test_plan.py"),
                 "--event-name",
-                "pull_request",
+                event,
                 "--base-ref",
                 "main",
                 "--changed-files",
                 "\n".join(changed),
+                *(["--selection", selection] if selection is not None else []),
                 *(["--platforms", platforms] if platforms is not None else []),
                 "--output",
                 str(output),
@@ -1000,6 +1080,40 @@ class PlannerCliTests(unittest.TestCase):
             self.assertIn("expected_unit_groups=", captured)
             self.assertIn("not proof of a complete logical-group regression", summary.read_text())
 
+    def test_nightly_cli_defaults_to_configured_selection(self):
+        with tempfile.TemporaryDirectory() as directory:
+            result, output, summary, github_output = self.run_planner(
+                directory, [], event="schedule"
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            plan = json.loads(output.read_text())
+            self.assertEqual(plan["selection"], "configured")
+            self.assertEqual(plan["scope"], "configured_matrix")
+            self.assertEqual(plan["level"], "L2")
+            self.assertEqual(plan["gate_policy"]["required_plan_status"], ["ready"])
+            self.assertTrue(plan["gate_policy"]["allow_catalog_partial"])
+            self.assertEqual(plan["plan_status"], "ready")
+            self.assertEqual(plan["catalog_completeness"], "partial")
+            self.assertEqual(len(plan["unwired_planned_groups"]), 12)
+            text = summary.read_text()
+            self.assertIn("Configured matrix: complete", text)
+            self.assertIn("Logical catalog completeness: partial", text)
+            self.assertIn("Planned catalog groups are not part of the configured matrix", text)
+            self.assertNotIn("not proof of a complete logical-group regression", text)
+            captured = github_output.read_text()
+            self.assertIn("plan_status=ready", captured)
+            self.assertIn("unit_matrix=", captured)
+
+    def test_shared_fallback_is_allowed_by_pr_gate_policy(self):
+        with tempfile.TemporaryDirectory() as directory:
+            result, output, _, _ = self.run_planner(
+                directory, [".github/workflows/ci.yml"], event="pull_request"
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            plan = json.loads(output.read_text())
+            self.assertEqual(plan["plan_status"], "partial")
+            self.assertEqual(plan["gate_policy"]["required_plan_status"], ["ready", "partial"])
+
     def test_documentation_only_with_label_skips_hardware_jobs(self):
         with tempfile.TemporaryDirectory() as directory:
             result, output, summary, github_output = self.run_planner(
@@ -1014,6 +1128,64 @@ class PlannerCliTests(unittest.TestCase):
                 "Documentation-only change: no hardware tests proposed.", summary.read_text()
             )
             self.assertIn("unit_matrix=[]", github_output.read_text())
+
+    def test_project_contract_rejects_unimplemented_release_stage(self):
+        with tempfile.TemporaryDirectory() as directory:
+            # Manual requests use the implemented manual stage; an explicit
+            # release request must fail before emitting an executable matrix.
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(ROOT / ".github/scripts/ci/generate_test_plan.py"),
+                    "--event-name",
+                    "workflow_dispatch",
+                    "--stage",
+                    "release",
+                    "--platforms",
+                    '["cuda"]',
+                    "--output",
+                    str(pathlib.Path(directory) / "release-plan.json"),
+                    "--source-sha",
+                    "source",
+                    "--base-sha",
+                    "base",
+                ],
+                cwd=ROOT,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("declared but not implemented", result.stderr)
+
+    def test_project_contract_rejects_unimplemented_level(self):
+        with tempfile.TemporaryDirectory() as directory:
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(ROOT / ".github/scripts/ci/generate_test_plan.py"),
+                    "--event-name",
+                    "pull_request",
+                    "--level",
+                    "L3",
+                    "--changed-files",
+                    "megatron/core/config.py",
+                    "--platforms",
+                    '["cuda"]',
+                    "--output",
+                    str(pathlib.Path(directory) / "l3-plan.json"),
+                    "--source-sha",
+                    "source",
+                    "--base-sha",
+                    "base",
+                ],
+                cwd=ROOT,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("Level 'L3' is declared but not implemented", result.stderr)
 
     def test_documentation_with_code_and_label_runs_the_labeled_platform(self):
         with tempfile.TemporaryDirectory() as directory:

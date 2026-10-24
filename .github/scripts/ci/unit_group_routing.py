@@ -277,6 +277,16 @@ def load_catalog(path: pathlib.Path) -> Catalog:
         raise CatalogError(f"Cannot read unit group catalog {path}: {error}") from error
     if not isinstance(data, dict):
         raise CatalogError(f"Unit group catalog must be a mapping: {path}")
+    if data.get("schema_version") == "flagcicd.project/v1":
+        # During the migration the planner can read the repository contract
+        # directly while callers that still expect Catalog keep the same API.
+        try:
+            from flagcicd_contract import load_project, project_to_catalog
+
+            project, _ = load_project(path)
+        except (ImportError, ValueError) as error:
+            raise CatalogError(f"Invalid FlagCICD project contract {path}: {error}") from error
+        data = project_to_catalog(project)
     if data.get("schema_version") != SCHEMA_VERSION:
         raise CatalogError(f"Unsupported unit group catalog schema: {data.get('schema_version')!r}")
 
@@ -417,10 +427,15 @@ def load_platform(config_path: pathlib.Path) -> PlatformUnit:
         unsupported_groups[name] = reason
 
     device_types = data.get("device_types") or []
-    if not isinstance(device_types, list) or any(
-        not isinstance(item, str) for item in device_types
+    if (
+        not isinstance(device_types, list)
+        or not device_types
+        or any(not isinstance(item, str) or not item.strip() for item in device_types)
+        or len(device_types) != len(set(device_types))
     ):
-        raise CatalogError(f"device_types must be a string list: {config_path}")
+        raise CatalogError(
+            f"device_types must be a non-empty list of unique strings: {config_path}"
+        )
 
     return PlatformUnit(
         name=config_path.stem,
@@ -491,6 +506,25 @@ def select_groups(
             fallback=False,
             fallback_reason=None,
         )
+    if selection in {"configured", "requested"}:
+        configured = {name for name, group in catalog.groups.items() if group.status == "active"}
+        selected = configured | required
+        reasons: dict[str, list[dict[str, str]]] = {}
+        for name in selected:
+            if name in required:
+                reasons[name] = [{"type": "required", "level": level}]
+            else:
+                reasons[name] = [
+                    {
+                        "type": selection,
+                        "reason": (
+                            "all active groups"
+                            if selection == "configured"
+                            else "requested platform groups"
+                        ),
+                    }
+                ]
+        return result(selected, reasons, fallback=False, fallback_reason=None)
     if selection != "affected":
         raise CatalogError(f"Unknown selection: {selection}")
     if unknown_diff:
@@ -589,9 +623,15 @@ def materialize_groups(
         group = catalog.groups[name]
         effective = group.execution_group or name
         if group.status == "planned":
-            planned.append(entry_for(name, group))
+            if name in required:
+                blocked.append(entry_for(name, group, reason="required group is planned"))
+            else:
+                planned.append(entry_for(name, group))
         elif group.status == "unsupported":
-            unsupported.append(entry_for(name, group))
+            if name in required:
+                blocked.append(entry_for(name, group, reason="required group is unsupported"))
+            else:
+                unsupported.append(entry_for(name, group))
         elif name in platform.unsupported_groups:
             if name in required:
                 blocked.append(entry_for(name, group))

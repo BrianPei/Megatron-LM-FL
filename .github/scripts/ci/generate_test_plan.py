@@ -7,11 +7,15 @@ The planner combines three inputs:
 * the platform router (generate_matrix.py), and
 * each platform's configured unit groups.
 
-The plan is the affected-only gate. Selected groups are materialized against
-each platform: active groups execute, planned groups expand the platform to
-every active group it can execute, and explicitly unsupported groups are
-reported. Unresolved or blocked groups fail the job. The plan is stable for
-identical source/base SHAs, configs, and changed files.
+PRs use affected selection from the diff. Scheduled nightly runs use configured
+selection: every active logical group each enabled platform can execute, with
+the diff ignored. Planned catalog groups are reported separately and do not
+enter the configured matrix. Selected groups are materialized against each
+platform: active groups execute, declared unsupported groups are reported, and
+planned groups selected by `all` or an affected fallback expand the platform to
+every active group it can execute. A blocked required group or route conflict
+fails the plan; a non-required unresolved group marks it partial. The plan is
+stable for identical source/base SHAs, configs, and changed files.
 """
 
 from __future__ import annotations
@@ -25,10 +29,13 @@ import subprocess
 import sys
 from typing import Any
 
+import flagcicd_contract
 import generate_matrix
 import unit_group_routing
+import yaml
 
-PLAN_SCHEMA_VERSION = 1
+PLAN_SCHEMA_VERSION = flagcicd_contract.PLAN_SCHEMA
+DEFAULT_CATALOG = ".github/configs/unit_group_routes.yml"
 
 
 def _canonical(value: Any) -> str:
@@ -52,11 +59,19 @@ def _default_stage(event_name: str) -> str:
         return "pr"
     if event_name == "schedule":
         return "nightly"
+    if event_name == "push":
+        return "branch"
     return "manual"
 
 
 def _default_selection(event_name: str) -> str:
-    return "affected" if event_name == "pull_request" else "all"
+    if event_name == "pull_request":
+        return "affected"
+    if event_name in {"schedule", "push"}:
+        return "configured"
+    if event_name == "workflow_dispatch":
+        return "requested"
+    return "all"
 
 
 def _parse_platforms(value: str, known: set[str]) -> list[str]:
@@ -131,7 +146,6 @@ def _direct_gaps(
 
 def _plan_status(
     *,
-    selection: str,
     group_selection: dict[str, Any],
     platform_plans: list[dict[str, Any]],
     direct_gaps: list[dict[str, Any]],
@@ -143,23 +157,15 @@ def _plan_status(
         if not platform_plans:
             blocking = True
         for platform in platform_plans:
-            if not platform["selected_groups"] or platform["blocked"] or platform["unresolved"]:
+            if not platform["selected_groups"] or platform["blocked"]:
                 blocking = True
     if blocking:
         return "blocked"
 
-    selected_statuses = {
-        platform_group["status"]
-        for platform in platform_plans
-        for platform_group in platform["selected_groups"]
-    }
     partial = bool(
-        selection == "all"
-        or group_selection["fallback"]
-        or "planned" in selected_statuses
-        or "unsupported" in selected_statuses
+        group_selection["fallback"]
         or any(
-            platform["planned"] or platform["unsupported"] or platform["fallback_excluded"]
+            platform["planned"] or platform["unresolved"] or platform["fallback_excluded"]
             for platform in platform_plans
         )
     )
@@ -179,6 +185,8 @@ def build_plan(
     platform_units: dict[str, unit_group_routing.PlatformUnit],
     source_sha: str,
     base_sha: str,
+    project_hash: str = "",
+    gate_policy: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build the complete plan document, including its stable hash."""
     group_selection = unit_group_routing.select_groups(
@@ -206,11 +214,19 @@ def build_plan(
     direct_groups = sorted(group_selection["direct_groups"])
     direct_gaps = _direct_gaps(catalog, direct_groups, platform_plans)
     plan_status = _plan_status(
-        selection=selection,
-        group_selection=group_selection,
-        platform_plans=platform_plans,
-        direct_gaps=direct_gaps,
+        group_selection=group_selection, platform_plans=platform_plans, direct_gaps=direct_gaps
     )
+    selected_groups = sorted(group_selection["selected"])
+    unwired_planned_groups = sorted(
+        name for name, group in catalog.groups.items() if group.status == "planned"
+    )
+    catalog_completeness = "partial" if unwired_planned_groups else "full"
+    scope = {
+        "affected": "affected_matrix",
+        "configured": "configured_matrix",
+        "requested": "requested_matrix",
+        "all": "all_catalog",
+    }.get(selection, selection)
     expected_unit_groups = {
         platform["name"]: _execution_groups(platform) for platform in platform_plans
     }
@@ -226,10 +242,15 @@ def build_plan(
         "event": event_name,
         "stage": stage,
         "selection": selection,
+        "scope": scope,
         "level": level,
         "plan_status": plan_status,
+        "catalog_completeness": catalog_completeness,
+        "unwired_planned_groups": unwired_planned_groups,
         "source_sha": source_sha,
         "base_sha": base_sha,
+        "project_hash": project_hash,
+        "gate_policy": gate_policy or {},
         "changed_files": sorted(set(changed)),
         "catalog_hash": f"sha256:{catalog.digest}",
         "config_hash": config_hash,
@@ -237,8 +258,9 @@ def build_plan(
         "direct_groups": direct_groups,
         "direct_gaps": direct_gaps,
         "expected_unit_groups": expected_unit_groups,
+        "selected_logical_groups": selected_groups,
         "global_groups": {
-            "selected": sorted(group_selection["selected"]),
+            "selected": selected_groups,
             "required": sorted(required),
             "direct_groups": direct_groups,
             "planned": sorted(
@@ -284,8 +306,36 @@ def write_summary(path: pathlib.Path, plan: dict[str, Any]) -> None:
         "",
         f"- Stage: `{plan['stage']}`",
         f"- Selection: `{plan['selection']}`",
+        f"- Scope: `{plan['scope']}`",
         f"- Level: `{plan['level']}`",
         f"- Plan status: `{plan['plan_status']}`",
+        "- Gate policy: statuses `"
+        + ", ".join(plan.get("gate_policy", {}).get("required_plan_status", ["ready"]))
+        + "`, catalog partial "
+        + (
+            "allowed"
+            if plan.get("gate_policy", {}).get("allow_catalog_partial", False)
+            else "rejected"
+        ),
+        *(
+            [
+                "- Configured matrix: "
+                f"{'complete' if plan['plan_status'] == 'ready' else 'incomplete'}"
+            ]
+            if plan["scope"] == "configured_matrix"
+            else []
+        ),
+        f"- Logical catalog completeness: {plan['catalog_completeness']}",
+        "- Unwired planned groups: " + (", ".join(plan["unwired_planned_groups"]) or "none"),
+        f"- Selected logical groups: {len(plan['selected_logical_groups'])}",
+        "- Selected execution groups: "
+        + (
+            ", ".join(
+                f"{name} {len(groups)}"
+                for name, groups in sorted(plan["expected_unit_groups"].items())
+            )
+            or "none"
+        ),
         f"- Changed files: {len(plan['changed_files'])}",
         f"- Coverage scope: core/plugin coverage only "
         f"(`{', '.join(plan['coverage_sources'])}`); "
@@ -316,8 +366,16 @@ def write_summary(path: pathlib.Path, plan: dict[str, Any]) -> None:
     if plan["selection"] == "all":
         lines.extend(
             [
-                "Selection `all` describes the full configured matrix; it is not proof "
-                "of a complete logical-group regression.",
+                "Selection `all` covers the entire logical catalog, including planned "
+                "groups. It is a diagnostic scope, not a configured-matrix run.",
+                "",
+            ]
+        )
+    if plan["scope"] == "configured_matrix" and plan["catalog_completeness"] == "partial":
+        lines.extend(
+            [
+                "Planned catalog groups are not part of the configured matrix; they are "
+                "reported as catalog gaps and do not block this plan.",
                 "",
             ]
         )
@@ -513,12 +571,17 @@ def main() -> int:
     parser.add_argument("--event-name", required=True)
     parser.add_argument("--base-ref", default="main")
     parser.add_argument("--configs-dir", default=".github/configs")
-    parser.add_argument("--catalog", default=".github/configs/unit_group_routes.yml")
+    parser.add_argument("--project", default=".flagcicd/project.yaml")
+    parser.add_argument("--catalog", default=None)
     parser.add_argument("--changed-files", default=None, help="Newline-separated paths for testing")
     parser.add_argument("--platforms", default=None, help="JSON array of selected platforms")
-    parser.add_argument("--selection", choices=("affected", "all"), default=None)
-    parser.add_argument("--stage", choices=("pr", "nightly", "manual"), default=None)
-    parser.add_argument("--level", default="L1")
+    parser.add_argument(
+        "--selection", choices=("affected", "configured", "requested", "all"), default=None
+    )
+    parser.add_argument(
+        "--stage", choices=("pr", "branch", "nightly", "manual", "release"), default=None
+    )
+    parser.add_argument("--level", default=None)
     parser.add_argument("--output", default="unit-test-plan.json")
     parser.add_argument("--summary", default=None)
     parser.add_argument("--github-output", default=None)
@@ -529,13 +592,47 @@ def main() -> int:
     root = pathlib.Path.cwd()
     configs_dir = root / args.configs_dir
     stage = args.stage or _default_stage(args.event_name)
-    selection = args.selection or _default_selection(args.event_name)
 
     try:
-        catalog = unit_group_routing.load_catalog(root / args.catalog)
+        project_path = root / args.project
+        project: dict[str, Any] | None = None
+        project_hash = ""
+        if project_path.is_file():
+            project, project_digest = flagcicd_contract.load_project(project_path)
+            project_hash = f"sha256:{project_digest}"
+            stage_config = project["stages"].get(stage)
+            if stage_config is None:
+                raise ValueError(f"Stage {stage!r} is not declared in the project contract")
+            if stage_config.get("status", "active") == "planned":
+                raise ValueError(f"Stage {stage!r} is declared but not implemented")
+            selection = args.selection or stage_config["selection"]
+            configured_level = stage_config["default_level"]
+            if stage_config.get("fixed_level") and args.level is not None:
+                if args.level != configured_level:
+                    raise ValueError(
+                        f"Stage {stage!r} fixes level {configured_level}; received {args.level}"
+                    )
+            level = (
+                configured_level
+                if stage_config.get("fixed_level")
+                else (args.level or configured_level)
+            )
+            if project["levels"].get(level, {}).get("status", "active") == "planned":
+                raise ValueError(f"Level {level!r} is declared but not implemented")
+            catalog = unit_group_routing.load_catalog(project_path)
+            legacy_path = root / (args.catalog or project["catalog_source"])
+            if legacy_path.is_file():
+                legacy = yaml.safe_load(legacy_path.read_text())
+                errors = flagcicd_contract.contract_catalog_errors(project, legacy)
+                if errors:
+                    raise ValueError("; ".join(errors))
+        else:
+            selection = args.selection or _default_selection(args.event_name)
+            level = args.level or "L1"
+            catalog = unit_group_routing.load_catalog(root / (args.catalog or DEFAULT_CATALOG))
         rules = generate_matrix._load_watch_rules(configs_dir)
         changed, unknown_diff = _changed_files(args)
-        if selection == "all":
+        if selection in ("all", "configured", "requested"):
             changed = []
             unknown_diff = False
         if args.platforms is not None:
@@ -551,7 +648,7 @@ def main() -> int:
             event_name=args.event_name,
             stage=stage,
             selection=selection,
-            level=args.level,
+            level=level,
             changed=changed,
             unknown_diff=unknown_diff,
             platforms=platforms,
@@ -559,8 +656,10 @@ def main() -> int:
             platform_units=platform_units,
             source_sha=_source_sha(args.source_sha),
             base_sha=_base_sha(args.base_sha, args.base_ref),
+            project_hash=project_hash,
+            gate_policy=project.get("gate_policy", {}).get(stage, {}) if project else {},
         )
-    except (unit_group_routing.CatalogError, OSError, ValueError) as error:
+    except (unit_group_routing.CatalogError, OSError, ValueError, yaml.YAMLError) as error:
         print(f"::error::{error}", file=sys.stderr)
         return 1
 
@@ -616,8 +715,7 @@ def main() -> int:
         print("plan_status=blocked")
         return 1
     if errors:
-        print(f"::error::Unit plan has unexpected gaps: {'; '.join(errors)}", file=sys.stderr)
-        return 1
+        print(f"::warning::Unit plan has gaps: {'; '.join(errors)}", file=sys.stderr)
 
     if args.github_output:
         matrix = execution_matrix(plan)
@@ -625,6 +723,22 @@ def main() -> int:
             stream.write(f"unit_matrix={json.dumps(matrix, separators=(',', ':'))}\n")
             stream.write(f"plan_hash={plan['plan_hash']}\n")
             stream.write(f"plan_status={plan['plan_status']}\n")
+            stream.write(f"selection={plan['selection']}\n")
+            stream.write(f"scope={plan['scope']}\n")
+            stream.write(f"catalog_completeness={plan['catalog_completeness']}\n")
+            stream.write(
+                "required_plan_status="
+                + json.dumps(
+                    plan.get("gate_policy", {}).get("required_plan_status", ["ready"]),
+                    separators=(",", ":"),
+                )
+                + "\n"
+            )
+            stream.write(
+                "allow_catalog_partial="
+                + str(plan.get("gate_policy", {}).get("allow_catalog_partial", False)).lower()
+                + "\n"
+            )
             stream.write(
                 "expected_unit_groups="
                 + json.dumps(plan["expected_unit_groups"], separators=(",", ":"))
@@ -633,6 +747,20 @@ def main() -> int:
 
     print(f"plan_hash={plan['plan_hash']}")
     print(f"plan_status={plan['plan_status']}")
+    print(f"selection={plan['selection']}")
+    print(f"scope={plan['scope']}")
+    print(f"catalog_completeness={plan['catalog_completeness']}")
+    print(
+        "required_plan_status="
+        + json.dumps(
+            plan.get("gate_policy", {}).get("required_plan_status", ["ready"]),
+            separators=(",", ":"),
+        )
+    )
+    print(
+        "unwired_planned_groups="
+        + json.dumps(plan["unwired_planned_groups"], separators=(",", ":"))
+    )
     print(
         "platforms="
         + json.dumps(

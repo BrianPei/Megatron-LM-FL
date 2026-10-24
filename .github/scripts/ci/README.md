@@ -16,8 +16,12 @@ the platform pipeline; platform workflows contain no duplicate lint job. The sha
 - Documentation (`docs/`, `.md`, `.rst`) skips hardware tests but still reports
   the gate. Documentation-only PRs never start hardware jobs, even when a
   `platform:<name>` label is present.
-- Missing diffs/watch rules select all platforms; invalid configs fail.
-- Renames include both old and new paths. Push/schedule/manual CI runs select all.
+- Missing diffs/watch rules select all platforms; invalid configs fail. Platform
+  selection and unit-group selection are separate: a full platform matrix does
+  not imply the diagnostic `selection=all` catalog scope.
+- Renames include both old and new paths. Push and scheduled nightly runs use
+  the configured execution matrix; manual dispatch and `/ci run` requests use
+  the requested platform matrix.
 - Labels `platform:<config-name>` override path routing, matching TE, but only
   for PRs that contain at least one code change. Multiple labels take their
   union; `platform:all` selects every platform. Removing all platform labels
@@ -26,7 +30,13 @@ the platform pipeline; platform workflows contain no duplicate lint job. The sha
 
 ## Unit group routing
 
-`.github/configs/unit_group_routes.yml` defines logical groups, their source and
+`.flagcicd/project.yaml` is the repository-facing FlagCICD contract. It defines
+the PR/branch/nightly/manual stages, L0-L4 levels, resource classes, coverage
+boundary, and logical groups. `.github/configs/unit_group_routes.yml` is kept as
+a checked migration projection for older helper APIs; the planner reads the
+project contract first and lint fails if the projection drifts.
+
+The logical catalog defines logical groups, their source and
 test paths, dependencies, resource classes, status (`active`, `planned`, or
 `unsupported`), and the groups required by each level. Platform configs remain
 authoritative: each declares the execution groups it runs and must declare every
@@ -43,18 +53,47 @@ logical group.
 selected platform's config, writes `unit-test-plan.json` and an Actions summary,
 and emits the per-platform execution matrix consumed by `ci.yml`.
 
-The plan is the affected-only gate for pull requests. It records
-`direct_groups` (logical groups matched directly by a changed path),
-`direct_gaps` (direct groups no selected platform actually executes),
-`fallback_excluded` (active groups a planned-group fallback could not run), and a
-`plan_status` of `ready`, `partial`, or `blocked`:
+The plan is the routing gate for pull requests and the completeness gate for
+nightly. PRs use `selection=affected` and select from the diff. Scheduled runs
+use `selection=configured`: every active logical group each enabled platform can
+execute, with the diff ignored. `selection=all` remains a diagnostic scope over
+the entire logical catalog. The plan also records `scope`
+(`affected_matrix`, `configured_matrix`, or `all_catalog`), `direct_groups`
+(logical groups matched directly by a changed path), `direct_gaps` (direct groups
+no selected platform actually executes), `fallback_excluded` (active groups a
+planned-group fallback could not run), and a `plan_status` of `ready`, `partial`,
+or `blocked`:
 
-- `ready`: every selected direct group executes and no planned/unsupported
-  fallback was involved. Documentation-only plans are `ready` with no platforms.
-- `partial`: the plan executes, but it relied on a shared/fallback selection,
-  `selection=all`, or a planned/unsupported/fallback-excluded group. A partial
-  plan is not proof of a complete logical-group regression.
+- `ready`: every selected platform executes every configured execution group and
+  no required group is missing.
+- `partial`: the plan executes, but it relied on a shared/fallback selection, a
+  selected planned group, a non-required unresolved group, or a fallback-excluded
+  group. A declared unsupported group is an intentional platform exclusion and
+  does not by itself make the plan partial.
 - `blocked`: no unit matrix is emitted and `generate-matrix` fails.
+
+`catalog_completeness` and `unwired_planned_groups` are separate from
+`plan_status`. The logical catalog is `partial` while any group is still
+`planned`; those groups are not part of the configured matrix and do not block
+nightly. The Summary reports `Configured matrix: complete|incomplete`,
+`Logical catalog completeness: full|partial`, and the unwired planned groups
+separately.
+
+The project gate policy is stage-specific. The PR stage accepts `ready` and
+`partial` plans because a known shared path intentionally expands to the full
+active matrix; unknown paths, route conflicts, direct planned groups, and
+required gaps remain `blocked` and cannot pass. Branch, nightly, and manual
+stages currently require `ready`; release is declared but not implemented.
+The `/ci run` and manual requested entrypoint uses the same planner and the same
+evidence gate; its report job downloads the requested plan and platform
+attestations before updating the supplemental check.
+
+The contract currently enables the PR (`L1`), branch (`L2`), nightly (`L2`),
+and manual (`L2`) stages. `L3` and `L4` are declared as planned and the
+planner rejects an explicit request for those stages/levels until their
+benchmark, coverage-regression, release, and cross-repository acceptance
+commands are wired into platform adapters. Declaring them in the contract does
+not claim that those tests already run.
 
 Blocking conditions:
 
@@ -65,23 +104,26 @@ Blocking conditions:
   conflict). Unknown paths still produce a diagnostic full fallback plan, but
   the plan is `blocked` and the fallback is not executed until catalog
   onboarding is completed.
-- A missing required group, an unresolved/blocked group, or a platform with no
-  executable groups.
+- A missing required group, a required group that is planned/unsupported, or a
+  platform with no executable groups.
 - A shared path falls back to every logical group and executes every active
   group the platform can run. This is allowed but marked `partial`.
 
-A selected planned group is not executed. The platform instead runs every
-active group it can execute, so a known gap cannot narrow coverage; groups it
-cannot run are listed under `fallback_excluded`.
+A planned group selected by `all` or by an affected fallback is not executed.
+The platform instead runs every active group it can execute, so a known gap
+cannot narrow coverage; groups it cannot run are listed under
+`fallback_excluded`.
 
 Plan identity is carried end to end: `ci.yml` exports `plan_hash` and
 `expected_unit_groups`, `_platform_pipeline.yml` and `all_tests_common.yml`
 forward them, and `run_unit_groups.py` writes them to
 `coverage-report/unit-results.json` together with `executed_groups`,
 `missing_groups`, `unexpected_groups`, and `status`. The per-platform workflow
-verifies this attestation, and `ci-complete` re-verifies that every planned
-`(platform, device)` reports the same `plan_hash`, executes exactly its expected
-groups, and has `status=passed`.
+verifies this attestation. The final `ci-complete` evidence check is implemented
+once in `flagcicd_gate.py`; it re-verifies the uploaded plan hash, stage policy,
+materialized workflow matrix, and confirms that every planned `(platform,
+device)` reports the same `plan_hash`, executes exactly its expected groups, and
+has `status=passed`.
 
 `resource_class`, `timeout_minutes`, and `parallel_safe` are currently advisory
 metadata only. A platform still runs one unit job per platform/device, groups
@@ -180,6 +222,7 @@ and backend parsing in a repository CI run with the token configured.
 
 ```sh
 python -m pip install PyYAML==6.0.3 coverage==7.6.1 pytest==8.3.5 requests==2.32.5 click==8.1.8
+python .github/scripts/ci/validate_flagcicd_contract.py
 python .github/scripts/ci/validate_unit_group_catalog.py
 python -m unittest discover -s .github/scripts/ci -p 'test_*.py'
 python -m unittest discover -s .github/scripts/tests -p 'test_*.py'

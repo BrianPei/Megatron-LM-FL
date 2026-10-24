@@ -1,5 +1,9 @@
 # Logical unit-test groups for changed-file routing.
 #
+# Compatibility projection: edit .flagcicd/project.yaml for stage, level,
+# resource, or logical-group changes. The FlagCICD contract validator compares
+# this file with the project contract and fails on drift.
+#
 # This file is the logical routing layer only. A platform executes a group only
 # when its .github/configs/<platform>.yml declares a unit group with the same
 # name or the group declares an execution_group alias.
@@ -35,6 +39,7 @@ global:
     - .rst
   # Shared runtime, packaging, and CI inputs invalidate every unit group.
   shared_paths:
+    - .flagcicd/
     - .github/
     - docker/
     - uv.lock

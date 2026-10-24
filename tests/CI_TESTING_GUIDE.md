@@ -19,6 +19,12 @@ loads the platform config and dispatches the reusable unit and functional
 workflows. Platform-specific behavior belongs in the config or setup script;
 the common workflows should not need a new hardware conditional.
 
+The project-facing contract is `.flagcicd/project.yaml`. It owns stage, level,
+resource, logical-group, and gate-policy semantics. The existing
+`.github/configs/unit_group_routes.yml` is a validated compatibility projection
+for older helpers; edit the project contract first and keep the projection in
+sync.
+
 The execution path is:
 
 ```text
@@ -237,7 +243,7 @@ Before submitting a new test:
 Running only `pytest <node>` proves the test can execute, but does not prove CI
 selects it. The group run is the final collection check.
 
-### Logical groups and affected-only routing
+### Logical groups and diff routing
 
 `.github/configs/unit_group_routes.yml` is the logical routing catalog. Each
 group declares `status: active|planned|unsupported`, and may declare an
@@ -272,24 +278,40 @@ Routing rules:
   level requiring `plugin` is satisfied when the platform provides `core`, and
   fails when the alias target is missing or the group is declared unsupported.
 - The plan records `plan_status=ready|partial|blocked`. `ready` means every
-  selected direct group executes. `partial` means the run relied on a
-  shared/fallback selection, `selection=all`, or a planned/unsupported group.
+  selected platform executes every configured execution group with no required
+  group missing. `partial` means the run relied on a shared/fallback selection,
+  a selected planned group, a non-required unresolved group, or a
+  fallback-excluded group. `selection=all` is a diagnostic full-catalog scope;
+  scheduled nightly runs use `selection=configured` and ignore the diff.
   `blocked` emits no unit matrix and fails `generate-matrix`.
+- `catalog_completeness` is separate from `plan_status`. Planned catalog groups
+  are reported in `unwired_planned_groups` and do not enter the configured
+  matrix, so they do not block nightly. The Summary distinguishes
+  `Configured matrix: complete|incomplete` from
+  `Logical catalog completeness: full|partial`.
+- The repository contract enables PR `L1`, branch/nightly `L2`, and manual `L2`
+  planning. `L3` and `L4` remain explicitly planned; the planner rejects them
+  until benchmark, coverage-regression, release, and cross-repository acceptance
+  adapters are implemented.
 - Documentation-only changes produce no platform jobs, even when a
   `platform:<name>` label is present. Labels override routing only for PRs that
   contain at least one code change; a mixed documentation and code change is
   routed by its code paths.
 - Renames include both the old and new paths.
 - An active group selected on a platform executes, is explicitly declared
-  unsupported there, or fails the plan. It is never silently skipped.
+  unsupported there, or is reported as unresolved. An unresolved required group
+  blocks the plan; any other unresolved group makes it `partial`. A selected
+  group is never silently skipped.
 - A directly affected group that is `planned` or declared unsupported on every
   selected platform blocks the plan. Planned fallback is allowed only when the
   planned group is not a direct match.
-- A selected planned group does not execute. The platform runs every active
-  group it can execute, so a known gap cannot narrow coverage; excluded groups
-  are reported in `fallback_excluded`.
-- A missing required group blocks the plan. Unresolved or blocked groups, and
-  platforms with no executable groups, fail the job.
+- A selected planned group does not execute when it is reached through `all` or
+  an affected fallback. The platform runs every active group it can execute, so
+  a known gap cannot narrow coverage; excluded groups are reported in
+  `fallback_excluded`.
+- A missing required group, or a required group that is planned/unsupported,
+  blocks the plan. A non-required unresolved group makes the plan `partial`. A
+  platform with no executable groups blocks the plan.
 - `plan_hash` and `expected_unit_groups` are propagated through the platform
   workflows. The runner attests them in `coverage-report/unit-results.json`, and
   the final CI gate verifies one hash across all platforms plus exact

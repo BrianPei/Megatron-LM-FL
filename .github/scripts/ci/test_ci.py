@@ -178,7 +178,9 @@ class PlatformRoutingTests(unittest.TestCase):
 
 class WorkflowGateTests(unittest.TestCase):
     def check_gate(self, workflow_name, job, expected, **env):
-        command = workflow(workflow_name)["jobs"][job]["steps"][0]["run"]
+        command = next(
+            step["run"] for step in workflow(workflow_name)["jobs"][job]["steps"] if "run" in step
+        )
         with self.subTest(env=env):
             result = subprocess.run(
                 ["bash", "-e", "-c", command], env=dict(os.environ, **env), capture_output=True
@@ -209,6 +211,26 @@ class WorkflowGateTests(unittest.TestCase):
                     PLAN_STATUS="ready",
                     PLAN_HASH="sha256:abc",
                 )
+
+    def test_ci_complete_uses_centralized_unit_evidence_gate(self):
+        steps = workflow("ci.yml")["jobs"]["ci-complete"]["steps"]
+        checkout = next(step for step in steps if step.get("name") == "Checkout CI gate scripts")
+        self.assertEqual(checkout["uses"], "actions/checkout@v4")
+        self.assertEqual(checkout["with"]["ref"], "${{ github.sha }}")
+        verify = next(
+            step for step in steps if step.get("name") == "Verify unit plan across platforms"
+        )
+        self.assertIn(".github/scripts/ci/flagcicd_gate.py", verify["run"])
+        self.assertIn("--matrix \"$UNIT_MATRIX\"", verify["run"])
+
+    def test_requested_gate_downloads_and_verifies_unit_evidence(self):
+        steps = workflow("ci-requested.yml")["jobs"]["report"]["steps"]
+        names = {step.get("name") for step in steps}
+        self.assertIn("Download requested unit plan", names)
+        self.assertIn("Download requested unit evidence", names)
+        verify = next(step for step in steps if step.get("name") == "Resolve requested gate result")
+        self.assertIn(".github/scripts/ci/flagcicd_gate.py", verify["run"])
+        self.assertIn("--attestation-root requested-unit-results", verify["run"])
 
     def test_top_level_gate_requires_an_executable_plan(self):
         for status, plan_hash in (
@@ -582,12 +604,16 @@ class WorkflowIsolationTests(unittest.TestCase):
 
     def test_request_locks_queue_without_dropping_other_platform_requests(self):
         jobs = workflow("ci-requested.yml")["jobs"]
+        self.assertEqual(set(jobs["plan"]["needs"]), {"validate", "lint"})
+        self.assertEqual(
+            set(jobs["report"]["needs"]), {"validate", "lint", "plan", "platform-pipeline"}
+        )
         for name in ("validate", "platform-pipeline"):
             self.assertFalse(jobs[name]["concurrency"]["cancel-in-progress"])
             self.assertEqual(jobs[name]["concurrency"]["queue"], "max")
         self.assertNotIn("comment.id", jobs["validate"]["concurrency"]["group"])
         self.assertIn("source_ref", jobs["platform-pipeline"]["concurrency"]["group"])
-        self.assertEqual(set(jobs["platform-pipeline"]["needs"]), {"validate", "lint"})
+        self.assertEqual(set(jobs["platform-pipeline"]["needs"]), {"validate", "lint", "plan"})
 
     def test_label_changes_recompute_the_automatic_matrix(self):
         triggers = workflow("ci.yml")[True]["pull_request"]["types"]
