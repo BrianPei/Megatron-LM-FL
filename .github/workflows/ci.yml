@@ -129,6 +129,7 @@ jobs:
     with:
       platform: ${{ matrix.platform }}
       expected_unit_groups: ${{ toJson(matrix.groups) }}
+      config_identity: ${{ toJson(matrix.config_identity) }}
       plan_hash: ${{ needs.generate-matrix.outputs.plan_hash }}
 
   ci-complete:

@@ -1,33 +1,27 @@
 schema_version: flagcicd.project/v1
 repository: Megatron-LM-FL
-platform_config_glob: .github/configs/*.yml
 plan_schema: 1
 catalog_source: .github/configs/unit_group_routes.yml
 stages:
   pr:
     selection: affected
     default_level: L1
-    default_risk: R1
   branch:
     selection: configured
     default_level: L2
-    default_risk: R1
     fixed_level: true
     full_configured_matrix: true
   nightly:
     selection: configured
     default_level: L2
-    default_risk: R3
     fixed_level: true
     full_configured_matrix: true
   manual:
     selection: requested
     default_level: L2
-    default_risk: R1
   release:
     selection: all
     default_level: L4
-    default_risk: R4
     fixed_level: true
     status: planned
 levels:
@@ -98,6 +92,11 @@ global:
   - setup.cfg
   - MANIFEST.in
   - codecov.yml
+  - tests/test_utils/
+  - tests/functional_tests/
+  # File ownership stays with core; these changes also affect its consumers.
+  impact_paths:
+  - megatron/core/*.py
 coverage:
   sources:
   - megatron/plugin/

@@ -16,10 +16,21 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--project", default=".flagcicd/project.yaml")
     parser.add_argument("--catalog", default=".github/configs/unit_group_routes.yml")
+    parser.add_argument(
+        "--write-catalog",
+        action="store_true",
+        help="Regenerate the compatibility catalog from project.yaml",
+    )
     args = parser.parse_args()
     root = pathlib.Path.cwd()
     try:
         project, digest = flagcicd_contract.load_project(root / args.project)
+        if args.write_catalog:
+            (root / args.catalog).write_text(
+                "# Generated from .flagcicd/project.yaml; do not edit manually.\n"
+                "# Regenerate: python .github/scripts/ci/validate_flagcicd_contract.py --write-catalog\n"
+                + yaml.safe_dump(flagcicd_contract.project_to_catalog(project), sort_keys=False)
+            )
         legacy = yaml.safe_load((root / args.catalog).read_text())
         if not isinstance(legacy, dict):
             raise flagcicd_contract.ContractError("legacy catalog must be a mapping")

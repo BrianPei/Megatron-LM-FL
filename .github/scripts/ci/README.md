@@ -33,8 +33,14 @@ the platform pipeline; platform workflows contain no duplicate lint job. The sha
 `.flagcicd/project.yaml` is the repository-facing FlagCICD contract. It defines
 the PR/branch/nightly/manual stages, L0-L4 levels, resource classes, coverage
 boundary, and logical groups. `.github/configs/unit_group_routes.yml` is kept as
-a checked migration projection for older helper APIs; the planner reads the
-project contract first and lint fails if the projection drifts.
+a generated compatibility projection for older helper APIs; the planner reads
+the project contract first and lint fails if the projection drifts. Edit only
+the project contract, then regenerate and validate the projection:
+
+```sh
+python .github/scripts/ci/validate_flagcicd_contract.py --write-catalog
+python .github/scripts/ci/validate_unit_group_catalog.py
+```
 
 The logical catalog defines logical groups, their source and
 test paths, dependencies, resource classes, status (`active`, `planned`, or
@@ -64,8 +70,9 @@ no selected platform actually executes), `fallback_excluded` (active groups a
 planned-group fallback could not run), and a `plan_status` of `ready`, `partial`,
 or `blocked`:
 
-- `ready`: every selected platform executes every configured execution group and
-  no required group is missing.
+- `ready`: the selected execution scope is complete and no required group is
+  missing. For nightly this includes every configured execution group; an
+  affected PR can select a smaller scope.
 - `partial`: the plan executes, but it relied on a shared/fallback selection, a
   selected planned group, a non-required unresolved group, or a fallback-excluded
   group. A declared unsupported group is an intentional platform exclusion and
@@ -109,6 +116,15 @@ Blocking conditions:
 - A shared path falls back to every logical group and executes every active
   group the platform can run. This is allowed but marked `partial`.
 
+Every changed path is classified before expansion. A shared path cannot hide an
+unknown path, route conflict, or directly affected unsupported/planned group in
+the same diff. Selection and plan hashes are independent of input path order.
+`global.impact_paths` separates shared runtime impact from path ownership:
+changes to `megatron/core/*.py` retain their logical owner and expand to all
+active groups on selected platforms. Test-runner and functional-test paths are
+known shared unit-test infrastructure; platform watch rules still determine
+which platforms run their functional cases.
+
 A planned group selected by `all` or by an affected fallback is not executed.
 The platform instead runs every active group it can execute, so a known gap
 cannot narrow coverage; groups it cannot run are listed under
@@ -120,10 +136,22 @@ forward them, and `run_unit_groups.py` writes them to
 `coverage-report/unit-results.json` together with `executed_groups`,
 `missing_groups`, `unexpected_groups`, and `status`. The per-platform workflow
 verifies this attestation. The final `ci-complete` evidence check is implemented
-once in `flagcicd_gate.py`; it re-verifies the uploaded plan hash, stage policy,
-materialized workflow matrix, and confirms that every planned `(platform,
+once in `flagcicd_gate.py`; it recomputes the uploaded plan hash and checks the
+schema, stage policy, materialized workflow matrix, and confirms that every planned `(platform,
 device)` reports the same `plan_hash`, executes exactly its expected groups, and
-has `status=passed`.
+has `status=passed`. Each group must also have a zero exit code and valid JUnit
+counts from every configured rank and phase. At least one test must pass across
+the group; an individual experimental phase may be empty. Missing, corrupt,
+inconsistent, failed, or entirely skipped evidence fails the group and final
+gate. Existing checkpoints without this evidence are rerun.
+
+For requested tests, control scripts and gate policy are pinned to the workflow
+commit (`github.sha`), while catalog and platform configuration come from the
+requested source SHA in a separate checkout. Candidate scripts are not executed
+by the planner. The plan records `control_sha`, `source_sha`, and per-platform
+`config_identity` (source SHA and project/platform file digests). The executor
+checks those values before reading its configuration, preventing a plan built
+from old default-branch configuration from silently omitting new PR groups.
 
 `resource_class`, `timeout_minutes`, and `parallel_safe` are currently advisory
 metadata only. A platform still runs one unit job per platform/device, groups
@@ -132,7 +160,9 @@ exclusive lock or group-level parallel scheduling.
 
 Coverage sources in the catalog (`megatron/plugin/`, `megatron/core/`) are the
 unit coverage boundary; this is core/plugin coverage, not full Megatron
-unit-group coverage. Artifact names such as `coverage-<platform>-<device>` are
+unit-group coverage. The validator rejects changes to this boundary until the
+shell and Python collectors support them; it is not an arbitrary collector
+configuration interface. Artifact names such as `coverage-<platform>-<device>` are
 transport labels and make no claim about logical-group completeness.
 `validate_unit_group_catalog.py` checks path existence against the git index,
 dependency acyclicity, platform group names, alias targets, owner and

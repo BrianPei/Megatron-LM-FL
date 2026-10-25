@@ -577,14 +577,12 @@ class WorkflowIsolationTests(unittest.TestCase):
                 if job.get("uses", "").startswith("./.github/workflows/"):
                     self.assertEqual(job["with"]["source_ref"], "${{ inputs.source_ref }}")
 
-    def test_privileged_control_jobs_only_checkout_default_branch(self):
+    def test_privileged_control_jobs_pin_the_event_control_sha(self):
         requested = workflow("ci-requested.yml")
         for job in (requested["jobs"]["validate"], requested["jobs"]["report"]):
             for step in job["steps"]:
                 if step.get("uses") == "actions/checkout@v4":
-                    self.assertEqual(
-                        step["with"]["ref"], "${{ github.event.repository.default_branch }}"
-                    )
+                    self.assertEqual(step["with"]["ref"], "${{ github.sha }}")
                     self.assertIs(step["with"]["persist-credentials"], False)
         pipeline = requested["jobs"]["platform-pipeline"]
         self.assertEqual(pipeline["permissions"], {"contents": "read"})

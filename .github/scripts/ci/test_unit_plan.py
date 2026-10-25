@@ -720,7 +720,9 @@ class SelectionTests(unittest.TestCase):
         self.assertEqual(platform_plan(plan, "ascend")["unsupported"], [])
 
     def test_level_two_adds_models(self):
-        plan = build_plan(["megatron/core/config.py"], platforms=["cuda"], level="L2")
+        plan = build_plan(
+            ["tests/unit_tests/test_parallel_state.py"], platforms=["cuda"], level="L2"
+        )
         self.assertEqual(selected_names(plan, "cuda"), ["core", "models"])
 
 
@@ -869,7 +871,16 @@ class MaterializationTests(unittest.TestCase):
 
     def test_execution_matrix_deduplicates_aliases(self):
         plan = build_plan(["megatron/plugin/Ascend/ascend_plugin.py"], platforms=["cuda"])
-        self.assertEqual(planner.execution_matrix(plan), [{"platform": "cuda", "groups": ["core"]}])
+        self.assertEqual(
+            planner.execution_matrix(plan),
+            [
+                {
+                    "platform": "cuda",
+                    "groups": ["core"],
+                    "config_identity": plan["platforms"][0]["config_identity"],
+                }
+            ],
+        )
 
     def test_summary_reduction_counts_unique_execution_groups(self):
         plan = build_plan(["megatron/plugin/Ascend/ascend_plugin.py"], platforms=["cuda"])

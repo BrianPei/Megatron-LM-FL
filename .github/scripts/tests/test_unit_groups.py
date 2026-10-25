@@ -12,6 +12,7 @@ from unittest import mock
 import yaml
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(ROOT / ".github/scripts"))
 SPEC = importlib.util.spec_from_file_location(
     "run_unit_groups", ROOT / ".github/scripts/run_unit_groups.py"
 )
@@ -25,10 +26,33 @@ MATRIX_SPEC.loader.exec_module(MATRIX)
 
 
 class UnitGroupTests(unittest.TestCase):
+    evidence_command = (
+        'mkdir -p "$CI_JUNIT_DIRECTORY"\n'
+        'for ((rank=0; rank<${CI_NPROC_PER_NODE:-1}; rank++)); do\n'
+        '\"$TEST_PYTHON_BIN\" -m pytest -c /dev/null -p no:cacheprovider '
+        '"$GITHUB_WORKSPACE/test_success.py" '
+        '--junitxml="$CI_JUNIT_DIRECTORY/normal-$rank.xml" > /dev/null\n'
+        'done\n'
+    )
+
+    def record_evidence(self, env):
+        evidence = {
+            "schema_version": 1,
+            "reports": {
+                "normal-0.xml": {"tests": 1, "passed": 1, "skipped": 0, "errors": 0, "failures": 0}
+            },
+        }
+        path = (
+            self.root / ".retry-logs" / f"unit-fake-device-{env['CI_TEST_GROUP']}" / "result.json"
+        )
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({"status": "PASS", "evidence": evidence}))
+
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name)
+        (self.root / "test_success.py").write_text("def test_success():\n    assert 1 + 1 == 2\n")
         script = self.root / "tests/test_utils/runners/run_ci_unit_tests.sh"
         script.parent.mkdir(parents=True)
         script.write_text(
@@ -37,7 +61,7 @@ class UnitGroupTests(unittest.TestCase):
             '"$CI_TEST_PATH" >> "$GITHUB_WORKSPACE/calls"\n'
             'printf "{\\"group\\":\\"%s\\"}" "$CI_TEST_GROUP" > '
             '"$CI_COVERAGE_DIRECTORY/coverage-fake-device-$CI_TEST_GROUP.json"\n'
-            'if [ "$CI_TEST_GROUP" = failed ]; then exit 7; fi\n'
+            'if [ "$CI_TEST_GROUP" = failed ]; then exit 7; fi\n' + self.evidence_command
         )
         (self.root / "setup.sh").write_text(
             'test "$CI_TEST_SUITE" = unit_group\n'
@@ -48,6 +72,8 @@ class UnitGroupTests(unittest.TestCase):
         self.env = {
             **os.environ,
             "GITHUB_WORKSPACE": str(self.root),
+            "TEST_PYTHON_BIN": sys.executable,
+            "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1",
             "GITHUB_ENV": str(self.root / "env"),
             "GITHUB_PATH": str(self.root / "path"),
             "GITHUB_STEP_SUMMARY": str(self.root / "summary"),
@@ -94,7 +120,10 @@ class UnitGroupTests(unittest.TestCase):
                 "missing_groups": attestation["missing_groups"],
                 "unexpected_groups": attestation["unexpected_groups"],
                 "status": attestation["status"],
-                "groups": attestation["groups"],
+                "groups": [
+                    {k: v for k, v in item.items() if k != "evidence"}
+                    for item in attestation["groups"]
+                ],
             },
             {
                 "platform": "fake",
@@ -200,6 +229,7 @@ class UnitGroupTests(unittest.TestCase):
 
     def test_timeout_status_is_not_reported_as_pass(self):
         groups = [{"name": "slow", "path": "a"}, {"name": "passed", "path": "b"}]
+        self.record_evidence({"CI_TEST_GROUP": "passed"})
         with (
             mock.patch.dict(os.environ, {**self.env, "CI_TEST_GROUPS": json.dumps(groups)}),
             mock.patch.object(RUNNER, "run_group", side_effect=[124, 0]),
@@ -212,6 +242,21 @@ class UnitGroupTests(unittest.TestCase):
         summary = (self.root / "summary").read_text()
         self.assertIn("| slow | TIMEOUT | 124 | Executed |", summary)
         self.assertIn("| passed | PASS | 0 | Executed |", summary)
+
+    def test_missing_evidence_cannot_be_reported_as_flaky_pass(self) -> None:
+        self.record_evidence({"CI_TEST_GROUP": "passed"})
+        result = self.root / ".retry-logs/unit-fake-device-passed/result.json"
+        result.write_text(json.dumps({"status": "FLAKY_PASS"}))
+        groups = [{"name": "passed", "path": "a"}]
+        with (
+            mock.patch.dict(os.environ, {**self.env, "CI_TEST_GROUPS": json.dumps(groups)}),
+            mock.patch.object(RUNNER, "run_group", return_value=0),
+            mock.patch("builtins.print"),
+        ):
+            self.assertEqual(RUNNER.main(), 1)
+        summary = (self.root / "summary").read_text()
+        self.assertIn("| passed | FAIL | 1 | Executed |", summary)
+        self.assertNotIn("FLAKY_PASS", summary)
 
     def test_reruns_skip_successes_and_eventually_succeed(self):
         groups = [{"name": "failed", "path": "a"}, {"name": "passed", "path": "b"}]
@@ -230,7 +275,7 @@ class UnitGroupTests(unittest.TestCase):
         )
         # Simulate the transient failure disappearing without changing the test selection.
         (self.root / "tests/test_utils/runners/run_ci_unit_tests.sh").write_text(
-            'echo "$CI_TEST_GROUP" >> "$GITHUB_WORKSPACE/calls"\n'
+            'echo "$CI_TEST_GROUP" >> "$GITHUB_WORKSPACE/calls"\n' + self.evidence_command
         )
         self.env["GITHUB_RUN_ATTEMPT"] = "3"
         self.assertEqual(self.run_groups(groups).returncode, 0)
@@ -239,7 +284,7 @@ class UnitGroupTests(unittest.TestCase):
         self.assertTrue((reports / "coverage-fake-device-passed.json").exists())
         attestation = json.loads((reports / "unit-results.json").read_text())
         self.assertEqual(
-            attestation["groups"],
+            [{k: v for k, v in item.items() if k != "evidence"} for item in attestation["groups"]],
             [
                 {"name": "failed", "exit_code": 0},
                 {"name": "passed", "exit_code": 0, "reused": True},
@@ -263,6 +308,7 @@ class UnitGroupTests(unittest.TestCase):
             ({}, "invalid JSON"),
             ({}, '[]'),
             ({}, original.replace('"exit_code": 0', '"exit_code": false')),
+            ({}, original.replace('"schema_version": 1', '"schema_version": 0')),
             ({"GITHUB_RUN_ID": "456"}, original),
             ({"GITHUB_SHA": "other"}, original),
             ({"CI_PLATFORM": "other"}, original),
@@ -293,6 +339,7 @@ class UnitGroupTests(unittest.TestCase):
     def test_interrupted_rerun_keeps_later_successes_and_runs_unfinished_groups(self):
         groups = [{"name": name, "path": name} for name in ("failed", "passed", "unfinished")]
         environment = {**self.env, "CI_TEST_GROUPS": json.dumps(groups)}
+        self.record_evidence({"CI_TEST_GROUP": "passed"})
         for attempt, outcomes in ((1, [7, 0, KeyboardInterrupt()]), (2, [KeyboardInterrupt()])):
             with (
                 mock.patch.dict(os.environ, {**environment, "GITHUB_RUN_ATTEMPT": str(attempt)}),
@@ -349,6 +396,7 @@ class UnitGroupTests(unittest.TestCase):
                 capture_output=True,
                 timeout=10,
             )
+            self.record_evidence(env)
             return 7 if name == "failed" else 0
 
         for attempt, expected in ((1, 1), (2, 0)):
@@ -389,6 +437,7 @@ class UnitGroupTests(unittest.TestCase):
         script.write_text(
             'printf "%s|%s|%s|%s\\n" "$CI_TEST_GROUP" "${MASTER_PORT:-}" '
             '"${MCCL_P2P_DISABLE:-}" "${PYTHONPATH:-}" >> "$GITHUB_WORKSPACE/hooks"\n'
+            + self.evidence_command
         )
         for platform, groups in (
             ("musa", ["models", "core"]),
@@ -426,7 +475,7 @@ class UnitGroupTests(unittest.TestCase):
             '  echo ReadTimeout; exit 1\n'
             'fi\n'
             'test ! -e "$CI_COVERAGE_DIRECTORY/partial"\n'
-            'echo final > "$CI_COVERAGE_DIRECTORY/final"\n'
+            'echo final > "$CI_COVERAGE_DIRECTORY/final"\n' + self.evidence_command
         )
         self.env["CI_TEST_RETRIES"] = "1"
         result = self.run_groups([{"name": "flaky", "path": "a"}])

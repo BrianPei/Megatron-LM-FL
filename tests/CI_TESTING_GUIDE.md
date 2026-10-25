@@ -14,32 +14,39 @@ Each hardware platform has three entry points:
 | Platform config | `.github/configs/<platform>.yml` | Image, runner labels, container settings, process count, and test matrix |
 | Platform setup | `.github/scripts/set_env_<platform>.sh` | Runtime variables, dependencies, device validation, and project installation |
 
-The platform workflow calls `.github/workflows/all_tests_common.yml`, which
-loads the platform config and dispatches the reusable unit and functional
+The automatic and requested entrypoints generate a plan and call
+`_platform_pipeline.yml`. Manual platform wrappers also reuse that pipeline.
+It prepares TE-FL and calls `all_tests_common.yml`, which loads the platform
+config and dispatches the reusable unit and functional
 workflows. Platform-specific behavior belongs in the config or setup script;
 the common workflows should not need a new hardware conditional.
 
 The project-facing contract is `.flagcicd/project.yaml`. It owns stage, level,
 resource, logical-group, and gate-policy semantics. The existing
 `.github/configs/unit_group_routes.yml` is a validated compatibility projection
-for older helpers; edit the project contract first and keep the projection in
-sync.
+for older helpers. Edit the project contract, then run
+`python .github/scripts/ci/validate_flagcicd_contract.py --write-catalog`;
+do not hand-edit the generated projection.
 
 The execution path is:
 
 ```text
-all_tests_<platform>.yml
-  -> all_tests_common.yml
-     -> lint_common.yml
-     -> unit_tests_common.yml
-        -> checkout + set_env_<platform>.sh once per device
-        -> install runtime packages + restore/install TE-FL once
-        -> run_unit_groups.py, in configured group order
-           -> set_env_<platform>.sh (unit_group, no installation)
-           -> tests/test_utils/runners/run_ci_unit_tests.sh
-     -> functional_tests_common.yml
-        -> set_env_<platform>.sh
-        -> tests/functional_tests/shell_test_utils/run_ci_test.sh
+ci.yml / ci-requested.yml
+  -> lint_common.yml
+  -> generate_test_plan.py
+  -> _platform_pipeline.yml (also used by manual platform wrappers)
+     -> prepare TE-FL wheel artifact
+     -> all_tests_common.yml: verify configuration identity and load config
+        -> unit_tests_common.yml
+           -> checkout + set_env_<platform>.sh once per device
+           -> install runtime packages + restore/install TE-FL once
+           -> run_unit_groups.py, in configured group order
+              -> set_env_<platform>.sh (unit_group, no installation)
+              -> tests/test_utils/runners/run_ci_unit_tests.sh
+        -> functional_tests_common.yml
+           -> set_env_<platform>.sh
+           -> tests/functional_tests/shell_test_utils/run_ci_test.sh
+  -> flagcicd_gate.py: verify plan, matrix and platform/device evidence
 ```
 
 Unit tests run before functional tests when both suites are enabled. A failed
@@ -74,7 +81,8 @@ run are skipped; failed, timed-out and unfinished groups run again. Each complet
 group updates the checkpoint, and the workflow attempts to cache it even after a
 failure or cancellation. Missing, evicted or invalid checkpoints fall back to
 running all groups. A hard runner shutdown may prevent saving the checkpoint.
-Checkpoints are scoped to the run, commit, platform/device and test configuration;
+Only successes with valid per-rank JUnit evidence can be reused; older checkpoints
+without it rerun those groups. Checkpoints are scoped to the run, commit, platform/device and test configuration;
 they are never reused by a new workflow run. Multiple reruns retain prior successes.
 **Re-run all jobs** also reuses successful unit groups; start a new workflow run to
 force all groups to execute again.
@@ -88,7 +96,11 @@ Coverage data is isolated per group. Coverage measures `megatron/plugin/*` and
 coverage artifact retains each completed group's JSON and `unit-results.json`.
 That attestation records `plan_hash`, `expected_groups`, `executed_groups`,
 `missing_groups`, `unexpected_groups`, `status`, and per-group results; the
-platform workflow and final CI gate verify it. A combined
+platform workflow and final CI gate verify it. Each selected group must provide
+JUnit reports for all configured ranks and phases, consistent testcase counts,
+no failures/errors, and at least one passing test across the group. A normal or
+experimental phase may be empty, but a wholly empty or skipped group cannot pass,
+even when pytest exits zero. A combined
 `coverage-<platform>-<device>-all.json` is sent to FlagCICD. Available reports
 are uploaded even after test failures.
 Each completed group prints `PASS`, `FAIL` or `TIMEOUT` outside its collapsible log

@@ -21,7 +21,6 @@ stable for identical source/base SHAs, configs, and changed files.
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import os
 import pathlib
@@ -30,6 +29,7 @@ import sys
 from typing import Any
 
 import flagcicd_contract
+import flagcicd_evidence
 import generate_matrix
 import unit_group_routing
 import yaml
@@ -38,12 +38,8 @@ PLAN_SCHEMA_VERSION = flagcicd_contract.PLAN_SCHEMA
 DEFAULT_CATALOG = ".github/configs/unit_group_routes.yml"
 
 
-def _canonical(value: Any) -> str:
-    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False, default=str)
-
-
 def _sha256(value: Any) -> str:
-    return "sha256:" + hashlib.sha256(_canonical(value).encode()).hexdigest()
+    return flagcicd_contract.content_hash(value)
 
 
 def _git(*arguments: str) -> str:
@@ -186,6 +182,7 @@ def build_plan(
     source_sha: str,
     base_sha: str,
     project_hash: str = "",
+    control_sha: str = "",
     gate_policy: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build the complete plan document, including its stable hash."""
@@ -205,7 +202,20 @@ def build_plan(
                 {
                     "name": name,
                     "devices": list(platform.device_types),
+                    "config_identity": {
+                        "source_sha": source_sha,
+                        "project_hash": project_hash,
+                        "platform_hash": platform.digest,
+                    },
                     "nproc_per_node": platform.nproc_per_node,
+                    "junit_reports": flagcicd_evidence.report_names(
+                        platform.nproc_per_node,
+                        bool(
+                            platform.data.get("test_matrix", {})
+                            .get("unit", {})
+                            .get("experimental_pytest_extra_args", [])
+                        ),
+                    ),
                     "configured_groups": sorted(platform.groups),
                     **materialized,
                 }
@@ -248,6 +258,7 @@ def build_plan(
         "catalog_completeness": catalog_completeness,
         "unwired_planned_groups": unwired_planned_groups,
         "source_sha": source_sha,
+        "control_sha": control_sha,
         "base_sha": base_sha,
         "project_hash": project_hash,
         "gate_policy": gate_policy or {},
@@ -281,14 +292,18 @@ def build_plan(
         },
         "platforms": platform_plans,
     }
-    plan["plan_hash"] = _sha256(plan)
+    plan["plan_hash"] = flagcicd_contract.plan_hash(plan)
     return plan
 
 
 def execution_matrix(plan: dict[str, Any]) -> list[dict[str, Any]]:
     """Return one workflow-matrix entry per platform with executable group names."""
     return [
-        {"platform": platform["name"], "groups": _execution_groups(platform)}
+        {
+            "platform": platform["name"],
+            "groups": _execution_groups(platform),
+            "config_identity": platform["config_identity"],
+        }
         for platform in plan["platforms"]
     ]
 
@@ -585,22 +600,41 @@ def main() -> int:
     parser.add_argument("--output", default="unit-test-plan.json")
     parser.add_argument("--summary", default=None)
     parser.add_argument("--github-output", default=None)
+    parser.add_argument(
+        "--config-root",
+        default=".",
+        help="Candidate checkout containing configuration data, not control code",
+    )
     parser.add_argument("--source-sha", default=None)
     parser.add_argument("--base-sha", default=None)
     args = parser.parse_args()
 
     root = pathlib.Path.cwd()
-    configs_dir = root / args.configs_dir
+    config_root = (root / args.config_root).resolve()
+    configs_dir = config_root / args.configs_dir
     stage = args.stage or _default_stage(args.event_name)
 
     try:
-        project_path = root / args.project
+        if config_root != root.resolve():
+            actual = subprocess.check_output(
+                ["git", "-C", str(config_root), "rev-parse", "HEAD"], text=True, timeout=10
+            ).strip()
+            if not args.source_sha or actual != args.source_sha:
+                raise ValueError("Candidate config checkout differs from source SHA")
+        project_path = config_root / args.project
+        if config_root != root.resolve() and not project_path.is_file():
+            raise ValueError("Candidate checkout must contain the FlagCICD project contract")
         project: dict[str, Any] | None = None
         project_hash = ""
         if project_path.is_file():
             project, project_digest = flagcicd_contract.load_project(project_path)
             project_hash = f"sha256:{project_digest}"
-            stage_config = project["stages"].get(stage)
+            # Candidate config is data. Stage/gate policy remains controlled by
+            # the trusted workflow checkout, pinned for the entire requested run.
+            policy_project = project
+            if config_root != root.resolve():
+                policy_project, _ = flagcicd_contract.load_project(root / args.project)
+            stage_config = policy_project["stages"].get(stage)
             if stage_config is None:
                 raise ValueError(f"Stage {stage!r} is not declared in the project contract")
             if stage_config.get("status", "active") == "planned":
@@ -620,7 +654,7 @@ def main() -> int:
             if project["levels"].get(level, {}).get("status", "active") == "planned":
                 raise ValueError(f"Level {level!r} is declared but not implemented")
             catalog = unit_group_routing.load_catalog(project_path)
-            legacy_path = root / (args.catalog or project["catalog_source"])
+            legacy_path = config_root / (args.catalog or project["catalog_source"])
             if legacy_path.is_file():
                 legacy = yaml.safe_load(legacy_path.read_text())
                 errors = flagcicd_contract.contract_catalog_errors(project, legacy)
@@ -657,9 +691,16 @@ def main() -> int:
             source_sha=_source_sha(args.source_sha),
             base_sha=_base_sha(args.base_sha, args.base_ref),
             project_hash=project_hash,
-            gate_policy=project.get("gate_policy", {}).get(stage, {}) if project else {},
+            control_sha=_git("rev-parse", "HEAD"),
+            gate_policy=policy_project.get("gate_policy", {}).get(stage, {}) if project else {},
         )
-    except (unit_group_routing.CatalogError, OSError, ValueError, yaml.YAMLError) as error:
+    except (
+        unit_group_routing.CatalogError,
+        OSError,
+        ValueError,
+        yaml.YAMLError,
+        subprocess.SubprocessError,
+    ) as error:
         print(f"::error::{error}", file=sys.stderr)
         return 1
 

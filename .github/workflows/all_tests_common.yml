@@ -36,6 +36,7 @@ on:
         type: string
         default: '[]'
         description: JSON array of execution group names expected by the routing plan
+      config_identity: {required: false, type: string, default: ''}
       plan_hash:
         required: false
         type: string
@@ -72,6 +73,32 @@ jobs:
         with:
           ref: ${{ inputs.source_ref || github.sha }}
           persist-credentials: false
+
+      - name: Verify planned configuration identity
+        if: inputs.config_identity != ''
+        env:
+          CONFIG_IDENTITY: ${{ inputs.config_identity }}
+          PLATFORM: ${{ inputs.platform }}
+        run: |
+          python3 - <<'PYCODE'
+          import hashlib
+          import json
+          import os
+          import pathlib
+          import subprocess
+
+          identity = json.loads(os.environ["CONFIG_IDENTITY"])
+          actual_sha = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True, timeout=10).strip()
+          if actual_sha != identity["source_sha"]:
+              raise SystemExit("Execution source SHA differs from the plan")
+          for key, path in (
+              ("project_hash", ".flagcicd/project.yaml"),
+              ("platform_hash", f".github/configs/{os.environ['PLATFORM']}.yml"),
+          ):
+              actual = "sha256:" + hashlib.sha256(pathlib.Path(path).read_bytes()).hexdigest()
+              if actual != identity[key]:
+                  raise SystemExit(f"Execution configuration differs from plan: {path}")
+          PYCODE
 
       - name: Install yq
         run: |

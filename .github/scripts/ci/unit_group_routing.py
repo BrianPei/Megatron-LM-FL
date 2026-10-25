@@ -218,6 +218,7 @@ class PlatformUnit:
     nproc_per_node: int
     groups: dict[str, dict[str, Any]]
     unsupported_groups: dict[str, str] = field(default_factory=dict)
+    digest: str = ""
 
 
 def _matches(path: str, pattern: str) -> bool:
@@ -296,6 +297,7 @@ def load_catalog(path: pathlib.Path) -> Catalog:
     documentation_paths = _string_tuple(global_config, "documentation_paths")
     documentation_suffixes = _string_tuple(global_config, "documentation_suffixes")
     shared_paths = _string_tuple(global_config, "shared_paths")
+    _string_tuple(global_config, "impact_paths")
     coverage = data.get("coverage") or {}
     if not isinstance(coverage, dict):
         raise CatalogError("coverage must be a mapping")
@@ -384,7 +386,8 @@ def load_catalog(path: pathlib.Path) -> Catalog:
 def load_platform(config_path: pathlib.Path) -> PlatformUnit:
     """Load the unit-test section of a platform configuration."""
     try:
-        data = yaml.safe_load(config_path.read_text())
+        raw = config_path.read_bytes()
+        data = yaml.safe_load(raw)
     except (OSError, yaml.YAMLError) as error:
         raise CatalogError(f"Cannot read platform config {config_path}: {error}") from error
     if not isinstance(data, dict):
@@ -445,6 +448,7 @@ def load_platform(config_path: pathlib.Path) -> PlatformUnit:
         nproc_per_node=nproc,
         groups=groups,
         unsupported_groups=unsupported_groups,
+        digest="sha256:" + hashlib.sha256(raw).hexdigest(),
     )
 
 
@@ -537,22 +541,46 @@ def select_groups(
         return result(set(), {}, fallback=False, fallback_reason=None, documentation_only=True)
 
     direct: dict[str, list[str]] = {}
-    for path in code_paths:
-        if catalog.is_shared(path):
-            return everything(f"Shared path: {path}", fallback=True)
+    shared, unmapped, conflicts, impact = [], [], [], []
+    for path in sorted(set(code_paths)):
         matches = catalog.matches_all(path)
-        if not matches:
-            return everything(f"Unmapped path: {path}", fallback=True, unmapped=[path])
         if len(matches) > 1:
-            conflict = {"path": path, "groups": matches}
-            return everything(
-                f"Route conflict: {path} matches {', '.join(matches)}",
-                fallback=True,
-                conflicts=[conflict],
-            )
-        direct.setdefault(matches[0], []).append(path)
+            conflicts.append({"path": path, "groups": matches})
+        elif matches:
+            direct.setdefault(matches[0], []).append(path)
+        if catalog.is_shared(path):
+            shared.append(path)
+        elif not matches:
+            unmapped.append(path)
+        if any(
+            _matches(path, pattern)
+            for pattern in catalog.data.get("global", {}).get("impact_paths", [])
+        ):
+            impact.append(path)
+
+    # Expansion must never erase evidence about directly affected gaps.
+    if shared or unmapped or conflicts:
+        reasons = []
+        reasons.extend(f"Shared path: {path}" for path in shared)
+        reasons.extend(f"Unmapped path: {path}" for path in unmapped)
+        reasons.extend(
+            f"Route conflict: {item['path']} matches {', '.join(item['groups'])}"
+            for item in conflicts
+        )
+        reason = "; ".join(reasons)
+        return result(
+            all_groups,
+            {name: [{"type": "fallback", "reason": reason}] for name in all_groups},
+            fallback=True,
+            fallback_reason=reason,
+            direct=direct,
+            unmapped=unmapped,
+            conflicts=conflicts,
+        )
 
     selected = catalog.closure(direct) | required
+    if impact:
+        selected |= {name for name, group in catalog.groups.items() if group.status == "active"}
     reasons: dict[str, list[dict[str, str]]] = {}
     for name, paths in direct.items():
         reasons.setdefault(name, []).extend(
@@ -567,7 +595,8 @@ def select_groups(
         elif name in required:
             reasons[name] = [{"type": "required", "level": level}]
         else:
-            reasons[name] = [{"type": "dependency"}]
+            reasons[name] = [{"type": "shared-runtime", "path": path} for path in impact]
+
     for name in required:
         if not any(reason["type"] == "required" for reason in reasons.setdefault(name, [])):
             reasons[name].append({"type": "required", "level": level})

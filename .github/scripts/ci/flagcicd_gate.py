@@ -14,6 +14,9 @@ import json
 import pathlib
 from typing import Any, Iterable
 
+import flagcicd_contract
+import flagcicd_evidence
+
 
 def _read_json(path: pathlib.Path) -> Any:
     try:
@@ -102,6 +105,10 @@ def verify_plan(
     allowed = _statuses(required_statuses)
     if plan.get("plan_status") == "blocked":
         errors.append("blocked plans cannot be accepted by the execution gate")
+    if plan.get("schema_version") != flagcicd_contract.PLAN_SCHEMA:
+        errors.append("unsupported plan schema")
+    if flagcicd_contract.plan_hash(plan) != plan.get("plan_hash"):
+        errors.append("plan content does not match its hash")
     if plan.get("plan_hash") != expected_hash:
         errors.append("plan hash output does not match the uploaded plan")
     if plan.get("plan_status") not in allowed:
@@ -123,6 +130,16 @@ def verify_plan(
         errors.append("expected execution groups differ from the uploaded plan")
     if matrix is not None:
         errors.extend(verify_matrix(expected_groups, matrix))
+        identities = {
+            item["name"]: item.get("config_identity") for item in plan.get("platforms", [])
+        }
+        if isinstance(matrix, list):
+            for entry in matrix:
+                if isinstance(entry, dict) and (
+                    not isinstance(entry.get("config_identity"), dict)
+                    or entry["config_identity"] != identities.get(entry.get("platform"))
+                ):
+                    errors.append("matrix configuration identity differs from plan")
     return errors
 
 
@@ -169,6 +186,31 @@ def verify_attestations(plan: dict[str, Any], attestations: Iterable[dict[str, A
             errors.append(f"executed group mismatch for {key}")
         if data.get("missing_groups") or data.get("unexpected_groups"):
             errors.append(f"group execution mismatch for {key}")
+        details = data.get("groups")
+        platform_plan = next(item for item in plan["platforms"] if item["name"] == key[0])
+        reports = platform_plan.get("junit_reports")
+        if (
+            not isinstance(reports, list)
+            or not reports
+            or any(not isinstance(name, str) for name in reports)
+        ):
+            errors.append(f"missing JUnit report contract for {key}")
+            continue
+        if (
+            not isinstance(details, list)
+            or any(not isinstance(item, dict) for item in details)
+            or len(details) != len(groups)
+            or sorted(item.get("name", "") for item in details) != sorted(groups)
+        ):
+            errors.append(f"missing, duplicate or unexpected group evidence for {key}")
+        else:
+            for item in details:
+                if type(item.get("exit_code")) is not int or item["exit_code"] != 0:
+                    errors.append(f"group did not succeed for {key}: {item.get('name')}")
+                errors.extend(
+                    f"{key}/{item.get('name')}: {error}"
+                    for error in flagcicd_evidence.validate(item.get("evidence"), reports)
+                )
         if data.get("status") != "passed":
             errors.append(f"unit execution did not pass for {key}: {data.get('status')}")
     return errors

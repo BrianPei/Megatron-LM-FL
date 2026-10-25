@@ -1,359 +1,319 @@
-# Logical unit-test groups for changed-file routing.
-#
-# Compatibility projection: edit .flagcicd/project.yaml for stage, level,
-# resource, or logical-group changes. The FlagCICD contract validator compares
-# this file with the project contract and fails on drift.
-#
-# This file is the logical routing layer only. A platform executes a group only
-# when its .github/configs/<platform>.yml declares a unit group with the same
-# name or the group declares an execution_group alias.
-#
-# status: active      - executable on at least one platform; every platform
-#                       must execute all of its test paths or declare it in
-#                       unsupported_groups with the uncovered path's reason
-# status: planned     - not wired into any platform yet. A direct match blocks
-#                       the plan; a planned group reached only through a
-#                       shared-path fallback expands the platform to every
-#                       active group it can execute
-# status: unsupported - intentionally not executable
-#
-# resource_class, timeout_minutes, and parallel_safe are advisory metadata for
-# now: the runner still executes one sequential unit job per platform/device.
-#
-# Keep this catalog conservative. Any path that is not listed here, or that is
-# listed as shared, expands the plan to every group. An unknown path still
-# produces that diagnostic fallback plan, but the plan is blocked and the
-# fallback is not executed until the path is onboarded. A path that matches
-# more than one group is a route conflict and also blocks the plan. Catalog
-# paths must be disjoint; the validator rejects tracked paths owned by more
-# than one logical group.
-
+# Generated from .flagcicd/project.yaml; do not edit manually.
+# Regenerate: python .github/scripts/ci/validate_flagcicd_contract.py --write-catalog
 schema_version: 1
-
 global:
   default_timeout_minutes: 60
   documentation_paths:
-    - docs/
+  - docs/
   documentation_suffixes:
-    - .md
-    - .rst
-  # Shared runtime, packaging, and CI inputs invalidate every unit group.
+  - .md
+  - .rst
   shared_paths:
-    - .flagcicd/
-    - .github/
-    - docker/
-    - uv.lock
-    - pyproject.toml
-    - setup.py
-    - setup.cfg
-    - MANIFEST.in
-    - codecov.yml
-
+  - .flagcicd/
+  - .github/
+  - docker/
+  - uv.lock
+  - pyproject.toml
+  - setup.py
+  - setup.cfg
+  - MANIFEST.in
+  - codecov.yml
+  - tests/test_utils/
+  - tests/functional_tests/
+  impact_paths:
+  - megatron/core/*.py
 coverage:
-  # Unit coverage is intentionally limited to the code exercised by unit groups.
-  # It is not a full unit-group coverage report.
   sources:
-    - megatron/plugin/
-    - megatron/core/
-
+  - megatron/plugin/
+  - megatron/core/
 levels:
   L0:
-    description: Lowest-risk baseline; always required.
+    purpose: preflight, checkout, configuration, image and dependency checks
     required_groups:
-      - core
+    - core
   L1:
-    description: Default pull-request baseline.
+    purpose: single-device unit and numerical smoke tests
     required_groups:
-      - core
+    - core
   L2:
-    description: Broader baseline for shared or high-risk changes.
+    purpose: distributed, tensor, pipeline and checkpoint tests
     required_groups:
-      - core
-      - models
-
+    - core
+    - models
+  L3:
+    purpose: benchmark, performance and coverage regression
+    required_groups:
+    - core
+    - models
+    status: planned
+  L4:
+    purpose: release, backward compatibility and cross-repository acceptance
+    required_groups:
+    - core
+    - models
+    status: planned
 groups:
   core:
     description: Model-parallel configuration, process groups, and root unit tests.
     status: active
     paths:
-      - tests/unit_tests/test_*.py
-      - megatron/core/__init__.py
-      - megatron/core/_rank_utils.py
-      - megatron/core/_slurm_utils.py
-      - megatron/core/activations.py
-      - megatron/core/config.py
-      - megatron/core/config_logger.py
-      - megatron/core/energy_monitor.py
-      - megatron/core/enums.py
-      - megatron/core/fault_injector.py
-      - megatron/core/fp4_utils.py
-      - megatron/core/fp8_utils.py
-      - megatron/core/full_cuda_graph.py
-      - megatron/core/hyper_comm_grid.py
-      - megatron/core/inference_params.py
-      - megatron/core/jit.py
-      - megatron/core/model_parallel_config.py
-      - megatron/core/msc_utils.py
-      - megatron/core/nccl_allocator.py
-      - megatron/core/num_microbatches_calculator.py
-      - megatron/core/optimizer_param_scheduler.py
-      - megatron/core/package_info.py
-      - megatron/core/packed_seq_params.py
-      - megatron/core/parallel_state.py
-      - megatron/core/process_groups_config.py
-      - megatron/core/quantization/
-      - megatron/core/recompute.py
-      - megatron/core/rerun_state_machine.py
-      - megatron/core/safe_globals.py
-      - megatron/core/timers.py
-      - megatron/core/typed_torch.py
-      - megatron/core/utils.py
+    - tests/unit_tests/test_*.py
+    - megatron/core/__init__.py
+    - megatron/core/_rank_utils.py
+    - megatron/core/_slurm_utils.py
+    - megatron/core/activations.py
+    - megatron/core/config.py
+    - megatron/core/config_logger.py
+    - megatron/core/energy_monitor.py
+    - megatron/core/enums.py
+    - megatron/core/fault_injector.py
+    - megatron/core/fp4_utils.py
+    - megatron/core/fp8_utils.py
+    - megatron/core/full_cuda_graph.py
+    - megatron/core/hyper_comm_grid.py
+    - megatron/core/inference_params.py
+    - megatron/core/jit.py
+    - megatron/core/model_parallel_config.py
+    - megatron/core/msc_utils.py
+    - megatron/core/nccl_allocator.py
+    - megatron/core/num_microbatches_calculator.py
+    - megatron/core/optimizer_param_scheduler.py
+    - megatron/core/package_info.py
+    - megatron/core/packed_seq_params.py
+    - megatron/core/parallel_state.py
+    - megatron/core/process_groups_config.py
+    - megatron/core/quantization/
+    - megatron/core/recompute.py
+    - megatron/core/rerun_state_machine.py
+    - megatron/core/safe_globals.py
+    - megatron/core/timers.py
+    - megatron/core/typed_torch.py
+    - megatron/core/utils.py
     depends_on: []
     resource_class: single_device
-
   models:
     description: Model construction, configuration, and forward paths.
     status: active
     paths:
-      - megatron/core/models/
-      - tests/unit_tests/models/
+    - megatron/core/models/
+    - tests/unit_tests/models/
     depends_on:
-      - core
+    - core
     resource_class: multi_gpu_exclusive
-
   transformer:
     description: Transformer blocks, attention, and layer specifications.
     status: active
     paths:
-      - megatron/core/transformer/
-      - tests/unit_tests/transformer/
+    - megatron/core/transformer/
+    - tests/unit_tests/transformer/
     depends_on:
-      - models
+    - models
     resource_class: multi_gpu_exclusive
-
   distributed:
     description: Distributed data parallel, gradient sync, and communication state.
     status: active
     paths:
-      - megatron/core/distributed/
-      - tests/unit_tests/distributed/
+    - megatron/core/distributed/
+    - tests/unit_tests/distributed/
     depends_on:
-      - pipeline_parallel
-      - tensor_parallel
+    - pipeline_parallel
+    - tensor_parallel
     resource_class: communication_exclusive
-
   tensor_parallel:
     description: Tensor-parallel mappings and parameter sharding.
     status: active
     paths:
-      - megatron/core/tensor_parallel/
-      - tests/unit_tests/tensor_parallel/
+    - megatron/core/tensor_parallel/
+    - tests/unit_tests/tensor_parallel/
     depends_on:
-      - models
+    - models
     resource_class: communication_exclusive
-
   pipeline_parallel:
     description: Pipeline schedules, rank layout, and microbatch flow.
     status: active
     paths:
-      - megatron/core/pipeline_parallel/
-      - tests/unit_tests/pipeline_parallel/
+    - megatron/core/pipeline_parallel/
+    - tests/unit_tests/pipeline_parallel/
     depends_on:
-      - models
+    - models
     resource_class: communication_exclusive
-
   dist_checkpointing:
     description: Distributed checkpoint serialization and loading.
     status: active
     paths:
-      - megatron/core/dist_checkpointing/
-      - tests/unit_tests/dist_checkpointing/
+    - megatron/core/dist_checkpointing/
+    - tests/unit_tests/dist_checkpointing/
     depends_on: []
     resource_class: checkpoint_exclusive
-
   data:
     description: Dataset construction and data loading.
     status: active
     paths:
-      - megatron/core/datasets/
-      - megatron/training/datasets/
-      - tests/unit_tests/data/
+    - megatron/core/datasets/
+    - megatron/training/datasets/
+    - tests/unit_tests/data/
     depends_on:
-      - core
+    - core
     resource_class: single_device
-
   fusions:
     description: Fused operators and fused layer paths.
     status: active
     paths:
-      - megatron/core/fusions/
-      - tests/unit_tests/fusions/
+    - megatron/core/fusions/
+    - tests/unit_tests/fusions/
     depends_on:
-      - transformer
-      - models
+    - transformer
+    - models
     resource_class: multi_gpu_exclusive
-
   others:
-    description: Post-training, tokenizer, and utility tests grouped by the platform configs.
+    description: Post-training, tokenizer, and utility tests grouped by the platform
+      configs.
     status: active
     paths:
-      - megatron/core/post_training/
-      - megatron/core/tokenizers/
-      - megatron/post_training/
-      - megatron/training/utils/
-      - tests/unit_tests/post_training/
-      - tests/unit_tests/tokenizers/
-      - tests/unit_tests/utils/
+    - megatron/core/post_training/
+    - megatron/core/tokenizers/
+    - megatron/post_training/
+    - megatron/training/utils/
+    - tests/unit_tests/post_training/
+    - tests/unit_tests/tokenizers/
+    - tests/unit_tests/utils/
     depends_on:
-      - core
+    - core
     resource_class: single_device
-
   optimizer:
     description: Optimizer implementations and parameter schedulers.
     status: planned
-    reason: "No platform declares an optimizer execution group yet."
+    reason: No platform declares an optimizer execution group yet.
     paths:
-      - megatron/core/optimizer/
-      - tests/unit_tests/optimizer/
+    - megatron/core/optimizer/
+    - tests/unit_tests/optimizer/
     depends_on:
-      - core
+    - core
     resource_class: single_device
-
   inference:
     description: Inference engine, inference parameters, and serving entry points.
     status: planned
-    reason: "No platform declares an inference execution group yet."
+    reason: No platform declares an inference execution group yet.
     paths:
-      - megatron/core/inference/
-      - megatron/inference/
-      - tests/unit_tests/inference/
+    - megatron/core/inference/
+    - megatron/inference/
+    - tests/unit_tests/inference/
     depends_on:
-      - models
+    - models
     resource_class: single_device
-
   rl:
     description: Reinforcement-learning agents, rollout, and serving paths.
     status: planned
-    reason: "No platform declares an RL execution group yet."
+    reason: No platform declares an RL execution group yet.
     paths:
-      - megatron/rl/
-      - tests/unit_tests/rl/
+    - megatron/rl/
+    - tests/unit_tests/rl/
     depends_on:
-      - core
+    - core
     resource_class: multi_gpu_exclusive
-
   training:
     description: Training loop, checkpointing, initialization, and argument parsing.
     status: planned
-    reason: "No platform declares a training-loop execution group yet."
-    # Keep datasets/ and utils/ out of this broad group: data and others own
-    # them, and overlapping catalog paths are rejected as route conflicts.
+    reason: No platform declares a training-loop execution group yet.
     paths:
-      - megatron/training/*.py
-      - megatron/training/config/
-      - megatron/training/models/
-      - tests/unit_tests/training/
+    - megatron/training/*.py
+    - megatron/training/config/
+    - megatron/training/models/
+    - tests/unit_tests/training/
     depends_on:
-      - core
-      - models
+    - core
+    - models
     resource_class: multi_gpu_exclusive
-
   ssm:
     description: State-space model layers.
     status: planned
-    reason: "No platform declares an SSM execution group yet."
+    reason: No platform declares an SSM execution group yet.
     paths:
-      - megatron/core/ssm/
-      - tests/unit_tests/ssm/
+    - megatron/core/ssm/
+    - tests/unit_tests/ssm/
     depends_on:
-      - models
-      - transformer
+    - models
+    - transformer
     resource_class: multi_gpu_exclusive
-
   resharding:
     description: Checkpoint resharding between parallel layouts.
     status: planned
-    reason: "No platform declares a resharding execution group yet."
+    reason: No platform declares a resharding execution group yet.
     paths:
-      - megatron/core/resharding/
-      - tests/unit_tests/resharding/
+    - megatron/core/resharding/
+    - tests/unit_tests/resharding/
     depends_on:
-      - dist_checkpointing
-      - distributed
+    - dist_checkpointing
+    - distributed
     resource_class: checkpoint_exclusive
-
   export:
     description: Model export paths.
     status: planned
-    reason: "No platform declares a model-export execution group yet."
+    reason: No platform declares a model-export execution group yet.
     paths:
-      - megatron/core/export/
-      - tests/unit_tests/export/
+    - megatron/core/export/
+    - tests/unit_tests/export/
     depends_on:
-      - models
+    - models
     resource_class: single_device
-
   extensions:
     description: Transformer Engine and third-party extension interfaces.
     status: planned
-    reason: "No platform declares an extensions execution group yet."
+    reason: No platform declares an extensions execution group yet.
     paths:
-      - megatron/core/extensions/
-      - tests/unit_tests/extension/
+    - megatron/core/extensions/
+    - tests/unit_tests/extension/
     depends_on:
-      - core
-      - models
+    - core
+    - models
     resource_class: single_device
-
   a2a_overlap:
     description: All-to-all overlap tests.
     status: planned
-    reason: "No platform declares an all-to-all overlap execution group yet."
+    reason: No platform declares an all-to-all overlap execution group yet.
     paths:
-      - tests/unit_tests/a2a_overlap/
+    - tests/unit_tests/a2a_overlap/
     depends_on:
-      - distributed
+    - distributed
     resource_class: communication_exclusive
-
   elastification:
     description: Elastic training orchestration.
     status: planned
-    reason: "No platform declares an elastic-training execution group yet."
+    reason: No platform declares an elastic-training execution group yet.
     paths:
-      - megatron/elastification/
-      - tests/unit_tests/elastification/
+    - megatron/elastification/
+    - tests/unit_tests/elastification/
     depends_on:
-      - core
+    - core
     resource_class: multi_gpu_exclusive
-
   plugin:
     description: Plugin framework and vendor plugin code.
     status: active
     execution_group: core
     paths:
-      - megatron/plugin/
-      - megatron/plugin/tests/
+    - megatron/plugin/
+    - megatron/plugin/tests/
     depends_on:
-      - core
+    - core
     resource_class: single_device
-
   dsa_kernel:
-    description: DSA fused-kernel accuracy and performance tests under the plugin test tree.
+    description: DSA fused-kernel accuracy and performance tests under the plugin
+      test tree.
     status: planned
-    reason: "CUDA/SM90-only DSA kernel tests need a dedicated execution group and runtime budget."
+    reason: CUDA/SM90-only DSA kernel tests need a dedicated execution group and runtime
+      budget.
     paths:
-      - tests/unit_tests/plugin/
+    - tests/unit_tests/plugin/
     depends_on:
-      - core
-      - transformer
+    - core
+    - transformer
     resource_class: multi_gpu_exclusive
-
   tools:
     description: Repository tooling tests.
     status: planned
-    reason: "No platform declares a CPU-only tools execution group yet."
+    reason: No platform declares a CPU-only tools execution group yet.
     paths:
-      - tests/unit_tests/tools/
+    - tests/unit_tests/tools/
     depends_on:
-      - core
+    - core
     resource_class: cpu_only

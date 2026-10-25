@@ -3,15 +3,15 @@
 
 The project contract owns stage, level, resource, and logical-group semantics.
 Platform YAML remains the adapter for images, runners, setup, and concrete
-execution commands.  This module intentionally keeps the legacy catalog
-conversion small so the migration can be checked before the planner switches
-to the project file as its only editable source.
+execution commands. The legacy catalog is a generated compatibility projection
+of the project file, which is the only editable source of routing policy.
 """
 
 from __future__ import annotations
 
 import copy
 import hashlib
+import json
 import pathlib
 from typing import Any
 
@@ -45,9 +45,8 @@ def load_project(path: pathlib.Path) -> tuple[dict[str, Any], str]:
         )
     if not isinstance(project.get("repository"), str) or not project["repository"].strip():
         raise ContractError("repository must be a non-empty string")
-    for key in ("platform_config_glob", "catalog_source"):
-        if not isinstance(project.get(key), str) or not project[key].strip():
-            raise ContractError(f"{key} must be a non-empty string")
+    if not isinstance(project.get("catalog_source"), str) or not project["catalog_source"].strip():
+        raise ContractError("catalog_source must be a non-empty string")
     if project.get("plan_schema") != PLAN_SCHEMA:
         raise ContractError(f"plan_schema must be {PLAN_SCHEMA!r}")
     for key in ("stages", "levels", "resource_classes", "test_groups", "coverage", "gate_policy"):
@@ -153,6 +152,9 @@ def load_project(path: pathlib.Path) -> tuple[dict[str, Any], str]:
             )
         if not isinstance(policy.get("allow_catalog_partial"), bool):
             raise ContractError(f"gate_policy for {stage} allow_catalog_partial must be a boolean")
+    # Collection and aggregation currently support this fixed source boundary.
+    if project["coverage"].get("sources") != ["megatron/plugin/", "megatron/core/"]:
+        raise ContractError("coverage.sources must be megatron/plugin/ and megatron/core/")
     return project, digest
 
 
@@ -213,3 +215,14 @@ def contract_catalog_errors(project: dict[str, Any], legacy_catalog: dict[str, A
         if expected_groups[name] != actual_groups[name]:
             errors.append(f"contract group differs from legacy catalog: {name}")
     return errors
+
+
+def content_hash(value: Any) -> str:
+    """Hash JSON data independently of object ordering and presentation."""
+    canonical = json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return "sha256:" + hashlib.sha256(canonical.encode()).hexdigest()
+
+
+def plan_hash(plan: dict[str, Any]) -> str:
+    """Hash every plan field except its own digest."""
+    return content_hash({key: value for key, value in plan.items() if key != "plan_hash"})

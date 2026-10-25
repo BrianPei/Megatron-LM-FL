@@ -60,6 +60,26 @@ class GateTests(unittest.TestCase):
                 "missing_groups": [],
                 "unexpected_groups": [],
                 "status": "passed",
+                "groups": [
+                    {
+                        "name": name,
+                        "exit_code": 0,
+                        "evidence": {
+                            "schema_version": 1,
+                            "reports": {
+                                report: {
+                                    "tests": 1,
+                                    "passed": 1,
+                                    "skipped": 0,
+                                    "failures": 0,
+                                    "errors": 0,
+                                }
+                                for report in plan["platforms"][0]["junit_reports"]
+                            },
+                        },
+                    }
+                    for name in groups["cuda"]
+                ],
             }
         ]
         self.assertEqual(flagcicd_gate.verify_attestations(plan, attestations), [])

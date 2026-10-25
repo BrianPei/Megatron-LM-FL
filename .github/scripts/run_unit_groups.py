@@ -13,6 +13,8 @@ import threading
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
+from ci import flagcicd_evidence
+
 TRANSIENT = re.compile(
     r"ReadTimeout|ConnectTimeout|ConnectionResetError|Connection aborted|"
     r"Temporary failure in name resolution|Network is unreachable|"
@@ -151,6 +153,17 @@ def execute(
             process.wait(timeout=10)
             reader.join(timeout=10)
             process.stdout.close()
+        evidence = None
+        if code == 0 and environment.get("CI_REQUIRE_TEST_EVIDENCE") == "1":
+            try:
+                evidence = flagcicd_evidence.collect(
+                    Path(environment["CI_JUNIT_DIRECTORY"]),
+                    json.loads(environment["CI_JUNIT_REPORTS"]),
+                )
+            except (OSError, ValueError, ET.ParseError) as error:
+                print(f"::error::Invalid unit execution evidence: {error}", flush=True)
+                code = 1
+                signals[1] = True
         transient = (
             _retryable_exit(code)
             and signals[0]
@@ -163,7 +176,9 @@ def execute(
             shutil.move(directory, str(destination))
         records.append({"attempt": attempt, "exit_code": code, "transient": transient})
         status = "FLAKY_PASS" if code == 0 and attempt > 1 else "PASS" if code == 0 else "FAIL"
-        (logs / "result.json").write_text(json.dumps({"status": status, "attempts": records}))
+        (logs / "result.json").write_text(
+            json.dumps({"status": status, "attempts": records, "evidence": evidence})
+        )
         if code == 0 or not transient or attempt > retries:
             return code
         print("::warning::Transient infrastructure failure; retrying once", flush=True)
@@ -293,7 +308,11 @@ def restore_results(path: Path, identity: dict, attempt: int) -> dict:
             for name, result in results.items()
         ):
             raise ValueError("Invalid group results")
-        return {name: result for name, result in results.items() if result["exit_code"] == 0}
+        return {
+            name: result
+            for name, result in results.items()
+            if result["exit_code"] == 0 and not flagcicd_evidence.validate(result.get("evidence"))
+        }
     except (OSError, ValueError, KeyError, TypeError) as error:
         print(f"::warning::No usable unit checkpoint; running all groups: {error}", flush=True)
         return {}
@@ -459,6 +478,13 @@ def main() -> int:
                 ),
                 "CI_COVERAGE_DIRECTORY": str(directory),
                 "CI_JUNIT_DIRECTORY": str(directory / "junit"),
+                "CI_REQUIRE_TEST_EVIDENCE": "1",
+                "CI_JUNIT_REPORTS": json.dumps(
+                    flagcicd_evidence.report_names(
+                        int(os.environ.get("CI_NPROC_PER_NODE", "1")),
+                        bool(json.loads(os.environ.get("CI_EXPERIMENTAL_PYTEST_EXTRA_ARGS", "[]"))),
+                    )
+                ),
                 "CI_JUNIT_EXPECTED": str(
                     int(os.environ.get("CI_NPROC_PER_NODE", "1"))
                     * (
@@ -502,12 +528,16 @@ def main() -> int:
             / f"unit-{os.environ['CI_PLATFORM']}-{os.environ['CI_DEVICE']}-{name}"
             / "result.json"
         )
-        flaky = (
+        retry_data = (
+            json.loads(retry_result.read_text()) if not reused and retry_result.exists() else {}
+        )
+        evidence = completed[name].get("evidence") if reused else retry_data.get("evidence")
+        if code == 0 and flagcicd_evidence.validate(evidence):
+            code = 1
+        flaky = code == 0 and (
             bool(completed[name].get("flaky"))
             if reused
-            else code == 0
-            and retry_result.exists()
-            and json.loads(retry_result.read_text())["status"] == "FLAKY_PASS"
+            else retry_data.get("status") == "FLAKY_PASS"
         )
         status = (
             "FLAKY_PASS" if flaky else "PASS" if code == 0 else "TIMEOUT" if code == 124 else "FAIL"
@@ -517,7 +547,7 @@ def main() -> int:
             print(f"::error::{status}: Unit group {name} failed with exit code {code}", flush=True)
         else:
             print(f"{status}: Unit tests: {name} ({execution})", flush=True)
-        result = {"name": name, "exit_code": code}
+        result = {"name": name, "exit_code": code, "evidence": evidence}
         if flaky:
             result["flaky"] = True
         if reused:
