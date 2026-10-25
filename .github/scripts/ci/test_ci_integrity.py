@@ -50,6 +50,18 @@ class RoutingIntegrityTests(unittest.TestCase):
             self.assertEqual(plan["direct_groups"], ["core"])
             self.assertEqual(plan["plan_status"], "ready")
 
+    def test_pre_commit_config_is_shared_without_hiding_unknown_changes(self) -> None:
+        plan = build_plan([".pre-commit-config.yaml"])
+        self.assertEqual(plan["plan_status"], "partial")
+        self.assertFalse(plan["global_groups"]["unmapped_paths"])
+        for platform in plan["platforms"]:
+            self.assertEqual(
+                plan["expected_unit_groups"][platform["name"]], platform["configured_groups"]
+            )
+        mixed = build_plan([".pre-commit-config.yaml", "unmapped_config.yaml"])
+        self.assertEqual(mixed["plan_status"], "blocked")
+        self.assertEqual(mixed["global_groups"]["unmapped_paths"], ["unmapped_config.yaml"])
+
     def test_known_test_infrastructure_is_not_an_unknown_unit_path(self) -> None:
         for path in (
             "tests/test_utils/runners/run_ci_unit_tests.sh",

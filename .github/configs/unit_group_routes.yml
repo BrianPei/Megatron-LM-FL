@@ -11,6 +11,7 @@ global:
   shared_paths:
   - .flagcicd/
   - .github/
+  - .pre-commit-config.yaml
   - docker/
   - uv.lock
   - pyproject.toml
