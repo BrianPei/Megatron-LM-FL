@@ -136,14 +136,14 @@ def collect_errors(
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--configs-dir", default=".github/configs")
-    parser.add_argument("--catalog", default=".github/configs/unit_group_routes.yml")
+    parser.add_argument("--project", default=".flagcicd/project.yaml")
     parser.add_argument("--level", default="L1")
     args = parser.parse_args()
 
     root = pathlib.Path.cwd()
     configs_dir = root / args.configs_dir
     try:
-        catalog = unit_group_routing.load_catalog(root / args.catalog)
+        catalog = unit_group_routing.load_catalog(root / args.project)
         rules = generate_matrix._load_watch_rules(configs_dir)
         platforms = {
             name: unit_group_routing.load_platform(configs_dir / f"{name}.yml")

@@ -12,6 +12,7 @@ import sys
 import tempfile
 import unittest
 
+import flagcicd_contract
 import generate_matrix
 import generate_test_plan as planner
 import unit_group_routing as routing
@@ -19,11 +20,22 @@ import validate_unit_group_catalog as validator
 
 ROOT = pathlib.Path(__file__).resolve().parents[3]
 CONFIGS = ROOT / ".github/configs"
-CATALOG = CONFIGS / "unit_group_routes.yml"
+PROJECT = ROOT / ".flagcicd/project.yaml"
 
 
 def load_catalog() -> routing.Catalog:
-    return routing.load_catalog(CATALOG)
+    return routing.load_catalog(PROJECT)
+
+
+def write_project_fixture(path: pathlib.Path, catalog: dict) -> None:
+    """Create a complete project contract around focused routing test data."""
+    project, _ = flagcicd_contract.load_project(PROJECT)
+    project["global"] = catalog.get("global", {})
+    project["levels"] = {"L1": {"required_groups": []}}
+    project["stages"] = {"pr": {"selection": "affected", "default_level": "L1"}}
+    project["gate_policy"] = {"pr": project["gate_policy"]["pr"]}
+    project["test_groups"] = [dict(name=name, **entry) for name, entry in catalog["groups"].items()]
+    path.write_text(json.dumps(project))
 
 
 def load_platforms() -> dict[str, routing.PlatformUnit]:
@@ -80,9 +92,11 @@ class CatalogTests(unittest.TestCase):
         cls.catalog = load_catalog()
         cls.platforms = load_platforms()
 
-    def test_catalog_is_not_a_platform_config(self):
-        self.assertIn("unit_group_routes", generate_matrix._NON_PLATFORM_STEMS)
-        self.assertNotIn("unit_group_routes", self.platforms)
+    def test_non_platform_configs_are_not_platforms(self):
+        self.assertEqual(
+            set(self.platforms),
+            {"ascend", "cuda", "enflame", "hygon", "kunlunxin", "metax", "musa", "ppu"},
+        )
 
     def test_catalog_paths_and_dependencies_are_valid(self):
         self.assertEqual(self.catalog.validate(ROOT), [])
@@ -272,16 +286,9 @@ class CatalogTests(unittest.TestCase):
         self.assertEqual(self.catalog.matches_all("megatron/training/utils/foo.py"), ["others"])
         self.assertEqual(self.catalog.matches_all("megatron/training/datasets/foo.py"), ["data"])
         with tempfile.TemporaryDirectory() as directory:
-            path = pathlib.Path(directory) / "unit_group_routes.yml"
-            path.write_text(
-                json.dumps(
-                    {
-                        "schema_version": 1,
-                        "coverage": {"sources": ["megatron/core/"]},
-                        "levels": {"L0": {"required_groups": []}},
-                        "groups": {"first": {"paths": ["pkg/"]}, "second": {"paths": ["pkg/"]}},
-                    }
-                )
+            path = pathlib.Path(directory) / "project.yaml"
+            write_project_fixture(
+                path, {"groups": {"first": {"paths": ["pkg/"]}, "second": {"paths": ["pkg/"]}}}
             )
             catalog = routing.load_catalog(path)
         self.assertEqual(catalog.matches_all("pkg/file.py"), ["first", "second"])
@@ -296,19 +303,15 @@ class CatalogTests(unittest.TestCase):
 
     def test_catalog_rejects_alias_to_unknown_group(self):
         with tempfile.TemporaryDirectory() as directory:
-            path = pathlib.Path(directory) / "unit_group_routes.yml"
-            path.write_text(
-                json.dumps(
-                    {
-                        "schema_version": 1,
-                        "coverage": {"sources": ["megatron/core/"]},
-                        "levels": {"L0": {"required_groups": []}},
-                        "groups": {
-                            "core": {"paths": ["megatron/core/"]},
-                            "plugin": {"paths": ["megatron/plugin/"], "execution_group": "missing"},
-                        },
+            path = pathlib.Path(directory) / "project.yaml"
+            write_project_fixture(
+                path,
+                {
+                    "groups": {
+                        "core": {"paths": ["megatron/core/"]},
+                        "plugin": {"paths": ["megatron/plugin/"], "execution_group": "missing"},
                     }
-                )
+                },
             )
             with self.assertRaises(routing.CatalogError) as raised:
                 routing.load_catalog(path)
@@ -316,23 +319,19 @@ class CatalogTests(unittest.TestCase):
 
     def test_catalog_rejects_alias_to_non_active_group(self):
         with tempfile.TemporaryDirectory() as directory:
-            path = pathlib.Path(directory) / "unit_group_routes.yml"
-            path.write_text(
-                json.dumps(
-                    {
-                        "schema_version": 1,
-                        "coverage": {"sources": ["megatron/core/"]},
-                        "levels": {"L0": {"required_groups": []}},
-                        "groups": {
-                            "core": {
-                                "status": "planned",
-                                "reason": "not wired yet",
-                                "paths": ["megatron/core/"],
-                            },
-                            "plugin": {"paths": ["megatron/plugin/"], "execution_group": "core"},
+            path = pathlib.Path(directory) / "project.yaml"
+            write_project_fixture(
+                path,
+                {
+                    "groups": {
+                        "core": {
+                            "status": "planned",
+                            "reason": "not wired yet",
+                            "paths": ["megatron/core/"],
                         },
+                        "plugin": {"paths": ["megatron/plugin/"], "execution_group": "core"},
                     }
-                )
+                },
             )
             with self.assertRaises(routing.CatalogError) as raised:
                 routing.load_catalog(path)
@@ -488,19 +487,15 @@ class SelectionTests(unittest.TestCase):
 
     def test_route_conflict_blocks_the_plan(self):
         with tempfile.TemporaryDirectory() as directory:
-            path = pathlib.Path(directory) / "unit_group_routes.yml"
-            path.write_text(
-                json.dumps(
-                    {
-                        "schema_version": 1,
-                        "coverage": {"sources": ["megatron/core/"]},
-                        "levels": {"L0": {"required_groups": []}},
-                        "groups": {
-                            "first": {"paths": ["megatron/core/"]},
-                            "second": {"paths": ["megatron/core/"]},
-                        },
+            path = pathlib.Path(directory) / "project.yaml"
+            write_project_fixture(
+                path,
+                {
+                    "groups": {
+                        "first": {"paths": ["megatron/core/"]},
+                        "second": {"paths": ["megatron/core/"]},
                     }
-                )
+                },
             )
             catalog = routing.load_catalog(path)
         unit = routing.PlatformUnit(
@@ -516,7 +511,7 @@ class SelectionTests(unittest.TestCase):
         )
         path = "megatron/core/config.py"
         plan = build_plan(
-            [path], platforms=["temp"], level="L0", catalog=catalog, units={"temp": unit}
+            [path], platforms=["temp"], level="L1", catalog=catalog, units={"temp": unit}
         )
         self.assertEqual(plan["plan_status"], "blocked")
         self.assertEqual(

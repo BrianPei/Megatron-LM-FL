@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 import pathlib
+import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -14,11 +16,19 @@ ROOT = pathlib.Path(__file__).resolve().parents[3]
 
 
 class ContractTests(unittest.TestCase):
-    def test_project_matches_legacy_catalog(self) -> None:
+    def test_project_builds_independent_group_index(self) -> None:
         project, digest = flagcicd_contract.load_project(ROOT / ".flagcicd/project.yaml")
-        legacy = yaml.safe_load((ROOT / ".github/configs/unit_group_routes.yml").read_text())
+        catalog = flagcicd_contract.project_to_catalog(project)
         self.assertRegex(digest, r"^[0-9a-f]{64}$")
-        self.assertEqual(flagcicd_contract.contract_catalog_errors(project, legacy), [])
+        self.assertEqual(catalog["levels"], project["levels"])
+        for group in project["test_groups"]:
+            self.assertEqual(
+                catalog["groups"][group["name"]],
+                {key: value for key, value in group.items() if key != "name"},
+            )
+        catalog["groups"]["models"]["paths"].append("fixture/")
+        models = next(group for group in project["test_groups"] if group["name"] == "models")
+        self.assertNotIn("fixture/", models["paths"])
 
     def test_project_has_explicit_stage_semantics(self) -> None:
         project, _ = flagcicd_contract.load_project(ROOT / ".flagcicd/project.yaml")
@@ -58,13 +68,39 @@ class ContractTests(unittest.TestCase):
                 with self.assertRaisesRegex(flagcicd_contract.ContractError, "unsupported fields"):
                     flagcicd_contract.load_project(path)
 
-    def test_project_and_legacy_catalog_must_have_the_same_levels(self) -> None:
-        project, _ = flagcicd_contract.load_project(ROOT / ".flagcicd/project.yaml")
-        legacy = flagcicd_contract.project_to_catalog(project)
-        legacy["levels"].pop("L2")
-        errors = flagcicd_contract.contract_catalog_errors(project, legacy)
-        self.assertIn("missing active project levels", errors[0])
-        self.assertIn("L2", project["levels"])
+    def test_consumers_require_project_contract(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            missing = str(pathlib.Path(directory) / "missing-project.yaml")
+            for script in (
+                "generate_test_plan.py",
+                "validate_flagcicd_contract.py",
+                "validate_unit_group_catalog.py",
+            ):
+                with self.subTest(script=script):
+                    command = [
+                        sys.executable,
+                        str(ROOT / ".github/scripts/ci" / script),
+                        "--project",
+                        missing,
+                    ]
+                    if script == "generate_test_plan.py":
+                        command.extend(
+                            [
+                                "--event-name",
+                                "pull_request",
+                                "--source-sha",
+                                "source",
+                                "--base-sha",
+                                "base",
+                            ]
+                        )
+                    result = subprocess.run(
+                        command, cwd=ROOT, capture_output=True, text=True, timeout=30
+                    )
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn(
+                        "Cannot read FlagCICD project contract", result.stdout + result.stderr
+                    )
 
     def test_stage_cannot_reference_unknown_level(self) -> None:
         project, _ = flagcicd_contract.load_project(ROOT / ".flagcicd/project.yaml")

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate the FlagCICD project contract and its migration catalog."""
+"""Validate the FlagCICD project contract and logical group definitions."""
 
 from __future__ import annotations
 
@@ -9,35 +9,18 @@ import sys
 
 import flagcicd_contract
 import unit_group_routing
-import yaml
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--project", default=".flagcicd/project.yaml")
-    parser.add_argument("--catalog", default=".github/configs/unit_group_routes.yml")
-    parser.add_argument(
-        "--write-catalog",
-        action="store_true",
-        help="Regenerate the compatibility catalog from project.yaml",
-    )
     args = parser.parse_args()
     root = pathlib.Path.cwd()
     try:
         project, digest = flagcicd_contract.load_project(root / args.project)
-        if args.write_catalog:
-            (root / args.catalog).write_text(
-                "# Generated from .flagcicd/project.yaml; do not edit manually.\n"
-                "# Regenerate: python .github/scripts/ci/validate_flagcicd_contract.py --write-catalog\n"
-                + yaml.safe_dump(flagcicd_contract.project_to_catalog(project), sort_keys=False)
-            )
-        legacy = yaml.safe_load((root / args.catalog).read_text())
-        if not isinstance(legacy, dict):
-            raise flagcicd_contract.ContractError("legacy catalog must be a mapping")
-        errors = flagcicd_contract.contract_catalog_errors(project, legacy)
-        catalog = unit_group_routing.load_catalog(root / args.catalog)
-        errors.extend(catalog.validate(root))
-    except (OSError, ValueError, yaml.YAMLError) as error:
+        catalog = unit_group_routing.load_catalog(root / args.project)
+        errors = catalog.validate(root)
+    except (OSError, ValueError) as error:
         print(f"::error::{error}", file=sys.stderr)
         return 1
     print(f"FlagCICD project contract: {project['repository']}")

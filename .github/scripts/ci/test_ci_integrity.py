@@ -197,9 +197,6 @@ class CandidateConfigTests(unittest.TestCase):
                     group["status"] = "active"
                     group.pop("reason", None)
             project_path.write_text(yaml.safe_dump(project))
-            (root / ".github/configs/unit_group_routes.yml").write_text(
-                yaml.safe_dump(contract.project_to_catalog(project))
-            )
             config_path = root / ".github/configs/cuda.yml"
             config = yaml.safe_load(config_path.read_text())
             config["test_matrix"]["unit"]["groups"].append(

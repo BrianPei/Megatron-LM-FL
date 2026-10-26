@@ -31,7 +31,7 @@ import sys
 
 import yaml
 
-_NON_PLATFORM_STEMS = frozenset(("template", "image_sources", "platforms", "unit_group_routes"))
+_NON_PLATFORM_STEMS = frozenset(("template", "image_sources", "platforms"))
 
 
 def _changed_files(base_ref: str) -> list[str]:

@@ -32,13 +32,12 @@ the platform pipeline; platform workflows contain no duplicate lint job. The sha
 
 `.flagcicd/project.yaml` is the repository-facing FlagCICD contract. It defines
 the PR/branch/nightly/manual stages, L1/L2 required-group policies, coverage
-boundary, and logical groups. `.github/configs/unit_group_routes.yml` is kept as
-a generated compatibility projection for older helper APIs; the planner reads
-the project contract first and lint fails if the projection drifts. Edit only
-the project contract, then regenerate and validate the projection:
+boundary, and logical groups. The planner and both validators read this file
+directly and build the logical group index in memory; no generated routing YAML
+is required. Edit the project contract and validate it:
 
 ```sh
-python .github/scripts/ci/validate_flagcicd_contract.py --write-catalog
+python .github/scripts/ci/validate_flagcicd_contract.py
 python .github/scripts/ci/validate_unit_group_catalog.py
 ```
 

@@ -3,7 +3,7 @@
 
 The planner combines three inputs:
 
-* the logical catalog (.github/configs/unit_group_routes.yml),
+* the project contract (.flagcicd/project.yaml),
 * the platform router (generate_matrix.py), and
 * each platform's configured unit groups.
 
@@ -35,7 +35,6 @@ import unit_group_routing
 import yaml
 
 PLAN_SCHEMA_VERSION = flagcicd_contract.PLAN_SCHEMA
-DEFAULT_CATALOG = ".github/configs/unit_group_routes.yml"
 
 
 def _sha256(value: Any) -> str:
@@ -58,16 +57,6 @@ def _default_stage(event_name: str) -> str:
     if event_name == "push":
         return "branch"
     return "manual"
-
-
-def _default_selection(event_name: str) -> str:
-    if event_name == "pull_request":
-        return "affected"
-    if event_name in {"schedule", "push"}:
-        return "configured"
-    if event_name == "workflow_dispatch":
-        return "requested"
-    return "all"
 
 
 def _parse_platforms(value: str, known: set[str]) -> list[str]:
@@ -587,7 +576,6 @@ def main() -> int:
     parser.add_argument("--base-ref", default="main")
     parser.add_argument("--configs-dir", default=".github/configs")
     parser.add_argument("--project", default=".flagcicd/project.yaml")
-    parser.add_argument("--catalog", default=None)
     parser.add_argument("--changed-files", default=None, help="Newline-separated paths for testing")
     parser.add_argument("--platforms", default=None, help="JSON array of selected platforms")
     parser.add_argument(
@@ -622,44 +610,31 @@ def main() -> int:
         project_path = config_root / args.project
         if config_root != root.resolve() and not project_path.is_file():
             raise ValueError("Candidate checkout must contain the FlagCICD project contract")
-        project: dict[str, Any] | None = None
-        project_hash = ""
-        if project_path.is_file():
-            project, project_digest = flagcicd_contract.load_project(project_path)
-            project_hash = f"sha256:{project_digest}"
-            # Candidate config is data. Stage/gate policy remains controlled by
-            # the trusted workflow checkout, pinned for the entire requested run.
-            policy_project = project
-            if config_root != root.resolve():
-                policy_project, _ = flagcicd_contract.load_project(root / args.project)
-            stage_config = policy_project["stages"].get(stage)
-            if stage_config is None:
-                raise ValueError(f"Stage {stage!r} is not declared in the project contract")
-            selection = args.selection or stage_config["selection"]
-            configured_level = stage_config["default_level"]
-            if stage_config.get("fixed_level") and args.level is not None:
-                if args.level != configured_level:
-                    raise ValueError(
-                        f"Stage {stage!r} fixes level {configured_level}; received {args.level}"
-                    )
-            level = (
-                configured_level
-                if stage_config.get("fixed_level")
-                else (args.level or configured_level)
-            )
-            if level not in project["levels"]:
-                raise ValueError(f"Level {level!r} is not declared in the project contract")
-            catalog = unit_group_routing.load_catalog(project_path)
-            legacy_path = config_root / (args.catalog or project["catalog_source"])
-            if legacy_path.is_file():
-                legacy = yaml.safe_load(legacy_path.read_text())
-                errors = flagcicd_contract.contract_catalog_errors(project, legacy)
-                if errors:
-                    raise ValueError("; ".join(errors))
-        else:
-            selection = args.selection or _default_selection(args.event_name)
-            level = args.level or "L1"
-            catalog = unit_group_routing.load_catalog(root / (args.catalog or DEFAULT_CATALOG))
+        project, project_digest = flagcicd_contract.load_project(project_path)
+        project_hash = f"sha256:{project_digest}"
+        # Candidate config is data. Stage/gate policy remains controlled by
+        # the trusted workflow checkout, pinned for the entire requested run.
+        policy_project = project
+        if config_root != root.resolve():
+            policy_project, _ = flagcicd_contract.load_project(root / args.project)
+        stage_config = policy_project["stages"].get(stage)
+        if stage_config is None:
+            raise ValueError(f"Stage {stage!r} is not declared in the project contract")
+        selection = args.selection or stage_config["selection"]
+        configured_level = stage_config["default_level"]
+        if stage_config.get("fixed_level") and args.level is not None:
+            if args.level != configured_level:
+                raise ValueError(
+                    f"Stage {stage!r} fixes level {configured_level}; received {args.level}"
+                )
+        level = (
+            configured_level
+            if stage_config.get("fixed_level")
+            else (args.level or configured_level)
+        )
+        if level not in project["levels"]:
+            raise ValueError(f"Level {level!r} is not declared in the project contract")
+        catalog = unit_group_routing.load_catalog(project_path)
         rules = generate_matrix._load_watch_rules(configs_dir)
         changed, unknown_diff = _changed_files(args)
         if selection in ("all", "configured", "requested"):
@@ -688,7 +663,7 @@ def main() -> int:
             base_sha=_base_sha(args.base_sha, args.base_ref),
             project_hash=project_hash,
             control_sha=_git("rev-parse", "HEAD"),
-            gate_policy=policy_project.get("gate_policy", {}).get(stage, {}) if project else {},
+            gate_policy=policy_project.get("gate_policy", {}).get(stage, {}),
         )
     except (
         unit_group_routing.CatalogError,

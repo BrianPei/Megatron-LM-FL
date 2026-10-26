@@ -1,7 +1,6 @@
 schema_version: flagcicd.project/v1
 repository: Megatron-LM-FL
 plan_schema: 1
-catalog_source: .github/configs/unit_group_routes.yml
 stages:
   pr:
     selection: affected

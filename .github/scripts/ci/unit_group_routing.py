@@ -18,9 +18,9 @@ import subprocess
 from dataclasses import dataclass, field
 from typing import Any, Iterable
 
+import flagcicd_contract
 import yaml
 
-SCHEMA_VERSION = 1
 GROUP_NAME = re.compile(r"[A-Za-z0-9_-]+")
 _STATUSES = ("active", "planned", "unsupported")
 
@@ -266,27 +266,12 @@ def path_exists(root: pathlib.Path, pattern: str) -> bool:
 
 
 def load_catalog(path: pathlib.Path) -> Catalog:
-    """Load and schema-check a catalog file."""
+    """Load the project contract and build its validated routing catalog in memory."""
     try:
-        raw = path.read_bytes()
-        data = yaml.safe_load(raw)
-    except (OSError, yaml.YAMLError) as error:
-        raise CatalogError(f"Cannot read unit group catalog {path}: {error}") from error
-    if not isinstance(data, dict):
-        raise CatalogError(f"Unit group catalog must be a mapping: {path}")
-    if data.get("schema_version") == "flagcicd.project/v1":
-        # During the migration the planner can read the repository contract
-        # directly while callers that still expect Catalog keep the same API.
-        try:
-            from flagcicd_contract import load_project, project_to_catalog
-
-            project, _ = load_project(path)
-        except (ImportError, ValueError) as error:
-            raise CatalogError(f"Invalid FlagCICD project contract {path}: {error}") from error
-        data = project_to_catalog(project)
-    if data.get("schema_version") != SCHEMA_VERSION:
-        raise CatalogError(f"Unsupported unit group catalog schema: {data.get('schema_version')!r}")
-
+        project, digest = flagcicd_contract.load_project(path)
+    except ValueError as error:
+        raise CatalogError(f"Invalid FlagCICD project contract {path}: {error}") from error
+    data = flagcicd_contract.project_to_catalog(project)
     global_config = data.get("global") or {}
     if not isinstance(global_config, dict):
         raise CatalogError("global must be a mapping")
@@ -350,7 +335,7 @@ def load_catalog(path: pathlib.Path) -> Catalog:
         documentation_suffixes=documentation_suffixes,
         shared_paths=shared_paths,
         coverage_sources=coverage_sources,
-        digest=hashlib.sha256(raw).hexdigest(),
+        digest=digest,
     )
     errors = catalog.validate()
     if errors:

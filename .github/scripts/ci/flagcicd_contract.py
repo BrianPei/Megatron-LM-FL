@@ -3,8 +3,8 @@
 
 The project contract owns stage, level, and logical-group semantics.
 Platform YAML remains the adapter for images, runners, setup, and concrete
-execution commands. The legacy catalog is a generated compatibility projection
-of the project file, which is the only editable source of routing policy.
+execution commands. The project file is the only source of routing policy;
+logical groups are indexed in memory for routing and validation.
 """
 
 from __future__ import annotations
@@ -53,7 +53,6 @@ def load_project(path: pathlib.Path) -> tuple[dict[str, Any], str]:
             "schema_version",
             "repository",
             "plan_schema",
-            "catalog_source",
             "stages",
             "levels",
             "global",
@@ -69,8 +68,6 @@ def load_project(path: pathlib.Path) -> tuple[dict[str, Any], str]:
         )
     if not isinstance(project.get("repository"), str) or not project["repository"].strip():
         raise ContractError("repository must be a non-empty string")
-    if not isinstance(project.get("catalog_source"), str) or not project["catalog_source"].strip():
-        raise ContractError("catalog_source must be a non-empty string")
     if project.get("plan_schema") != PLAN_SCHEMA:
         raise ContractError(f"plan_schema must be {PLAN_SCHEMA!r}")
     for key in ("stages", "levels", "test_groups", "coverage", "gate_policy"):
@@ -162,7 +159,7 @@ def load_project(path: pathlib.Path) -> tuple[dict[str, Any], str]:
 
 
 def project_to_catalog(project: dict[str, Any]) -> dict[str, Any]:
-    """Convert the project contract to the legacy catalog shape during migration."""
+    """Build the in-memory routing catalog indexed by logical group name."""
     groups: dict[str, dict[str, Any]] = {}
     for entry in project["test_groups"]:
         group = copy.deepcopy(entry)
@@ -175,43 +172,6 @@ def project_to_catalog(project: dict[str, Any]) -> dict[str, Any]:
         "levels": copy.deepcopy(project["levels"]),
         "groups": groups,
     }
-
-
-def contract_catalog_errors(project: dict[str, Any], legacy_catalog: dict[str, Any]) -> list[str]:
-    """Return semantic differences between the new contract and legacy catalog."""
-    expected = project_to_catalog(project)
-    errors: list[str] = []
-    if legacy_catalog.get("schema_version") != 1:
-        errors.append("legacy catalog has an unsupported schema version")
-    for section in ("global", "coverage"):
-        if expected.get(section) != legacy_catalog.get(section):
-            errors.append(f"contract section differs from legacy catalog: {section}")
-    legacy_levels = legacy_catalog.get("levels", {})
-    project_levels = project.get("levels", {})
-    unexpected_legacy_levels = set(legacy_levels) - set(project_levels)
-    if unexpected_legacy_levels:
-        errors.append(
-            "legacy catalog declares unknown levels: " + ", ".join(sorted(unexpected_legacy_levels))
-        )
-    for name in sorted(set(project_levels) & set(legacy_levels)):
-        project_level = project_levels[name]
-        legacy_level = legacy_levels[name]
-        if project_level.get("required_groups", []) != legacy_level.get("required_groups", []):
-            errors.append(f"contract level differs from legacy catalog: {name}")
-    missing_active_levels = set(project_levels) - set(legacy_levels)
-    if missing_active_levels:
-        errors.append(
-            "legacy catalog is missing active project levels: "
-            + ", ".join(sorted(missing_active_levels))
-        )
-    expected_groups = expected["groups"]
-    actual_groups = legacy_catalog.get("groups", {})
-    if set(expected_groups) != set(actual_groups):
-        errors.append("contract and legacy catalog declare different group names")
-    for name in sorted(set(expected_groups) & set(actual_groups)):
-        if expected_groups[name] != actual_groups[name]:
-            errors.append(f"contract group differs from legacy catalog: {name}")
-    return errors
 
 
 def content_hash(value: Any) -> str:

@@ -22,11 +22,10 @@ workflows. Platform-specific behavior belongs in the config or setup script;
 the common workflows should not need a new hardware conditional.
 
 The project-facing contract is `.flagcicd/project.yaml`. It owns stage, level,
-logical-group and gate-policy semantics. The existing
-`.github/configs/unit_group_routes.yml` is a validated compatibility projection
-for older helpers. Edit the project contract, then run
-`python .github/scripts/ci/validate_flagcicd_contract.py --write-catalog`;
-do not hand-edit the generated projection.
+logical-group and gate-policy semantics. The planner and validators read this
+file directly; there is no generated catalog to maintain. After editing it, run
+`python .github/scripts/ci/validate_flagcicd_contract.py` and
+`python .github/scripts/ci/validate_unit_group_catalog.py`.
 
 The execution path is:
 
@@ -228,10 +227,8 @@ group when its runtime cannot execute that boundary. A root glob such as
 `tests/unit_tests/test_*.py` also does not include tests in subdirectories.
 
 If a new top-level directory is not covered, add it to
-`.flagcicd/project.yaml`, regenerate the catalog with
-`python .github/scripts/ci/validate_flagcicd_contract.py --write-catalog`,
-and then register an execution group in
-every platform config that should run it:
+`.flagcicd/project.yaml` and register an execution group in every platform
+config that should run it. Then run both validators listed above:
 
 ```yaml
 test_matrix:
@@ -259,9 +256,7 @@ selects it. The group run is the final collection check.
 
 ### Logical groups and diff routing
 
-`.flagcicd/project.yaml` owns logical routing.
-`.github/configs/unit_group_routes.yml` is its generated compatibility projection;
-do not edit it directly. Each
+`.flagcicd/project.yaml` owns logical routing and is read directly. Each
 group declares `status: active|planned|unsupported`, and may declare an
 `execution_group` alias (for example, `plugin` executes as `core`). An alias
 must target an existing active group, and required levels are checked through
