@@ -22,7 +22,7 @@ workflows. Platform-specific behavior belongs in the config or setup script;
 the common workflows should not need a new hardware conditional.
 
 The project-facing contract is `.flagcicd/project.yaml`. It owns stage, level,
-resource, logical-group, and gate-policy semantics. The existing
+logical-group and gate-policy semantics. The existing
 `.github/configs/unit_group_routes.yml` is a validated compatibility projection
 for older helpers. Edit the project contract, then run
 `python .github/scripts/ci/validate_flagcicd_contract.py --write-catalog`;
@@ -228,7 +228,9 @@ group when its runtime cannot execute that boundary. A root glob such as
 `tests/unit_tests/test_*.py` also does not include tests in subdirectories.
 
 If a new top-level directory is not covered, add it to
-`.github/configs/unit_group_routes.yml` and then register an execution group in
+`.flagcicd/project.yaml`, regenerate the catalog with
+`python .github/scripts/ci/validate_flagcicd_contract.py --write-catalog`,
+and then register an execution group in
 every platform config that should run it:
 
 ```yaml
@@ -257,7 +259,9 @@ selects it. The group run is the final collection check.
 
 ### Logical groups and diff routing
 
-`.github/configs/unit_group_routes.yml` is the logical routing catalog. Each
+`.flagcicd/project.yaml` owns logical routing.
+`.github/configs/unit_group_routes.yml` is its generated compatibility projection;
+do not edit it directly. Each
 group declares `status: active|planned|unsupported`, and may declare an
 `execution_group` alias (for example, `plugin` executes as `core`). An alias
 must target an existing active group, and required levels are checked through
@@ -302,9 +306,9 @@ Routing rules:
   `Configured matrix: complete|incomplete` from
   `Logical catalog completeness: full|partial`.
 - The repository contract enables PR `L1`, branch/nightly `L2`, and manual `L2`
-  planning. `L3` and `L4` remain explicitly planned; the planner rejects them
-  until benchmark, coverage-regression, release, and cross-repository acceptance
-  adapters are implemented.
+  planning. These levels select required groups, not separate acceptance
+  pipelines or device counts. L0/L3/L4 and release acceptance remain future
+  design work outside runtime configuration until execution and gates exist.
 - Documentation-only changes produce no platform jobs, even when a
   `platform:<name>` label is present. Labels override routing only for PRs that
   contain at least one code change; a mixed documentation and code change is
@@ -329,10 +333,12 @@ Routing rules:
   the final CI gate verifies one hash across all platforms plus exact
   expected/executed group equality. The `plan_hash` is stable for identical
   source/base SHAs, configs, and changed files.
-- `resource_class`, `timeout_minutes`, and `parallel_safe` are advisory catalog
-  metadata. They do not currently change scheduling: each platform/device runs
-  one unit job, groups run sequentially, the timeout is fixed by the runner, and
-  there is no exclusive lock or group-level parallelism.
+- Managed DooD runners guarantee one job per physical machine. Different
+  machines may run platform/device jobs concurrently. Within a unit job, groups
+  execute sequentially with a runner-enforced 3600-second timeout per attempt.
+  Platform setup verifies available device capacity against `nproc_per_node`.
+  The catalog does not expose resource locks, group parallelism, or inert timeout
+  overrides. Runner deployment must preserve physical-machine exclusivity.
 
 Unit coverage is scoped to `megatron/plugin/` and `megatron/core/` in the
 catalog and the runner. It is core/plugin-line coverage, not full unit-group

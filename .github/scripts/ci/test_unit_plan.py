@@ -1167,7 +1167,7 @@ class PlannerCliTests(unittest.TestCase):
                 timeout=30,
             )
             self.assertNotEqual(result.returncode, 0)
-            self.assertIn("declared but not implemented", result.stderr)
+            self.assertIn("invalid choice", result.stderr)
 
     def test_project_contract_rejects_unimplemented_level(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -1196,7 +1196,7 @@ class PlannerCliTests(unittest.TestCase):
                 timeout=30,
             )
             self.assertNotEqual(result.returncode, 0)
-            self.assertIn("Level 'L3' is declared but not implemented", result.stderr)
+            self.assertIn("Level 'L3' is not declared in the project contract", result.stderr)
 
     def test_documentation_with_code_and_label_runs_the_labeled_platform(self):
         with tempfile.TemporaryDirectory() as directory:

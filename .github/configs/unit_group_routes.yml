@@ -2,7 +2,6 @@
 # Regenerate: python .github/scripts/ci/validate_flagcicd_contract.py --write-catalog
 schema_version: 1
 global:
-  default_timeout_minutes: 60
   documentation_paths:
   - docs/
   documentation_suffixes:
@@ -28,31 +27,15 @@ coverage:
   - megatron/plugin/
   - megatron/core/
 levels:
-  L0:
-    purpose: preflight, checkout, configuration, image and dependency checks
-    required_groups:
-    - core
   L1:
-    purpose: single-device unit and numerical smoke tests
+    purpose: PR affected-group routing with core required
     required_groups:
     - core
   L2:
-    purpose: distributed, tensor, pipeline and checkpoint tests
+    purpose: configured or requested groups with core and models required
     required_groups:
     - core
     - models
-  L3:
-    purpose: benchmark, performance and coverage regression
-    required_groups:
-    - core
-    - models
-    status: planned
-  L4:
-    purpose: release, backward compatibility and cross-repository acceptance
-    required_groups:
-    - core
-    - models
-    status: planned
 groups:
   core:
     description: Model-parallel configuration, process groups, and root unit tests.
@@ -91,7 +74,6 @@ groups:
     - megatron/core/typed_torch.py
     - megatron/core/utils.py
     depends_on: []
-    resource_class: single_device
   models:
     description: Model construction, configuration, and forward paths.
     status: active
@@ -100,7 +82,6 @@ groups:
     - tests/unit_tests/models/
     depends_on:
     - core
-    resource_class: multi_gpu_exclusive
   transformer:
     description: Transformer blocks, attention, and layer specifications.
     status: active
@@ -109,7 +90,6 @@ groups:
     - tests/unit_tests/transformer/
     depends_on:
     - models
-    resource_class: multi_gpu_exclusive
   distributed:
     description: Distributed data parallel, gradient sync, and communication state.
     status: active
@@ -119,7 +99,6 @@ groups:
     depends_on:
     - pipeline_parallel
     - tensor_parallel
-    resource_class: communication_exclusive
   tensor_parallel:
     description: Tensor-parallel mappings and parameter sharding.
     status: active
@@ -128,7 +107,6 @@ groups:
     - tests/unit_tests/tensor_parallel/
     depends_on:
     - models
-    resource_class: communication_exclusive
   pipeline_parallel:
     description: Pipeline schedules, rank layout, and microbatch flow.
     status: active
@@ -137,7 +115,6 @@ groups:
     - tests/unit_tests/pipeline_parallel/
     depends_on:
     - models
-    resource_class: communication_exclusive
   dist_checkpointing:
     description: Distributed checkpoint serialization and loading.
     status: active
@@ -145,7 +122,6 @@ groups:
     - megatron/core/dist_checkpointing/
     - tests/unit_tests/dist_checkpointing/
     depends_on: []
-    resource_class: checkpoint_exclusive
   data:
     description: Dataset construction and data loading.
     status: active
@@ -155,7 +131,6 @@ groups:
     - tests/unit_tests/data/
     depends_on:
     - core
-    resource_class: single_device
   fusions:
     description: Fused operators and fused layer paths.
     status: active
@@ -165,7 +140,6 @@ groups:
     depends_on:
     - transformer
     - models
-    resource_class: multi_gpu_exclusive
   others:
     description: Post-training, tokenizer, and utility tests grouped by the platform
       configs.
@@ -180,7 +154,6 @@ groups:
     - tests/unit_tests/utils/
     depends_on:
     - core
-    resource_class: single_device
   optimizer:
     description: Optimizer implementations and parameter schedulers.
     status: planned
@@ -190,7 +163,6 @@ groups:
     - tests/unit_tests/optimizer/
     depends_on:
     - core
-    resource_class: single_device
   inference:
     description: Inference engine, inference parameters, and serving entry points.
     status: planned
@@ -201,7 +173,6 @@ groups:
     - tests/unit_tests/inference/
     depends_on:
     - models
-    resource_class: single_device
   rl:
     description: Reinforcement-learning agents, rollout, and serving paths.
     status: planned
@@ -211,7 +182,6 @@ groups:
     - tests/unit_tests/rl/
     depends_on:
     - core
-    resource_class: multi_gpu_exclusive
   training:
     description: Training loop, checkpointing, initialization, and argument parsing.
     status: planned
@@ -224,7 +194,6 @@ groups:
     depends_on:
     - core
     - models
-    resource_class: multi_gpu_exclusive
   ssm:
     description: State-space model layers.
     status: planned
@@ -235,7 +204,6 @@ groups:
     depends_on:
     - models
     - transformer
-    resource_class: multi_gpu_exclusive
   resharding:
     description: Checkpoint resharding between parallel layouts.
     status: planned
@@ -246,7 +214,6 @@ groups:
     depends_on:
     - dist_checkpointing
     - distributed
-    resource_class: checkpoint_exclusive
   export:
     description: Model export paths.
     status: planned
@@ -256,7 +223,6 @@ groups:
     - tests/unit_tests/export/
     depends_on:
     - models
-    resource_class: single_device
   extensions:
     description: Transformer Engine and third-party extension interfaces.
     status: planned
@@ -267,7 +233,6 @@ groups:
     depends_on:
     - core
     - models
-    resource_class: single_device
   a2a_overlap:
     description: All-to-all overlap tests.
     status: planned
@@ -276,7 +241,6 @@ groups:
     - tests/unit_tests/a2a_overlap/
     depends_on:
     - distributed
-    resource_class: communication_exclusive
   elastification:
     description: Elastic training orchestration.
     status: planned
@@ -286,7 +250,6 @@ groups:
     - tests/unit_tests/elastification/
     depends_on:
     - core
-    resource_class: multi_gpu_exclusive
   plugin:
     description: Plugin framework and vendor plugin code.
     status: active
@@ -296,7 +259,6 @@ groups:
     - megatron/plugin/tests/
     depends_on:
     - core
-    resource_class: single_device
   dsa_kernel:
     description: DSA fused-kernel accuracy and performance tests under the plugin
       test tree.
@@ -308,7 +270,6 @@ groups:
     depends_on:
     - core
     - transformer
-    resource_class: multi_gpu_exclusive
   tools:
     description: Repository tooling tests.
     status: planned
@@ -317,4 +278,3 @@ groups:
     - tests/unit_tests/tools/
     depends_on:
     - core
-    resource_class: cpu_only

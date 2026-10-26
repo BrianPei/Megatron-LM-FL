@@ -24,34 +24,55 @@ class ContractTests(unittest.TestCase):
         project, _ = flagcicd_contract.load_project(ROOT / ".flagcicd/project.yaml")
         self.assertEqual(project["stages"]["pr"]["selection"], "affected")
         self.assertEqual(project["stages"]["nightly"]["selection"], "configured")
-        self.assertTrue(project["stages"]["nightly"]["full_configured_matrix"])
-        self.assertEqual(project["stages"]["release"]["status"], "planned")
+        self.assertTrue(project["stages"]["nightly"]["fixed_level"])
+        self.assertEqual(set(project["stages"]), {"pr", "branch", "nightly", "manual"})
+        self.assertEqual(set(project["levels"]), {"L1", "L2"})
         self.assertEqual(project["gate_policy"]["pr"]["required_plan_status"], ["ready", "partial"])
 
-    def test_project_to_catalog_drops_contract_only_fields(self) -> None:
-        project, _ = flagcicd_contract.load_project(ROOT / ".flagcicd/project.yaml")
-        catalog = flagcicd_contract.project_to_catalog(project)
-        self.assertEqual(set(catalog["groups"]), {item["name"] for item in project["test_groups"]})
-        self.assertNotIn("kind", catalog["groups"]["core"])
-        self.assertNotIn("evidence", catalog["groups"]["core"])
+    def test_removed_configuration_is_rejected(self) -> None:
+        cases = [
+            ("project", "resource_classes", {}),
+            ("global", "default_timeout_minutes", 1),
+            ("group", "resource_class", "single_device"),
+            ("group", "parallel_safe", True),
+            ("group", "timeout_minutes", 1),
+            ("group", "kind", "unit"),
+            ("group", "evidence", "junit"),
+            ("stage", "full_configured_matrix", True),
+            ("stage", "status", "planned"),
+            ("level", "status", "planned"),
+        ]
+        for section, key, value in cases:
+            with self.subTest(section=section, key=key), tempfile.TemporaryDirectory() as directory:
+                project, _ = flagcicd_contract.load_project(ROOT / ".flagcicd/project.yaml")
+                target = {
+                    "project": project,
+                    "global": project["global"],
+                    "group": project["test_groups"][0],
+                    "stage": project["stages"]["pr"],
+                    "level": project["levels"]["L1"],
+                }[section]
+                target[key] = value
+                path = pathlib.Path(directory) / "project.yaml"
+                path.write_text(yaml.safe_dump(project, sort_keys=False))
+                with self.assertRaisesRegex(flagcicd_contract.ContractError, "unsupported fields"):
+                    flagcicd_contract.load_project(path)
 
     def test_project_and_legacy_catalog_must_have_the_same_levels(self) -> None:
         project, _ = flagcicd_contract.load_project(ROOT / ".flagcicd/project.yaml")
         legacy = flagcicd_contract.project_to_catalog(project)
-        legacy["levels"].pop("L4")
-        self.assertEqual(flagcicd_contract.contract_catalog_errors(project, legacy), [])
         legacy["levels"].pop("L2")
         errors = flagcicd_contract.contract_catalog_errors(project, legacy)
         self.assertIn("missing active project levels", errors[0])
         self.assertIn("L2", project["levels"])
 
-    def test_active_stage_cannot_reference_planned_level(self) -> None:
+    def test_stage_cannot_reference_unknown_level(self) -> None:
         project, _ = flagcicd_contract.load_project(ROOT / ".flagcicd/project.yaml")
         project["stages"]["pr"]["default_level"] = "L4"
         with tempfile.TemporaryDirectory() as directory:
             path = pathlib.Path(directory) / "project.yaml"
             path.write_text(yaml.safe_dump(project, sort_keys=False))
-            with self.assertRaisesRegex(flagcicd_contract.ContractError, "active stage pr"):
+            with self.assertRaisesRegex(flagcicd_contract.ContractError, "unknown level"):
                 flagcicd_contract.load_project(path)
 
 

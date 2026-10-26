@@ -31,7 +31,7 @@ the platform pipeline; platform workflows contain no duplicate lint job. The sha
 ## Unit group routing
 
 `.flagcicd/project.yaml` is the repository-facing FlagCICD contract. It defines
-the PR/branch/nightly/manual stages, L0-L4 levels, resource classes, coverage
+the PR/branch/nightly/manual stages, L1/L2 required-group policies, coverage
 boundary, and logical groups. `.github/configs/unit_group_routes.yml` is kept as
 a generated compatibility projection for older helper APIs; the planner reads
 the project contract first and lint fails if the projection drifts. Edit only
@@ -43,7 +43,7 @@ python .github/scripts/ci/validate_unit_group_catalog.py
 ```
 
 The logical catalog defines logical groups, their source and
-test paths, dependencies, resource classes, status (`active`, `planned`, or
+test paths, dependencies, status (`active`, `planned`, or
 `unsupported`), and the groups required by each level. Platform configs remain
 authoritative: each declares the execution groups it runs and must declare every
 other active group in `unsupported_groups` with a reason. A platform may also
@@ -90,17 +90,16 @@ The project gate policy is stage-specific. The PR stage accepts `ready` and
 `partial` plans because a known shared path intentionally expands to the full
 active matrix; unknown paths, route conflicts, direct planned groups, and
 required gaps remain `blocked` and cannot pass. Branch, nightly, and manual
-stages currently require `ready`; release is declared but not implemented.
+stages currently require `ready`.
 The `/ci run` and manual requested entrypoint uses the same planner and the same
 evidence gate; its report job downloads the requested plan and platform
 attestations before updating the supplemental check.
 
 The contract currently enables the PR (`L1`), branch (`L2`), nightly (`L2`),
-and manual (`L2`) stages. `L3` and `L4` are declared as planned and the
-planner rejects an explicit request for those stages/levels until their
-benchmark, coverage-regression, release, and cross-repository acceptance
-commands are wired into platform adapters. Declaring them in the contract does
-not claim that those tests already run.
+and manual (`L2`) stages. L1/L2 select required groups; they are not independent
+single-device/distributed acceptance pipelines. Both use the platform's actual
+`nproc_per_node`. L0/L3/L4 and release acceptance are future design work, not
+runtime configuration. Add them only with executable adapters and gate evidence.
 
 Blocking conditions:
 
@@ -153,10 +152,13 @@ by the planner. The plan records `control_sha`, `source_sha`, and per-platform
 checks those values before reading its configuration, preventing a plan built
 from old default-branch configuration from silently omitting new PR groups.
 
-`resource_class`, `timeout_minutes`, and `parallel_safe` are currently advisory
-metadata only. A platform still runs one unit job per platform/device, groups
-execute sequentially, the group timeout is fixed by the runner, and there is no
-exclusive lock or group-level parallel scheduling.
+Managed DooD runner infrastructure guarantees one CI job per physical machine.
+Platform/device jobs may run on different machines; unit groups within each job
+run sequentially. Device capacity is checked by platform setup. The unit runner
+enforces a 3600-second timeout per attempt. Resource locks and group scheduling
+are not repository features, and the catalog has no advisory scheduling knobs.
+Keep this infrastructure guarantee when changing runner deployment; multiple
+runner instances on one host must not share devices concurrently.
 
 Coverage sources in the catalog (`megatron/plugin/`, `megatron/core/`) are the
 unit coverage boundary; this is core/plugin coverage, not full Megatron

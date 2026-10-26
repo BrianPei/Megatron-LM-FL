@@ -40,9 +40,6 @@ class Group:
     execution_group: str | None
     paths: tuple[str, ...]
     depends_on: tuple[str, ...]
-    resource_class: str
-    timeout_minutes: int
-    parallel_safe: bool
 
 
 @dataclass(frozen=True)
@@ -66,7 +63,6 @@ class Catalog:
     documentation_suffixes: tuple[str, ...]
     shared_paths: tuple[str, ...]
     coverage_sources: tuple[str, ...]
-    default_timeout_minutes: int
     digest: str
 
     def matches_all(self, path: str) -> list[str]:
@@ -302,14 +298,6 @@ def load_catalog(path: pathlib.Path) -> Catalog:
     if not isinstance(coverage, dict):
         raise CatalogError("coverage must be a mapping")
     coverage_sources = _string_tuple(coverage, "sources", required=True)
-    default_timeout = global_config.get("default_timeout_minutes", 60)
-    if (
-        not isinstance(default_timeout, int)
-        or isinstance(default_timeout, bool)
-        or default_timeout <= 0
-    ):
-        raise CatalogError("global.default_timeout_minutes must be a positive integer")
-
     groups: dict[str, Group] = {}
     for name, entry in _mapping(data.get("groups"), "groups").items():
         if not isinstance(name, str) or not GROUP_NAME.fullmatch(name):
@@ -331,15 +319,6 @@ def load_catalog(path: pathlib.Path) -> Catalog:
             not isinstance(execution_group, str) or not GROUP_NAME.fullmatch(execution_group)
         ):
             raise CatalogError(f"Group {name} has an invalid execution_group")
-        resource_class = entry.get("resource_class", "single_device")
-        if not isinstance(resource_class, str) or not resource_class:
-            raise CatalogError(f"Group {name} has an invalid resource_class")
-        timeout = entry.get("timeout_minutes", default_timeout)
-        if not isinstance(timeout, int) or isinstance(timeout, bool) or timeout <= 0:
-            raise CatalogError(f"Group {name} has an invalid timeout_minutes")
-        parallel_safe = entry.get("parallel_safe", False)
-        if not isinstance(parallel_safe, bool):
-            raise CatalogError(f"Group {name} has an invalid parallel_safe value")
         groups[name] = Group(
             name=name,
             description=str(entry.get("description", "")),
@@ -348,9 +327,6 @@ def load_catalog(path: pathlib.Path) -> Catalog:
             execution_group=execution_group,
             paths=paths,
             depends_on=depends_on,
-            resource_class=resource_class,
-            timeout_minutes=timeout,
-            parallel_safe=parallel_safe,
         )
 
     levels: dict[str, Level] = {}
@@ -374,7 +350,6 @@ def load_catalog(path: pathlib.Path) -> Catalog:
         documentation_suffixes=documentation_suffixes,
         shared_paths=shared_paths,
         coverage_sources=coverage_sources,
-        default_timeout_minutes=default_timeout,
         digest=hashlib.sha256(raw).hexdigest(),
     )
     errors = catalog.validate()
@@ -638,10 +613,7 @@ def materialize_groups(
             "execution_group": execution_group,
             "status": group.status,
             "reason": group.reason if reason is None else reason,
-            "resource_class": group.resource_class,
             "required": name in required,
-            "timeout_minutes": group.timeout_minutes,
-            "parallel_safe": group.parallel_safe,
             "reasons": reasons.get(name, []),
         }
 

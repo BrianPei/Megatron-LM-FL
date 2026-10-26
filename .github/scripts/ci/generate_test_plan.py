@@ -593,9 +593,7 @@ def main() -> int:
     parser.add_argument(
         "--selection", choices=("affected", "configured", "requested", "all"), default=None
     )
-    parser.add_argument(
-        "--stage", choices=("pr", "branch", "nightly", "manual", "release"), default=None
-    )
+    parser.add_argument("--stage", choices=("pr", "branch", "nightly", "manual"), default=None)
     parser.add_argument("--level", default=None)
     parser.add_argument("--output", default="unit-test-plan.json")
     parser.add_argument("--summary", default=None)
@@ -637,8 +635,6 @@ def main() -> int:
             stage_config = policy_project["stages"].get(stage)
             if stage_config is None:
                 raise ValueError(f"Stage {stage!r} is not declared in the project contract")
-            if stage_config.get("status", "active") == "planned":
-                raise ValueError(f"Stage {stage!r} is declared but not implemented")
             selection = args.selection or stage_config["selection"]
             configured_level = stage_config["default_level"]
             if stage_config.get("fixed_level") and args.level is not None:
@@ -651,8 +647,8 @@ def main() -> int:
                 if stage_config.get("fixed_level")
                 else (args.level or configured_level)
             )
-            if project["levels"].get(level, {}).get("status", "active") == "planned":
-                raise ValueError(f"Level {level!r} is declared but not implemented")
+            if level not in project["levels"]:
+                raise ValueError(f"Level {level!r} is not declared in the project contract")
             catalog = unit_group_routing.load_catalog(project_path)
             legacy_path = config_root / (args.catalog or project["catalog_source"])
             if legacy_path.is_file():
