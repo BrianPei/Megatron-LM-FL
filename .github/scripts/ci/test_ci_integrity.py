@@ -132,8 +132,24 @@ class EvidenceIntegrityTests(unittest.TestCase):
             (root / "normal-0.xml").write_text('<testsuite tests="1"><testcase/></testsuite>')
             with self.assertRaisesRegex(ValueError, "report set"):
                 evidence.collect(root, ["normal-0.xml", "normal-1.xml"])
-            (root / "normal-0.xml").write_text('<testsuite tests="2"><testcase/></testsuite>')
-            with self.assertRaisesRegex(ValueError, "count mismatch"):
+            (root / "normal-0.xml").write_text(
+                '<testsuite tests="2" skipped="0" failures="0" errors="0">'
+                "<testcase/></testsuite>"
+            )
+            report = evidence.collect(root, ["normal-0.xml"])
+            self.assertEqual(report["reports"]["normal-0.xml"]["tests"], 2)
+            self.assertEqual(report["reports"]["normal-0.xml"]["passed"], 2)
+            (root / "normal-0.xml").write_text(
+                '<testsuite tests="1" skipped="2" failures="0" errors="0">'
+                "<testcase/></testsuite>"
+            )
+            with self.assertRaisesRegex(ValueError, "inconsistent JUnit counts"):
+                evidence.collect(root, ["normal-0.xml"])
+            (root / "normal-0.xml").write_text(
+                '<testsuite tests="1" skipped="0" failures="0" errors="0">'
+                "<testcase><failure/></testcase></testsuite>"
+            )
+            with self.assertRaisesRegex(ValueError, "failures count mismatch"):
                 evidence.collect(root, ["normal-0.xml"])
             (root / "normal-0.xml").write_text('<testsuite><testcase/></testsuite>')
             (root / "experimental-0.xml").write_text('<testsuite tests="0"/>')
