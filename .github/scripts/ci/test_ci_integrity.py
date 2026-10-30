@@ -75,8 +75,8 @@ class RoutingIntegrityTests(unittest.TestCase):
     def test_configured_nightly_still_selects_every_configured_group(self) -> None:
         plan = build_plan([], selection="configured", level="L2", event="schedule")
         self.assertEqual(plan["plan_status"], "ready")
-        self.assertEqual(len(plan["platforms"]), 8)
-        self.assertEqual(sum(map(len, plan["expected_unit_groups"].values())), 71)
+        self.assertEqual(len(plan["platforms"]), 9)
+        self.assertEqual(sum(map(len, plan["expected_unit_groups"].values())), 80)
         for platform in plan["platforms"]:
             self.assertEqual(
                 plan["expected_unit_groups"][platform["name"]], platform["configured_groups"]

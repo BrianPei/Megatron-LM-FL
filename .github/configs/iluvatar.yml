@@ -1,0 +1,108 @@
+# Iluvatar uses the same platform contract and shared pipeline as Hygon.
+# TODO: replace ci_image and runner_labels with provisioned infrastructure.
+# TODO: confirm device_types, nproc_per_node, host asset paths, and container
+# device/driver options with the Iluvatar runner owner. Eight ranks and the asset
+# layout below follow the existing platform convention; they are not verified.
+# Functional cases use the existing lightweight mode until native golden values
+# are captured. Do not reuse another platform's golden values or failure skips.
+hardware_name: iluvatar
+display_name: Iluvatar Tests
+setup_script: .github/scripts/set_env_iluvatar.sh
+ci_image: TODO_ILUVATAR_CI_IMAGE
+runner_labels:
+  - TODO_ILUVATAR_RUNNER_LABEL
+container_volumes:
+  - /home/gitlab-runner/data:/home/gitlab-runner/data
+  - /home/gitlab-runner/tokenizers:/home/gitlab-runner/tokenizers
+  - /home/gitlab-runner/data:/opt/data/datasets
+  - /home/gitlab-runner/tokenizers:/opt/data/tokenizers
+container_options: >-
+  --privileged
+  --ipc=host
+  --shm-size=500g
+  --hostname megatron_cicd
+  --add-host megatron_cicd:127.0.0.1
+  --user root
+  --ulimit nofile=65535:65535
+device_types:
+  - iluvatar
+test_matrix:
+  unit:
+    nproc_per_node: 8
+    pytest_extra_args:
+      - --capture=fd
+      - -rfE
+      - -m
+      - not experimental and not flaky_in_dev
+    groups:
+      - name: core
+        path: tests/unit_tests/test_*.py megatron/plugin/tests/
+        description: Core unit tests
+      - name: models
+        path: tests/unit_tests/models/
+        description: Model tests
+      - name: distributed
+        path: tests/unit_tests/distributed/
+        description: Distributed tests
+      - name: dist_checkpointing
+        path: tests/unit_tests/dist_checkpointing/
+        description: Distributed checkpointing tests
+      - name: tensor_parallel
+        path: tests/unit_tests/tensor_parallel/
+        description: Tensor parallel tests
+      - name: pipeline_parallel
+        path: tests/unit_tests/pipeline_parallel/
+        description: Pipeline parallel tests
+      - name: data
+        path: tests/unit_tests/data/
+        description: Data tests
+      - name: fusions
+        path: tests/unit_tests/fusions/
+        description: Fusion tests
+      - name: others
+        path: tests/unit_tests/post_training/ tests/unit_tests/tokenizers/ tests/unit_tests/utils/
+        description: post-training, tokenizer, and utility tests
+    unsupported_groups:
+      transformer: Transformer unit tests currently run only on CUDA.
+    ignored_tests: []
+  functional:
+    train:
+      - model: gpt
+        test_case: qwen3_0p6b_mcore_te_tp1_pp1_no_mmap_bin_files_iluvatar
+        training_script: pretrain_gpt.py
+        n_repeat: 1
+        golden_environment: dev
+        golden_platform: iluvatar
+        enable_lightweight_mode: true
+        data_path: /home/gitlab-runner/data
+        gpus_per_node: 1
+      - model: gpt
+        test_case: qwen3_0p6b_mcore_te_tp2_pp2_benchmark_iluvatar
+        training_script: pretrain_gpt.py
+        n_repeat: 1
+        golden_environment: dev
+        golden_platform: iluvatar
+        enable_lightweight_mode: true
+        data_path: /home/gitlab-runner/data
+        gpus_per_node: 4
+te_fl:
+  prepare: true
+  build_mode: python
+  build_environment:
+    TE_FL_SKIP_CUDA: '1'
+  runtime:
+    environment:
+      TE_FL_SKIP_CUDA: '1'
+      TE_FL_PREFER: flagos
+    install_pip_args: []
+    pip_packages:
+      - flag-gems
+      - sqlalchemy
+paths_watch:
+  - .github/configs/iluvatar.yml
+  - .github/scripts/set_env_iluvatar.sh
+  - .github/workflows/all_tests_iluvatar.yml
+  - tests/functional_tests/test_cases/gpt/qwen3_0p6b_mcore_te_tp1_pp1_no_mmap_bin_files_iluvatar/
+  - tests/functional_tests/test_cases/gpt/qwen3_0p6b_mcore_te_tp2_pp2_benchmark_iluvatar/
+test_retry:
+  transient_retries: 1
