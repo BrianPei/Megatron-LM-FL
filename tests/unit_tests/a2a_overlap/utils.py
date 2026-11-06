@@ -363,6 +363,16 @@ def build_expert_device_mesh():
     )
 
 
+def _device_supports_fp8():
+    """Whether the current device can run FP8 (e.g. A100 / SM80 cannot)."""
+    try:
+        from transformer_engine.pytorch.fp8 import check_fp8_support
+
+        return bool(check_fp8_support()[0])
+    except Exception:
+        return torch.cuda.get_device_capability() >= (8, 9)
+
+
 def get_valid_fp8_flags():
     from megatron.core.enums import Fp8Recipe
     from megatron.training.utils import get_device_arch_version
@@ -370,6 +380,10 @@ def get_valid_fp8_flags():
     fp8_types = ["e4m3", "hybrid"]
     recipes = []
     arch = get_device_arch_version()
+
+    # Only the non-FP8 path (None) is valid on devices without FP8 support.
+    if not _device_supports_fp8():
+        return [None]
 
     if is_te_min_version("2.3.0.dev0"):
         recipes.append(Fp8Recipe.tensorwise)  # Hopper + Blackwell

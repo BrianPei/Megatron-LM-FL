@@ -253,7 +253,7 @@ class TestFusedIndexerSparseAttnAccuracy:
 
     @pytest.fixture
     def device(self):
-        return torch.device("cuda:0")
+        return torch.device("cuda", torch.cuda.current_device())
 
     @pytest.mark.parametrize(
         "sq,b,np_,hn,n_comp,win_topk,idx_nh,idx_hd,indexer_topk,ratio",
@@ -420,7 +420,7 @@ class TestFusedIndexerSparseAttnBackward:
 
     @pytest.fixture
     def device(self):
-        return torch.device("cuda:0")
+        return torch.device("cuda", torch.cuda.current_device())
 
     @staticmethod
     def _run_fused_with_grad(inputs: dict, sparse_loss: bool) -> dict:
@@ -774,7 +774,7 @@ class TestFusedIndexerSparseAttnPerformance:
 
     @pytest.fixture
     def device(self):
-        return torch.device("cuda:0")
+        return torch.device("cuda", torch.cuda.current_device())
 
     @staticmethod
     def _benchmark(fn, warmup: int = 10, iters: int = 50) -> float:
@@ -1535,7 +1535,7 @@ class TestCSAFusedVsUnfusedAccuracy:
 
     @pytest.fixture
     def device(self):
-        return torch.device("cuda:0")
+        return torch.device("cuda", torch.cuda.current_device())
 
     @pytest.mark.parametrize(
         "sq,b,num_heads,v_head_dim,window_size,indexer_topk",
@@ -1724,7 +1724,7 @@ class TestDSAIndexerLossAutoScaler:
 
     @pytest.fixture
     def device(self):
-        return torch.device("cuda:0")
+        return torch.device("cuda", torch.cuda.current_device())
 
     def test_forward_identity(self, device):
         """AutoScaler does not modify the forward output value."""
@@ -1926,7 +1926,7 @@ class TestCSAFusedVsUnfusedPerformance:
 
     @pytest.fixture
     def device(self):
-        return torch.device("cuda:0")
+        return torch.device("cuda", torch.cuda.current_device())
 
     @staticmethod
     def _benchmark(fn, warmup: int = 5, iters: int = 20) -> float:
@@ -2168,7 +2168,7 @@ class TestCSANoIndexerFusedVsUnfused:
 
     @pytest.fixture
     def device(self):
-        return torch.device("cuda:0")
+        return torch.device("cuda", torch.cuda.current_device())
 
     @pytest.mark.parametrize(
         "compress_ratio,sq,b,num_heads,v_head_dim,window_size",
@@ -2375,7 +2375,7 @@ class TestCSANoIndexerPerformance:
 
     @pytest.fixture
     def device(self):
-        return torch.device("cuda:0")
+        return torch.device("cuda", torch.cuda.current_device())
 
     @staticmethod
     def _benchmark(fn, warmup: int = 5, iters: int = 20) -> float:
@@ -2597,7 +2597,7 @@ class TestDSASparseAttnBackward:
 
     @pytest.fixture
     def device(self):
-        return torch.device("cuda:0")
+        return torch.device("cuda", torch.cuda.current_device())
 
     @staticmethod
     def _make_inputs(
@@ -2986,7 +2986,7 @@ class TestRatioCausalMaskParity:
         ids=["pretrain_seq2k_ratio4", "pretrain_seq4k_ratio4"],
     )
     def test_compute_ratio_causal_mask_matches_unfused(self, sq, sk, ratio):
-        device = torch.device("cuda:0")
+        device = torch.device("cuda", torch.cuda.current_device())
         actual = compute_ratio_causal_mask(sq, sk, ratio, device)
         expected = self._unfused_reference_mask(sq, sk, ratio, device)
 
@@ -2998,7 +2998,7 @@ class TestRatioCausalMaskParity:
 
     def test_pretrain_ratio4_valid_counts_at_compression_boundaries(self):
         """Validate representative boundaries in a 4K pretraining sequence."""
-        device = torch.device("cuda:0")
+        device = torch.device("cuda", torch.cuda.current_device())
         sq, sk, ratio = 4096, 1024, 4
         mask = compute_ratio_causal_mask(sq, sk, ratio, device)
         actual_counts = torch.isfinite(mask).sum(dim=-1)
@@ -3024,7 +3024,7 @@ class TestRatioCausalMaskParity:
 
     def test_pretrain_topk_never_selects_future_compressed_tokens(self):
         """Stress production top-k=256 with future positions ranked highest."""
-        device = torch.device("cuda:0")
+        device = torch.device("cuda", torch.cuda.current_device())
         sq, sk, ratio, topk = 4096, 1024, 4, 256
 
         # Scores increase monotonically with compressed position, so every
@@ -3160,7 +3160,7 @@ class TestSparseIndexerExtremeProbability:
     @pytest.mark.parametrize("gap", [0.0, 10.0, 20.0, 30.0, 50.0])
     def test_fused_manual_backward_matches_reference_formula(self, gap):
         """The fused loss/backward must match the epsilon-smoothed reference."""
-        inputs = self._make_inputs(gap, torch.device("cuda:0"))
+        inputs = self._make_inputs(gap, torch.device("cuda", torch.cuda.current_device()))
         actual = self._run_fused(inputs)
         expected = self._run_autograd_reference(inputs, epsilon=1e-10)
 
@@ -3178,7 +3178,7 @@ class TestSparseIndexerExtremeProbability:
 
     def test_extreme_probability_matches_unfused_epsilon_semantics(self):
         """Guard parity after predict falls below the 1e-10 smoothing scale."""
-        inputs = self._make_inputs(30.0, torch.device("cuda:0"))
+        inputs = self._make_inputs(30.0, torch.device("cuda", torch.cuda.current_device()))
         fused = self._run_fused(inputs)
         unfused = self._run_autograd_reference(inputs, epsilon=1e-10)
 
@@ -3221,7 +3221,7 @@ class TestIndexerGradAccuracy:
 
     @pytest.fixture
     def device(self):
-        return torch.device("cuda:0")
+        return torch.device("cuda", torch.cuda.current_device())
 
     @staticmethod
     def _run_fused_indexer_grads(inputs: dict, sparse_loss: bool) -> dict:
@@ -3579,7 +3579,7 @@ class TestIndexerLossConsistency:
 
     @pytest.fixture
     def device(self):
-        return torch.device("cuda:0")
+        return torch.device("cuda", torch.cuda.current_device())
 
     @staticmethod
     def _get_fused_loss(inputs: dict, sparse_loss: bool) -> float:
