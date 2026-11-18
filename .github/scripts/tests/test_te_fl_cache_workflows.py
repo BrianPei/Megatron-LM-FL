@@ -29,6 +29,34 @@ class WheelCacheWorkflowTests(unittest.TestCase):
         self.assertNotIn("continue-on-error", upload)
         self.assertNotIn("if", upload)
 
+    def test_preparation_validates_source_version_before_saving_or_uploading(self):
+        steps = workflow("prepare_te_fl.yml")["jobs"]["prepare"]["steps"]
+        check = next(step for step in steps if step["name"] == "Check prepared wheel")
+        self.assertNotIn("if", check)
+        self.assertNotIn("continue-on-error", check)
+        self.assertIn("validate_te_fl_wheel.py", check["run"])
+        self.assertEqual(check["env"]["TE_FL_COMMIT"], "${{ steps.cache_key.outputs.commit }}")
+        self.assertLess(
+            steps.index(check),
+            next(i for i, s in enumerate(steps) if s["name"] == "Save TE-FL wheel cache"),
+        )
+        self.assertLess(
+            steps.index(check),
+            next(i for i, s in enumerate(steps) if s["name"] == "Upload prepared TE-FL wheel"),
+        )
+
+    def test_cache_key_invalidates_old_entries_and_tracks_build_inputs(self):
+        steps = workflow("prepare_te_fl.yml")["jobs"]["prepare"]["steps"]
+        key = next(step for step in steps if step.get("id") == "cache_key")
+        self.assertIn('key="te-fl-v2-', key["run"])
+        self.assertIn("${recipe_key}", key["run"])
+        self.assertIn('echo "commit=$commit"', key["run"])
+        self.assertEqual(
+            key["env"]["BUILD_ENVIRONMENT"], "${{ needs.resolve.outputs.build_environment }}"
+        )
+        for name in ("build_te_fl_native.sh", "validate_te_fl_wheel.py", "set_env_*.sh"):
+            self.assertIn(name, key["env"]["RECIPE_HASH"])
+
     def test_every_test_entrypoint_forwards_the_prepared_artifact(self):
         pipeline = workflow("_platform_pipeline.yml")
         self.assertEqual(

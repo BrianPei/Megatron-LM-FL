@@ -16,11 +16,15 @@ if [ ! -f "$TE_FL_REPO/pyproject.toml" ]; then
   exit 1
 fi
 
+# pip's in-process backend can otherwise import build_tools from an older
+# TransformerEngine checkout already present on the container's PYTHONPATH.
+TE_FL_REPO="$(cd "$TE_FL_REPO" && pwd -P)"
+
 mkdir -p "$OUTPUT_DIR"
 find "$OUTPUT_DIR" -maxdepth 1 -type f -name 'transformer_engine*.whl' -delete
 
 echo "Building TransformerEngine-FL wheel from $TE_FL_REPO"
-"$python_bin" -m pip wheel \
+PYTHONPATH="$TE_FL_REPO${PYTHONPATH:+:$PYTHONPATH}" "$python_bin" -m pip wheel \
   --no-deps \
   --no-build-isolation \
   --no-cache-dir \

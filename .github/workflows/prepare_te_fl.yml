@@ -206,6 +206,8 @@ jobs:
         env:
           PLATFORM: ${{ inputs.platform }}
           IMAGE: ${{ needs.resolve.outputs.image }}
+          BUILD_ENVIRONMENT: ${{ needs.resolve.outputs.build_environment }}
+          RECIPE_HASH: ${{ hashFiles('.github/docker/build_te_fl_native.sh', '.github/scripts/validate_te_fl_wheel.py', '.github/scripts/set_env_*.sh') }}
         run: |
           set -euo pipefail
           commit=$(git -C "$GITHUB_WORKSPACE/te-fl" rev-parse HEAD)
@@ -215,7 +217,10 @@ jobs:
           fi
           echo "TE-FL commit: $commit"
           image_key=$(printf '%s' "$IMAGE" | sha256sum | awk '{print $1}')
-          key="te-fl-${PLATFORM}-${commit}-${image_key}"
+          recipe_key=$(printf '%s\n%s\n' "$BUILD_ENVIRONMENT" "$RECIPE_HASH" | sha256sum | awk '{print $1}')
+          # Old cache entries may contain a wheel built from a different commit.
+          key="te-fl-v2-${PLATFORM}-${commit}-${image_key}-${recipe_key}"
+          echo "commit=$commit" >> "$GITHUB_OUTPUT"
           echo "key=$key" >> "$GITHUB_OUTPUT"
           echo "TE-FL wheel cache key: $key"
 
@@ -257,18 +262,14 @@ jobs:
         run: bash .github/docker/build_te_fl_native.sh
 
       - name: Check prepared wheel
+        env:
+          TE_FL_COMMIT: ${{ steps.cache_key.outputs.commit }}
         run: |
           set -euo pipefail
-          mapfile -t wheels < <(
-            find "$GITHUB_WORKSPACE/te-fl-wheel" -maxdepth 1 -type f \
-              -name 'transformer_engine*.whl' -print | sort
-          )
-          if [ "${#wheels[@]}" -ne 1 ]; then
-            echo "::error::Expected exactly one prepared TE-FL wheel, found ${#wheels[@]}" >&2
-            printf '  %s\n' "${wheels[@]}" >&2
-            exit 1
-          fi
-          echo "Prepared TE-FL wheel: ${wheels[0]}"
+          "${CI_PYTHON_BIN:-python3}" .github/scripts/validate_te_fl_wheel.py \
+            --wheel-dir "$GITHUB_WORKSPACE/te-fl-wheel" \
+            --source-dir "$GITHUB_WORKSPACE/te-fl" \
+            --expected-commit "$TE_FL_COMMIT"
 
       - name: Save TE-FL wheel cache
         if: steps.cache.outputs.cache-hit != 'true'
